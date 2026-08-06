@@ -6,6 +6,7 @@ import { renderMarkdown } from '@/utils/markdown'
 import { summarizeToolCall, extractFilePath, isFileProducingTool, extractDeliverables, stripDeliverableMarkers } from '@/utils/turns'
 import { chatApi } from '@/api/chat'
 import { fileApi } from '@/api/files'
+import { shouldShowGenerationToast } from '@/utils/generationToast'
 import JSZip from 'jszip'
 import type { Step, Turn, ToolCall, PendingQuestion, PendingPermission } from '@/types'
 import ChatMessage from './ChatMessage.vue'
@@ -59,14 +60,16 @@ const pendingHint = computed(() => {
   return 'AI 正在处理中,请稍候…'
 })
 
-/** 内容生成/写文件类工具刚开始执行时,弹一次轻提示第一时间安抚用户(去重防连弹) */
-let lastHintedTool = ''
+/** 内容生成/写文件类工具刚开始执行时,弹一次轻提示第一时间安抚用户。
+ *  <p>
+ *  注意:每个 turn 都是独立组件实例,若不加 isLastTurn 守卫,历史 turn 的实例
+ *  也会同时监听并各弹一条 → 攒几轮后一次弹出多个 toast。 */
 watch(() => chat.runningActivity, (act) => {
+  if (!isLastTurn.value) return
   if (!act || act.kind !== 'tool') return
+  if (!isFileProducingTool({ tool: act.tool } as ToolCall)) return
   const key = `${act.tool}|${act.arg}`
-  if (key === lastHintedTool) return
-  lastHintedTool = key
-  if (isFileProducingTool({ tool: act.tool } as ToolCall)) {
+  if (shouldShowGenerationToast(key)) {
     msg.info('AI 正在生成/写入内容,可能需要一点时间,请稍候…')
   }
 })
