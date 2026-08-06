@@ -34,6 +34,9 @@ const isLastTurn = computed(() => {
 /** 本 turn 是否仍在生成中(isStreaming 稳定,仅 session.idle 结束) */
 const turnInProgress = computed(() => chat.isStreaming && isLastTurn.value)
 
+/** 本轮生成已运行秒数:秒数在走 = AI 仍在工作,用于安抚"以为断线/暂停"的疑虑 */
+const runningSeconds = computed(() => chat.streamingElapsedSeconds)
+
 /** 某个 step 是否正在流式接收文本 */
 function isStepActive(step: Step | null): boolean {
   if (!step || !step.message.opencodeMessageId) return false
@@ -462,7 +465,9 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
         <span v-if="isStepActive(turn.finalAnswer)" class="cursor">▋</span>
       </div>
       <div v-else-if="turnInProgress && !activeMessageId && !pendingQuestionHost && !pendingPermissionHost" class="pending">
-        <n-spin size="small" /> 工具执行中…
+        <n-spin size="small" />
+        <span v-if="chat.streamingStuckSeconds > 60">仍未收到响应,可点「停止」后重试</span>
+        <span v-else>AI 正在处理中<template v-if="runningSeconds > 0">,已运行 {{ runningSeconds }}s</template>,请稍候…</span>
       </div>
 
       <!-- 结果文件区:AI 声明的交付文件,点击预览 -->

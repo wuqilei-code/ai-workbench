@@ -49,7 +49,6 @@ export const useChatStore = defineStore('chat', () => {
   const streamingMessageId = ref<string | null>(null)
   const isStreaming = ref(false)
   const connected = ref(false)
-  const activityLog = ref<string[]>([])
 
   /** 静默看门狗:跟踪 AI 运行时长,让 UI 能显示"AI 正在执行操作(已运行 Xs)"提示。
    *  <p>
@@ -160,7 +159,6 @@ export const useChatStore = defineStore('chat', () => {
     streamingText.value = ''
     streamingMessageId.value = null
     isStreaming.value = false
-    activityLog.value = []
     manualCollapseOverride.value = {}
     try {
       messages.value = await chatApi.listMessages(id)
@@ -220,7 +218,6 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming.value = true
     touchStreamActivity()
     streamStartAt.value = Date.now()
-    activityLog.value = []
 
     // 首条用户消息:并行更新标题(不依赖 sendMessage 的 await,
     // 避免 sendMessage 异常/超时/lazy-rebind 阻断标题更新)
@@ -489,15 +486,6 @@ export const useChatStore = defineStore('chat', () => {
       input: state.input,
       output: typeof state.output === 'string' ? state.output : undefined,
     }
-    const activityLabel = () => {
-      const arg = summarizeToolCall(tc)
-      return arg ? `${tc.tool}: ${arg}` : tc.tool
-    }
-    const pushActivity = (line: string) => {
-      const arr = activityLog.value
-      arr.push(line)
-      if (arr.length > 30) arr.shift()
-    }
     if (idx >= 0) {
       const msg = messages.value[idx]
       const parts: StepParts = msg.parts ? { ...msg.parts } : { toolCalls: [] }
@@ -507,16 +495,9 @@ export const useChatStore = defineStore('chat', () => {
         ? toolCalls.findIndex((t) => t.partId === partId)
         : -1
       if (existIdx >= 0) {
-        const prev = toolCalls[existIdx]
-        toolCalls[existIdx] = { ...prev, ...tc }
-        // 工具从运行→结束/报错:记录一条"完成/失败"活动日志
-        if (prev.status !== tc.status && tc.status !== 'running') {
-          pushActivity(`${tc.status === 'completed' ? '✓' : '✗'} ${activityLabel()}`)
-        }
+        toolCalls[existIdx] = { ...toolCalls[existIdx], ...tc }
       } else {
         toolCalls.push(tc)
-        // 首次见到该工具:记录"开始执行"活动日志
-        pushActivity(`🔧 ${activityLabel()}`)
       }
       parts.toolCalls = toolCalls
       messages.value[idx] = { ...msg, parts }
@@ -531,7 +512,6 @@ export const useChatStore = defineStore('chat', () => {
         createdAt: new Date().toISOString(),
         parts: { toolCalls: [tc] },
       })
-      pushActivity(`🔧 ${activityLabel()}`)
     }
   }
 
@@ -759,7 +739,7 @@ export const useChatStore = defineStore('chat', () => {
   return {
     sessions, currentSessionId, currentSession, messages, turns, streamingText,
     streamingMessageId, isStreaming, streamingStuckSeconds, streamingElapsedSeconds, runningActivity,
-    hasPendingInteraction, connected, activityLog,
+    hasPendingInteraction, connected,
     availableModels, selectedProviderId, selectedModelId,
     manualCollapseOverride, setCollapse,
     loadModels, selectModel, loadSessions, createSession, selectSession,

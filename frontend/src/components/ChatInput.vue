@@ -17,34 +17,8 @@ interface Attachment { name: string; path: string }
 const attachments = ref<Attachment[]>([])
 const uploading = ref(false)
 
-/** 状态条:AI 工作时始终显示"具体在做什么",而不是等到"卡住"才弹警告。
- *  <p>
- *  - 工具执行中 → "🔧 正在执行 bash: npm install · 已运行 Xs"
- *  - 流式出 token → "正在生成回复 · 已运行 Xs"
- *  - 其余(模型思考/工具准备)→ "正在思考 · 已运行 Xs"
- *  <p>
- *  hasPending:AI 真的在等用户输入(question/permission),此时不显示状态条。 */
+/** hasPending:AI 真的在等用户输入(question/permission),用于占位文案与发送拦截 */
 const hasPending = computed(() => chat.hasPendingInteraction)
-
-const statusText = computed(() => {
-  const act = chat.runningActivity
-  if (!act) return ''
-  if (act.kind === 'tool') return `🔧 正在执行 ${act.tool}${act.arg ? `: ${act.arg}` : ''}`
-  if (act.kind === 'streaming') return '正在生成回复'
-  return '正在思考'
-})
-
-/** 长时间(>60s)既无工具在跑、又无 token、也无任何事件时的温和提示(非警告) */
-const idleHint = computed(() => {
-  if (!chat.isStreaming || chat.runningActivity?.kind === 'tool' || chat.streamingText) return ''
-  if (chat.streamingStuckSeconds > 60) return '仍未收到响应,可点「停止」后重试'
-  return ''
-})
-
-const elapsedText = computed(() => {
-  const s = chat.streamingElapsedSeconds
-  return s > 0 ? ` · 已运行 ${s}s` : ''
-})
 
 const canSend = computed(() => !!(text.value.trim() || attachments.value.length))
 
@@ -127,17 +101,6 @@ async function onAbort() {
 
 <template>
   <div class="chat-input">
-    <div class="activity" v-if="chat.activityLog.length">
-      <div v-for="(a, i) in chat.activityLog" :key="i" class="act-line">{{ a }}</div>
-    </div>
-    <div v-if="chat.isStreaming && !hasPending" class="status-bar">
-      <span class="status-dot"></span>
-      <span class="status-text">
-        {{ statusText }}<template v-if="elapsedText">{{ elapsedText }}</template>
-        <template v-if="idleHint"><span class="idle-hint"> — {{ idleHint }}</span></template>
-      </span>
-    </div>
-
     <!-- 附件 chip 列表 -->
     <div v-if="attachments.length" class="attachments">
       <span v-for="(a, i) in attachments" :key="a.path" class="att-chip">
@@ -174,24 +137,7 @@ async function onAbort() {
 </template>
 
 <style scoped>
-.status-bar {
-  display: flex; align-items: center; gap: 8px;
-  margin-bottom: 10px; padding: 6px 12px;
-  border-radius: 8px; font-size: 12.5px; color: #9aa3b2;
-  background: #1f2630; border: 1px solid #2a3342;
-}
-.status-dot {
-  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
-  background: #56b6c2; animation: status-pulse 1.2s ease-in-out infinite;
-}
-@keyframes status-pulse { 50% { opacity: .25; } }
-.idle-hint { color: #7f8ea3; }
-</style>
-
-<style scoped>
 .chat-input { border-top: 1px solid #2a2a2e; padding: 12px; background: #1a1a1e; }
-.activity { max-height: 100px; overflow-y: auto; margin-bottom: 8px; font-size: 12px; color: #888; }
-.act-line { font-family: ui-monospace, monospace; padding: 2px 0; }
 
 .attachments {
   display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px;
