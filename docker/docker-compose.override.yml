@@ -1,0 +1,13 @@
+# 本环境(国内,无 Docker Hub/GitHub 直连)覆盖配置。
+# compose 会自动合并 docker-compose.yml + 本文件,无需 -f 指定。
+# 仓库内可按需 gitignore 本文件(属环境特定配置)。
+services:
+  app:
+    build:
+      args:
+        # 基镜像走 daocloud 镜像加速,绕开 docker.io(本机 IPv6 解析异常)
+        DOCKER_REGISTRY: "docker.m.daocloud.io"
+        # opencode 二进制经 ghfast.top 代理 GitHub release
+        OPENCODE_DOWNLOAD_URL: "https://ghfast.top/https://github.com/sst/opencode/releases/download/v1.18.8/opencode-linux-x64-baseline.tar.gz"
+  mysql:
+    image: docker.m.daocloud.io/mysql:8.0

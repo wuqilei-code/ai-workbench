@@ -1,0 +1,22 @@
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/schema.sql
+      # Phase 1:users.uid 迁移用 ALTER TABLE 补列;MySQL 8 不支持 ADD COLUMN IF NOT EXISTS,
+      # 依赖此选项忽略重复列(1060)/重复索引(1061)错误。schema.sql 全文均为 CREATE TABLE IF NOT EXISTS,
+      # 故此开关仅放行这两条 ALTER 的良性重复错误,不会掩盖其他真实错误。
+      continue-on-error: true
+
+server:
+  port: 8080
+
+logging:
+  level:
+    root: INFO
+    com.aiworkbench: INFO

@@ -1,0 +1,370 @@
+package com.aiworkbench.service.opencode.process;
+
+import com.aiworkbench.common.BusinessException;
+import com.aiworkbench.common.ResultCode;
+import com.aiworkbench.config.OpencodeProperties;
+import com.aiworkbench.service.ChatMessageService;
+import com.aiworkbench.service.WorkspaceService;
+import com.aiworkbench.service.opencode.OpencodeEventRouter;
+import com.aiworkbench.service.opencode.OpencodeInstanceEventConsumer;
+import com.aiworkbench.service.opencode.dto.HealthDto;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PreDestroy;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClient;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * 每用户 opencode 进程生命周期管理器(Phase 2 核心)。
+ * <p>
+ * 以 {@code setpriv --reuid=<uid> --regid=<gid> --clear-groups} 启动独立 opencode 进程,
+ * 各监听 127.0.0.1:&lt;port&gt;(端口由 {@link PortAllocator} 分配),配置目录隔离到
+ * /data/users/&lt;uid&gt;/home/.config/opencode(由 {@link PerUserConfigWriter} 播种)。
+ * <p>
+ * 生命周期:getOrStart(按需首启,幂等单启)/ stop / restart / touch / idleSweep(定时回收) / stopAll(销毁)。
+ * 每个进程配一个 {@link OpencodeInstanceEventConsumer} 订阅其 /global/event,事件投递到共享
+ * {@link OpencodeEventRouter}(按 opencodeSessionId 路由,turn-merging 不受影响)。
+ * <p>
+ * 容器内以 root 运行(setpriv/chown 依赖);进程内 opencode 以目标 uid 运行,实现进程级 + 文件级隔离。
+ */
+@Slf4j
+@Service
+public class OpencodeProcessManager {
+
+    private final OpencodeProperties props;
+    private final PortAllocator portAllocator;
+    private final UserProcessRegistry registry;
+    private final PerUserConfigWriter configWriter;
+    private final WorkspaceService workspaceService;
+    private final OpencodeEventRouter router;
+    private final ChatMessageService chatMessageService;
+    private final ObjectMapper objectMapper;
+    private final WebClient.Builder webClientBuilder;
+
+    public OpencodeProcessManager(OpencodeProperties props,
+                                  PortAllocator portAllocator,
+                                  UserProcessRegistry registry,
+                                  PerUserConfigWriter configWriter,
+                                  WorkspaceService workspaceService,
+                                  OpencodeEventRouter router,
+                                  ChatMessageService chatMessageService,
+                                  ObjectMapper objectMapper,
+                                  @Qualifier("opencodeWebClientBuilder") WebClient.Builder webClientBuilder) {
+        this.props = props;
+        this.portAllocator = portAllocator;
+        this.registry = registry;
+        this.configWriter = configWriter;
+        this.workspaceService = workspaceService;
+        this.router = router;
+        this.chatMessageService = chatMessageService;
+        this.objectMapper = objectMapper;
+        this.webClientBuilder = webClientBuilder;
+    }
+
+    /** 健康检查轮询:最多 30 次 × 500ms = 15s */
+    private static final int HEALTH_MAX_ATTEMPTS = 30;
+    private static final long HEALTH_INTERVAL_MS = 500L;
+    /** stop 时 SIGTERM 后等 5s 再 SIGKILL */
+    private static final Duration STOP_GRACE = Duration.ofSeconds(5);
+
+    // ============ 启动 ============
+
+    /**
+     * 启动某用户的 opencode 进程(由 registry 经 computeIfAbsent 保证同 userId 单启)。
+     * 流程:算 uid/gid → 分配端口 → ensure provisioning → seed 配置 → setpriv 启动 → 健康轮询 → 挂事件消费者。
+     * 失败:回收端口、销毁进程、抛 OPENCODE_UNAVAILABLE。
+     */
+    public UserProcess start(Long userId) {
+        int uid = props.uidOf(userId);
+        int gid = uid;
+        int port = portAllocator.allocate();
+        log.info("starting opencode for user {} (uid={} port={})", userId, uid, port);
+
+        // 1. 确保 uid/账户/目录就绪(幂等)
+        workspaceService.ensureUserWorkspace(userId);
+        // 2. 播种配置(模板 → 用户目录)
+        configWriter.seed(userId);
+
+        // 3. 构造进程:env + setpriv + opencode serve
+        Process process = null;
+        OpencodeInstanceEventConsumer consumer = null;
+        try {
+            Path logFile = userLogPath(uid);
+            Files.createDirectories(logFile.getParent());
+
+            ProcessBuilder pb = new ProcessBuilder(
+                    "setpriv",
+                    "--reuid=" + uid,
+                    "--regid=" + gid,
+                    "--clear-groups",
+                    "--",
+                    "opencode", "serve",
+                    "--hostname", "127.0.0.1",
+                    "--port", String.valueOf(port),
+                    "--cors", "*");
+            pb.directory(new File(workspaceService.userDir(userId)));
+            pb.redirectErrorStream(true);
+            pb.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile.toFile()));
+            configureEnv(pb.environment(), userId, uid);
+            process = pb.start();
+
+            // 4. 构造实例 WebClient(绝对 baseUrl + Basic auth 已由 builder 默认头带)
+            WebClient instanceClient = webClientBuilder.clone()
+                    .baseUrl("http://127.0.0.1:" + port)
+                    .build();
+
+            // 5. 健康轮询至 READY
+            HealthDto health = waitReady(instanceClient, process, userId, port);
+            if (health == null || !Boolean.TRUE.equals(health.getHealthy())) {
+                throw new BusinessException(ResultCode.OPENCODE_UNAVAILABLE.getCode(),
+                        "opencode 健康检查超时: " + tailLog(logFile));
+            }
+
+            // 6. 挂事件消费者
+            consumer = new OpencodeInstanceEventConsumer(instanceClient, router, chatMessageService, objectMapper, port);
+            consumer.start();
+
+            UserProcess up = new UserProcess(userId, uid, gid, port, process, instanceClient, consumer);
+            log.info("opencode ready for user {} (uid={} port={} version={})",
+                    userId, uid, port, health.getVersion());
+            return up;
+        } catch (BusinessException e) {
+            cleanupFailed(userId, uid, port, process, consumer);
+            throw e;
+        } catch (Exception e) {
+            cleanupFailed(userId, uid, port, process, consumer);
+            log.error("start opencode failed for user {}: {}", userId, e.toString(), e);
+            throw new BusinessException(ResultCode.OPENCODE_UNAVAILABLE.getCode(),
+                    "opencode 启动失败: " + e.getMessage());
+        }
+    }
+
+    // ============ 路由 ============
+
+    /**
+     * 取得(或按需首启)某用户的 opencode 进程,阻塞至 READY。每次调用刷新活动时间。
+     * <p>
+     * 若已登记的进程已崩溃(isAlive=false),先 stop 清理(停消费者、回收端口、移除注册)再重启,
+     * 避免返回死句柄导致后续请求全部失败。
+     */
+    public UserProcess getOrStart(Long userId) {
+        UserProcess up = registry.getOrStart(userId, this::start);
+        if (!up.getProcess().isAlive()) {
+            log.warn("opencode process for user {} not alive (crashed?), recycling and restarting", userId);
+            stop(userId);
+            up = registry.getOrStart(userId, this::start);
+        }
+        up.touch();
+        return up;
+    }
+
+    /** 更新活动时间(不启动进程;无活跃进程则空操作)。 */
+    public void touch(Long userId) {
+        UserProcess up = registry.getIfPresent(userId);
+        if (up != null) {
+            up.touch();
+        }
+    }
+
+    /** 仅返回已存在的进程;不启动。用于 abort 等不应触发首启的场景。 */
+    public UserProcess getIfPresent(Long userId) {
+        return registry.getIfPresent(userId);
+    }
+
+    // ============ 停止 / 重启 ============
+
+    /** 停止某用户进程:停消费者 → SIGTERM → 5s 后 SIGKILL → 回收端口 → 移除注册。无活跃进程则空操作。 */
+    public void stop(Long userId) {
+        UserProcess up = registry.getIfPresent(userId);
+        if (up == null) {
+            return;
+        }
+        up.setState(UserProcess.State.STOPPING);
+        log.info("stopping opencode for user {} (uid={} port={})", userId, up.getUid(), up.getPort());
+
+        if (up.getEventConsumer() != null) {
+            try { up.getEventConsumer().stop(); } catch (Exception e) { log.warn("consumer stop failed: {}", e.toString()); }
+        }
+        Process p = up.getProcess();
+        if (p != null && p.isAlive()) {
+            p.destroy();
+            try {
+                if (!p.waitFor(STOP_GRACE.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                    p.destroyForcibly();
+                    log.warn("opencode for user {} force-killed after {} grace", userId, STOP_GRACE);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                p.destroyForcibly();
+            }
+        }
+        portAllocator.release(up.getPort());
+        registry.remove(userId, up);
+        up.setState(UserProcess.State.DEAD);
+        log.info("opencode stopped for user {}", userId);
+    }
+
+    /** 重启:stop 后 getOrStart(applyConfig 扇出用)。 */
+    public void restart(Long userId) {
+        stop(userId);
+        getOrStart(userId);
+    }
+
+    // ============ 空闲回收 ============
+
+    /** 每 60s 扫描:超过 idleTimeoutSeconds 未活动的进程回收。 */
+    @Scheduled(fixedRate = 60_000L)
+    public void idleSweep() {
+        Set<Long> ids = new HashSet<>(registry.activeUserIds());
+        if (ids.isEmpty()) {
+            return;
+        }
+        Instant deadline = Instant.now().minusSeconds(props.getIdleTimeoutSeconds());
+        for (Long userId : ids) {
+            UserProcess up = registry.getIfPresent(userId);
+            if (up == null) {
+                continue;
+            }
+            if (up.idleBefore(deadline)) {
+                log.info("idle sweep: stopping opencode for user {} (last activity={})",
+                        userId, up.getLastActivityAt());
+                try {
+                    stop(userId);
+                } catch (Exception e) {
+                    log.warn("idle sweep stop failed for user {}: {}", userId, e.toString());
+                }
+            }
+        }
+    }
+
+    @PreDestroy
+    public void stopAll() {
+        log.info("shutdown: stopping all {} opencode processes", registry.activeCount());
+        for (Long userId : new HashSet<>(registry.activeUserIds())) {
+            try {
+                stop(userId);
+            } catch (Exception e) {
+                log.warn("stopAll failed for user {}: {}", userId, e.toString());
+            }
+        }
+        registry.shutdown();
+    }
+
+    public Set<Long> activeUserIds() {
+        return registry.activeUserIds();
+    }
+
+    public int activeCount() {
+        return registry.activeCount();
+    }
+
+    // ============ 内部 ============
+
+    private HealthDto waitReady(WebClient client, Process process, Long userId, int port) {
+        for (int i = 0; i < HEALTH_MAX_ATTEMPTS; i++) {
+            if (!process.isAlive()) {
+                log.error("opencode process exited prematurely for user {} (port={})", userId, port);
+                return null;
+            }
+            try {
+                HealthDto h = client.get().uri("/global/health")
+                        .retrieve().bodyToMono(HealthDto.class)
+                        .block(Duration.ofSeconds(2));
+                if (h != null && Boolean.TRUE.equals(h.getHealthy())) {
+                    return h;
+                }
+            } catch (Exception e) {
+                // 启动中,连接尚未就绪,继续轮询
+            }
+            try {
+                Thread.sleep(HEALTH_INTERVAL_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /** 设置子进程环境:HOME / XDG_CONFIG_HOME / Basic auth 凭据 + 解析用户 opencode.env 里的 API key。 */
+    private void configureEnv(Map<String, String> env, Long userId, int uid) {
+        Path home = Paths.get(props.getPerUserDataRoot(), String.valueOf(uid), "home");
+        env.put("HOME", home.toString());
+        env.put("XDG_CONFIG_HOME", home.resolve(".config").toString());
+        env.put("OPENCODE_SERVER_USERNAME", props.getUsername());
+        env.put("OPENCODE_SERVER_PASSWORD", props.getPassword());
+        // 解析用户 opencode.env 中的 KEY=VALUE(解密后的 API key),注入子进程 env
+        Path envFile = home.resolve(".config/opencode/opencode.env");
+        parseEnvFile(envFile).forEach(env::put);
+    }
+
+    private Map<String, String> parseEnvFile(Path envFile) {
+        Map<String, String> result = new java.util.HashMap<>();
+        if (!Files.isRegularFile(envFile)) {
+            return result;
+        }
+        try {
+            for (String line : Files.readAllLines(envFile, StandardCharsets.UTF_8)) {
+                String trimmed = line.trim();
+                if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                    continue;
+                }
+                int eq = trimmed.indexOf('=');
+                if (eq <= 0) {
+                    continue;
+                }
+                String key = trimmed.substring(0, eq).trim();
+                String val = trimmed.substring(eq + 1).trim();
+                // 去掉包围引号
+                if (val.length() >= 2 && ((val.startsWith("\"") && val.endsWith("\""))
+                        || (val.startsWith("'") && val.endsWith("'")))) {
+                    val = val.substring(1, val.length() - 1);
+                }
+                result.put(key, val);
+            }
+        } catch (IOException e) {
+            log.warn("parse opencode.env failed ({}): {}", envFile, e.toString());
+        }
+        return result;
+    }
+
+    private Path userLogPath(int uid) {
+        return Paths.get(props.getPerUserDataRoot(), String.valueOf(uid), "opencode.log");
+    }
+
+    private void cleanupFailed(Long userId, int uid, int port, Process process, OpencodeInstanceEventConsumer consumer) {
+        if (consumer != null) {
+            try { consumer.stop(); } catch (Exception ignored) {}
+        }
+        if (process != null && process.isAlive()) {
+            process.destroyForcibly();
+        }
+        portAllocator.release(port);
+    }
+
+    private String tailLog(Path logFile) {
+        try {
+            if (!Files.isRegularFile(logFile)) {
+                return "(no log)";
+            }
+            String all = Files.readString(logFile, StandardCharsets.UTF_8);
+            return all.length() > 1500 ? "..." + all.substring(all.length() - 1500) : all;
+        } catch (Exception e) {
+            return "(read log failed: " + e.getMessage() + ")";
+        }
+    }
+}
