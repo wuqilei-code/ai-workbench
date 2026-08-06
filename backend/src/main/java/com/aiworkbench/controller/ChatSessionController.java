@@ -3,6 +3,7 @@ package com.aiworkbench.controller;
 import com.aiworkbench.common.R;
 import com.aiworkbench.common.SecurityUtil;
 import com.aiworkbench.common.audit.AuditLog;
+import com.aiworkbench.dto.chat.AgentVo;
 import com.aiworkbench.dto.chat.CreateSessionRequest;
 import com.aiworkbench.dto.chat.SessionVo;
 import com.aiworkbench.dto.chat.UpdateSessionRequest;
@@ -38,6 +39,25 @@ public class ChatSessionController {
      * 预热:进入会话页时调用,提前拉起该用户 opencode 进程(幂等,阻塞至就绪),
      * 避免首条消息冷启动等待。不审计(高频无业务语义)。
      */
+    /**
+     * 可用 agent 列表(per-user,过滤 hidden 与 subagent)。
+     * 注意:字面量 /agents 优先于 /{id} 匹配,无需会话上下文。
+     */
+    @GetMapping("/agents")
+    public R<List<AgentVo>> agents() {
+        Long userId = SecurityUtil.currentUserId();
+        List<AgentVo> agents = opencodeClient.listAgents(userId).stream()
+                .filter(a -> !Boolean.TRUE.equals(a.getHidden()))
+                .filter(a -> !"subagent".equals(a.getMode()))
+                .map(a -> AgentVo.builder()
+                        .name(a.getName())
+                        .description(a.getDescription())
+                        .mode(a.getMode())
+                        .build())
+                .toList();
+        return R.ok(agents);
+    }
+
     @PostMapping("/{id}/warmup")
     public R<Void> warmup(@PathVariable Long id) {
         Long userId = SecurityUtil.currentUserId();

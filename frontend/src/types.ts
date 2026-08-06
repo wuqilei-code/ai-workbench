@@ -36,6 +36,26 @@ export interface MessageVo {
   /** 前端本地态 */
   _pending?: boolean
   _streaming?: boolean
+  /** 前端本地态:生成失败时展示的错误文案 */
+  error?: string
+}
+
+/** agent 选择项(opencode GET /agent 裁剪) */
+export interface AgentItem {
+  name: string
+  description?: string
+  mode?: string
+}
+
+/** slash 命令菜单项(opencode GET /command 裁剪) */
+export interface CommandItem {
+  name: string
+  description?: string
+  agent?: string
+  model?: string
+  source?: string
+  subtask?: boolean
+  hints?: string[]
 }
 
 /** 工具调用(part 级,同一 partId 的 pending→running→completed 共用) */

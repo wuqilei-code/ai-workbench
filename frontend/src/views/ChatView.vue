@@ -2,6 +2,7 @@
 import { ref, watch, nextTick, onMounted, onBeforeUnmount, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
+import { useMessage } from 'naive-ui'
 import ChatMessage from '@/components/ChatMessage.vue'
 import AssistantTurn from '@/components/AssistantTurn.vue'
 import ChatInput from '@/components/ChatInput.vue'
@@ -10,8 +11,31 @@ import FileTree from '@/components/FileTree.vue'
 
 const route = useRoute()
 const chat = useChatStore()
+const msg = useMessage()
 const scrollRef = ref<HTMLDivElement | null>(null)
 const showFiles = ref(false)
+
+/** ---- 会话 agent 切换 ---- */
+const agentMenuOpen = ref(false)
+const agentOptions = computed(() =>
+  chat.agents.map((a) => ({ label: a.name, key: a.name, description: a.description })),
+)
+async function onAgentMenuShow(show: boolean) {
+  if (show) {
+    await chat.loadAgents()
+    agentMenuOpen.value = true
+  } else {
+    agentMenuOpen.value = false
+  }
+}
+async function onAgentSelect(key: string) {
+  try {
+    await chat.switchAgent(key)
+    msg.success(`已切换到 agent: ${key}`)
+  } catch (e: any) {
+    msg.error(e.message || '切换 agent 失败')
+  }
+}
 
 const sessionId = computed(() => {
   const id = route.params.id
@@ -81,6 +105,18 @@ const showThinkingFallback = computed(
         </n-tag>
       </div>
       <div class="head-right">
+        <n-dropdown
+          :options="agentOptions"
+          :show="agentMenuOpen"
+          trigger="click"
+          placement="bottom-end"
+          @update:show="onAgentMenuShow"
+          @select="onAgentSelect"
+        >
+          <n-tag size="small" type="info" :bordered="false" style="cursor: pointer" :title="agentOptions.map(o => o.description).join(', ')">
+            {{ chat.currentSession?.agent || 'chat' }} ▾
+          </n-tag>
+        </n-dropdown>
         <ModelSelector />
         <n-button size="small" quaternary @click="showFiles = !showFiles">工作区</n-button>
       </div>

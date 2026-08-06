@@ -4,6 +4,8 @@ import com.aiworkbench.common.BusinessException;
 import com.aiworkbench.common.ResultCode;
 import com.aiworkbench.service.WorkspaceService;
 import com.aiworkbench.service.opencode.dto.CreateSessionBody;
+import com.aiworkbench.service.opencode.dto.OpenCodeAgentDto;
+import com.aiworkbench.service.opencode.dto.OpenCodeCommandDto;
 import com.aiworkbench.service.opencode.dto.OpencodeMessageDto;
 import com.aiworkbench.service.opencode.dto.OpencodeSessionDto;
 import com.aiworkbench.service.opencode.dto.PromptAsyncBody;
@@ -208,6 +210,81 @@ public class OpencodeClient {
             throw new BusinessException(ResultCode.OPENCODE_UNAVAILABLE);
         } catch (Exception e) {
             log.warn("reply permission error: {}", e.toString());
+            throw new BusinessException(ResultCode.OPENCODE_UNAVAILABLE);
+        }
+    }
+
+    /** GET /command — 该用户工作区的命令列表(内置 + 用户 command/*.md + MCP/skill),按目录隔离。 */
+    public List<OpenCodeCommandDto> listCommands(long userId) {
+        UserProcess proc = processManager.getOrStart(userId);
+        String dir = workspaceService.userDir(userId);
+        return proc.getWebClient().get().uri("/command")
+                .header("x-opencode-directory", dir)
+                .retrieve().bodyToMono(new ParameterizedTypeReference<List<OpenCodeCommandDto>>() {})
+                .block();
+    }
+
+    /**
+     * POST /session/{id}/command — 触发 slash 命令(fire-and-forget,不阻塞 servlet 线程)。
+     * <p>
+     * 该端点是<b>同步</b>的(会跑完整轮次后返回 {info, parts}),但本应用渲染完全依赖 SSE 事件
+     * (OpencodeInstanceEventConsumer 镜像 user/assistant 消息),故像 prompt_async 一样仅发起即返回:
+     * 模板展开、@file/!shell、agent/model 选择均在 opencode 侧完成,命令不存在等失败会发布
+     * session.error 事件由前端展示,响应体无需等待。
+     */
+    public void runCommand(long userId, String opencodeSessionId, String command, String arguments) {
+        UserProcess proc = processManager.getOrStart(userId);
+        String dir = workspaceService.userDir(userId);
+        Map<String, Object> body = new java.util.HashMap<>();
+        body.put("command", command);
+        body.put("arguments", arguments == null ? "" : arguments);
+        proc.getWebClient().post()
+                .uri("/session/{id}/command", opencodeSessionId)
+                .header("x-opencode-directory", dir)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .retrieve().bodyToMono(String.class)
+                .subscribe(
+                        v -> log.info("command {} executed (session {})", command, opencodeSessionId),
+                        e -> log.warn("run command {} failed (session {}): {}",
+                                command, opencodeSessionId,
+                                e instanceof WebClientResponseException w
+                                        ? w.getStatusCode() + " " + w.getResponseBodyAsString()
+                                        : e.toString()));
+    }
+
+    /** GET /agent — 该用户工作区可用的 agent 列表(内置 + agents/*.md),按目录隔离。 */
+    public List<OpenCodeAgentDto> listAgents(long userId) {
+        UserProcess proc = processManager.getOrStart(userId);
+        String dir = workspaceService.userDir(userId);
+        return proc.getWebClient().get().uri("/agent")
+                .header("x-opencode-directory", dir)
+                .retrieve().bodyToMono(new ParameterizedTypeReference<List<OpenCodeAgentDto>>() {})
+                .block();
+    }
+
+    /**
+     * POST /api/session/{id}/agent — 切换会话 agent。
+     * <p>
+     * 注意:该路由只在 v2 前缀(/api/session/...)下存在,非 /api 的 /session/{id}/agent 不存在。
+     * body: {agent: "name"},成功返回 204。
+     */
+    public void switchAgent(long userId, String opencodeSessionId, String agent) {
+        try {
+            UserProcess proc = processManager.getOrStart(userId);
+            String dir = workspaceService.userDir(userId);
+            proc.getWebClient().post()
+                    .uri("/api/session/{id}/agent", opencodeSessionId)
+                    .header("x-opencode-directory", dir)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(Map.of("agent", agent))
+                    .retrieve().bodyToMono(Void.class)
+                    .block();
+        } catch (WebClientResponseException e) {
+            log.warn("switch agent failed: {} {}", e.getStatusCode(), e.getResponseBodyAsString());
+            throw new BusinessException(ResultCode.OPENCODE_UNAVAILABLE);
+        } catch (Exception e) {
+            log.warn("switch agent error: {}", e.toString());
             throw new BusinessException(ResultCode.OPENCODE_UNAVAILABLE);
         }
     }

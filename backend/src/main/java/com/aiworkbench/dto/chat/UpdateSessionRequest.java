@@ -8,4 +8,6 @@ public class UpdateSessionRequest {
     private String providerId;
     private String modelId;
     private Integer archived;
+    /** 切换会话 agent(可选) */
+    private String agent;
 }

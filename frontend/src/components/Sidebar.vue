@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useAuthStore } from '@/stores/auth'
@@ -12,11 +12,35 @@ const dialog = useDialog()
 const msg = useMessage()
 
 const sessions = computed(() => chat.sessions)
+const agents = computed(() => chat.agents)
+const agentMenuOpen = ref(false)
+
+/** agent 下拉选项:默认 + 可用 primary/all agents */
+const agentOptions = computed(() => [
+  { label: '默认', key: '__default__' },
+  ...agents.value.map((a) => ({ label: a.name, key: a.name })),
+])
+
+async function onAgentMenuShow(show: boolean) {
+  if (show) {
+    await chat.loadAgents()
+    agentMenuOpen.value = true
+  } else {
+    agentMenuOpen.value = false
+  }
+}
+
+async function onAgentSelect(key: string) {
+  const s = await chat.createSession('New Chat', key === '__default__' ? undefined : key)
+  router.push(`/session/${s.id}`)
+}
 
 async function newChat() {
   const s = await chat.createSession('New Chat')
   router.push(`/session/${s.id}`)
 }
+
+
 
 async function openSession(id: number) {
   router.push(`/session/${id}`)
@@ -48,7 +72,18 @@ function logout() {
   <n-layout-sider bordered :width="260" content-style="display:flex; flex-direction:column">
     <div class="side-head">
       <span class="logo">AI Workbench</span>
-      <n-button size="small" type="primary" @click="newChat">+ 新会话</n-button>
+      <div class="head-actions">
+        <n-button size="small" type="primary" @click="newChat" title="新建默认会话">+ 新会话</n-button>
+        <n-dropdown
+          :options="agentOptions"
+          :show="agentMenuOpen"
+          trigger="click"
+          @update:show="onAgentMenuShow"
+          @select="onAgentSelect"
+        >
+          <n-button size="small" quaternary title="选择 agent 新建会话">▾</n-button>
+        </n-dropdown>
+      </div>
     </div>
     <div class="session-list">
       <div
@@ -58,7 +93,8 @@ function logout() {
         :class="{ active: s.id === chat.currentSessionId }"
         @click="openSession(s.id)"
       >
-        <span class="title">{{ s.title }}</span>
+        <span class="title" :title="s.agent ? `agent: ${s.agent}` : undefined">{{ s.title }}</span>
+        <n-tag v-if="s.agent" size="tiny" :bordered="false" class="agent-tag">{{ s.agent }}</n-tag>
         <n-button quaternary circle size="tiny" @click.stop="remove(s.id)">✕</n-button>
       </div>
       <n-empty v-if="!sessions.length" description="暂无会话" style="margin-top: 40px" />
@@ -82,7 +118,9 @@ function logout() {
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px; border-bottom: 1px solid #2a2a2e;
 }
+.head-actions { display: flex; align-items: center; gap: 4px; }
 .logo { font-weight: 600; }
+.agent-tag { flex-shrink: 0; margin-right: 4px; }
 .session-list { flex: 1; overflow-y: auto; padding: 8px; }
 .session-item {
   display: flex; align-items: center; justify-content: space-between;

@@ -8,6 +8,7 @@ import { buildTurns, summarizeToolCall } from '@/utils/turns'
 import type {
   SessionVo,
   MessageVo,
+  AgentItem,
   ProviderVo,
   StepParts,
   ToolCall,
@@ -43,6 +44,7 @@ function deriveTitle(text: string): string {
 
 export const useChatStore = defineStore('chat', () => {
   const sessions = ref<SessionVo[]>([])
+  const agents = ref<AgentItem[]>([])
   const currentSessionId = ref<number | null>(null)
   const messages = ref<MessageVo[]>([])
   const streamingText = ref('')
@@ -140,15 +142,34 @@ export const useChatStore = defineStore('chat', () => {
     sessions.value = await chatApi.listSessions()
   }
 
-  async function createSession(title?: string) {
+  async function loadAgents() {
+    if (agents.value.length) return
+    try {
+      agents.value = await chatApi.listAgents()
+    } catch (e) {
+      console.error('[chat] load agents failed', e)
+    }
+  }
+
+  async function createSession(title?: string, agent?: string) {
     const s = await chatApi.createSession({
       title,
+      agent,
       providerId: selectedProviderId.value || undefined,
       modelId: selectedModelId.value || undefined,
     })
     sessions.value.unshift(s)
     await selectSession(s.id)
     return s
+  }
+
+  /** 切换当前会话 agent(openocode 侧 switchAgent + 本地持久化) */
+  async function switchAgent(agent: string) {
+    if (!currentSessionId.value) return
+    const updated = await chatApi.updateSession(currentSessionId.value, { agent })
+    const idx = sessions.value.findIndex((s) => s.id === currentSessionId.value)
+    if (idx >= 0) sessions.value[idx] = updated
+    return updated
   }
 
   async function selectSession(id: number) {
@@ -246,6 +267,33 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  /** 触发 slash 命令(fire-and-forget):乐观显示用户消息,流式回复走 SSE,与 sendMessage 同 UX。 */
+  async function runCommand(command: string, args: string) {
+    if (!currentSessionId.value) return
+    const displayText = '/' + command + (args ? ' ' + args : '')
+    const optimistic: MessageVo = {
+      id: -Date.now(),
+      role: 'user',
+      content: displayText,
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+      _pending: true,
+    }
+    messages.value.push(optimistic)
+    streamingText.value = ''
+    streamingMessageId.value = null
+    isStreaming.value = true
+    touchStreamActivity()
+    streamStartAt.value = Date.now()
+    try {
+      await chatApi.runCommand(currentSessionId.value, { command, arguments: args })
+    } catch (e: any) {
+      isStreaming.value = false
+      optimistic.status = 'error'
+      throw e
+    }
+  }
+
   async function abort() {
     if (!currentSessionId.value) return
     try {
@@ -326,9 +374,23 @@ export const useChatStore = defineStore('chat', () => {
       case 'session.idle':
         finishStreaming()
         break
-      case 'session.error':
+      case 'session.error': {
+        // 生成出错:完整清理流式态(不 finalize 半截文本,避免把残片当完整答案),并展示可读失败文案。
         isStreaming.value = false
+        streamStartAt.value = 0
+        const errorMsg: string =
+          (typeof data.error?.message === 'string' && data.error.message) ||
+          (typeof data.error?.name === 'string' && data.error.name) ||
+          '生成出错,请重试'
+        const failedId = streamingMessageId.value
+        streamingMessageId.value = null
+        streamingText.value = ''
+        // 出错时清掉未决 question/permission,避免残留确认框
+        clearPendingQuestion(undefined)
+        clearPendingPermission(undefined)
+        markAssistantError(failedId, errorMsg)
         break
+      }
 
       case 'question.asked':
       case 'question.v2.asked': {
@@ -355,6 +417,9 @@ export const useChatStore = defineStore('chat', () => {
       case 'question.v2.replied':
       case 'question.v2.rejected': {
         clearPendingQuestion(data.tool?.messageID)
+        // 兜底恢复流式态:无论回答还是拒绝,AI 都会继续生成;
+        // 若该事件先于下一段 part.delta/session.status 到达,先置位避免"提交后无响应"。
+        resumeStreaming()
         break
       }
 
@@ -396,6 +461,8 @@ export const useChatStore = defineStore('chat', () => {
       case 'permission.replied':
       case 'permission.v2.replied': {
         clearPendingPermission(data.tool?.messageID)
+        // 同 question:允许/拒绝后 AI 都会继续生成,兜底恢复流式态。
+        resumeStreaming()
         break
       }
     }
@@ -664,6 +731,35 @@ export const useChatStore = defineStore('chat', () => {
     streamStartAt.value = 0
   }
 
+  /** 生成出错:把目标 assistant 消息标记为 error 并展示错误文案;找不到目标时追加一条错误气泡。 */
+  function markAssistantError(failedMessageId: string | null, errorMsg: string) {
+    let idx = -1
+    if (failedMessageId) {
+      idx = messages.value.findIndex((m) => m.opencodeMessageId === failedMessageId)
+    }
+    if (idx < 0) {
+      for (let i = messages.value.length - 1; i >= 0; i--) {
+        const m = messages.value[i]
+        if (m.role === 'assistant' && m.status !== 'completed') {
+          idx = i
+          break
+        }
+      }
+    }
+    if (idx >= 0) {
+      messages.value[idx] = { ...messages.value[idx], status: 'error', error: errorMsg }
+    } else {
+      messages.value.push({
+        id: -Date.now(),
+        role: 'assistant',
+        content: '',
+        status: 'error',
+        error: errorMsg,
+        createdAt: new Date().toISOString(),
+      })
+    }
+  }
+
   /** 当前会话是否存在未回复的 pending question/permission(AI 真的在等待用户输入)。
    *  <p>
    *  正常情况下 question.asked/permission.asked 会把 isStreaming 置 false,banner 不显示。
@@ -737,12 +833,12 @@ export const useChatStore = defineStore('chat', () => {
   })
 
   return {
-    sessions, currentSessionId, currentSession, messages, turns, streamingText,
+    sessions, agents, currentSessionId, currentSession, messages, turns, streamingText,
     streamingMessageId, isStreaming, streamingStuckSeconds, streamingElapsedSeconds, runningActivity,
     hasPendingInteraction, connected,
     availableModels, selectedProviderId, selectedModelId,
     manualCollapseOverride, setCollapse,
-    loadModels, selectModel, loadSessions, createSession, selectSession,
-    deleteSession, sendMessage, abort, closeStream, forceReleaseStreaming, resumeStreaming,
+    loadModels, selectModel, loadSessions, loadAgents, createSession, switchAgent, selectSession,
+    deleteSession, sendMessage, runCommand, abort, closeStream, forceReleaseStreaming, resumeStreaming,
   }
 })

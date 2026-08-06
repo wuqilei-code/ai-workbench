@@ -2,7 +2,9 @@ package com.aiworkbench.controller;
 
 import com.aiworkbench.common.SecurityUtil;
 import com.aiworkbench.common.audit.AuditLog;
+import com.aiworkbench.dto.chat.CommandVo;
 import com.aiworkbench.dto.chat.MessageVo;
+import com.aiworkbench.dto.chat.RunCommandRequest;
 import com.aiworkbench.dto.chat.SendMessageRequest;
 import com.aiworkbench.entity.ChatSession;
 import com.aiworkbench.common.R;
@@ -48,6 +50,42 @@ public class ChatMessageController {
     @AuditLog(action = "发送消息", targetSpel = "#id")
     public R<Void> send(@PathVariable Long id, @Valid @RequestBody SendMessageRequest req) {
         chatMessageService.sendUserMessage(id, SecurityUtil.currentUserId(), req);
+        return R.ok();
+    }
+
+    /**
+     * 该会话可用的 slash 命令列表(内置 + 用户 command/*.md,source=command)。
+     * 越权校验同 messages:getOwned 不属于当前用户则抛 SESSION_NOT_FOUND。
+     */
+    @GetMapping("/commands")
+    public R<List<CommandVo>> commands(@PathVariable Long id) {
+        Long userId = SecurityUtil.currentUserId();
+        chatSessionService.getOwned(id, userId);
+        List<CommandVo> commands = opencodeClient.listCommands(userId).stream()
+                .filter(c -> c.getSource() == null || "command".equals(c.getSource()))
+                .map(c -> CommandVo.builder()
+                        .name(c.getName())
+                        .description(c.getDescription())
+                        .agent(c.getAgent())
+                        .model(c.getModel())
+                        .source(c.getSource())
+                        .subtask(c.getSubtask())
+                        .hints(c.getHints())
+                        .build())
+                .toList();
+        return R.ok(commands);
+    }
+
+    /**
+     * 触发 slash 命令(fire-and-forget):用户消息与回复经 SSE 事件流镜像,与 prompt_async 同 UX。
+     * 命令不存在/执行失败时 opencode 发布 session.error 事件,前端展示。
+     */
+    @PostMapping("/commands")
+    @AuditLog(action = "执行命令", targetSpel = "#id")
+    public R<Void> runCommand(@PathVariable Long id, @Valid @RequestBody RunCommandRequest req) {
+        Long userId = SecurityUtil.currentUserId();
+        ChatSession s = chatSessionService.getOwned(id, userId);
+        opencodeClient.runCommand(userId, s.getOpencodeSessionId(), req.getCommand(), req.getArguments());
         return R.ok();
     }
 

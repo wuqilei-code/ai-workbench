@@ -103,6 +103,15 @@ public class ChatSessionService {
             s.setProviderId(req.getProviderId());
             s.setModelId(req.getModelId());
         }
+        // 切换 agent:opencode 侧切换失败不阻断本地持久化(下一条消息按 s.agent 透传,仍会生效)
+        if (req.getAgent() != null) {
+            try {
+                opencodeClient.switchAgent(userId, s.getOpencodeSessionId(), req.getAgent());
+            } catch (Exception e) {
+                log.warn("switch agent on opencode failed (still persist local): {}", e.toString());
+            }
+            s.setAgent(req.getAgent());
+        }
         chatSessionMapper.updateById(s);
         return toVo(s);
     }

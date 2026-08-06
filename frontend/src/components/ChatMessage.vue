@@ -44,7 +44,7 @@ async function downloadAttachment(path: string) {
     <div class="avatar">{{ isUser ? '我' : 'AI' }}</div>
     <div class="bubble">
       <div v-if="message._pending" class="status">发送中…</div>
-      <div v-else-if="message.status === 'error'" class="status err">发送失败</div>
+      <div v-else-if="message.status === 'error'" class="status err">{{ message.error || '发送失败' }}</div>
       <div v-if="parsed.text" class="content" v-html="html" />
       <div v-if="parsed.attachments.length" class="att-list">
         <a

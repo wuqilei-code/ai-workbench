@@ -1,14 +1,84 @@
 <script setup lang="ts">
-import { ref, nextTick, computed } from 'vue'
+import { ref, nextTick, computed, watch } from 'vue'
 import { useChatStore } from '@/stores/chat'
+import { chatApi } from '@/api/chat'
 import { fileApi } from '@/api/files'
 import { useMessage } from 'naive-ui'
+import type { CommandItem } from '@/types'
 
 const chat = useChatStore()
 const msg = useMessage()
 const text = ref('')
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
+
+/** ---- slash 命令菜单 ---- */
+const commands = ref<CommandItem[]>([])
+let commandsLoadedFor = -1
+async function ensureCommands() {
+  if (!chat.currentSessionId) return
+  if (commandsLoadedFor === chat.currentSessionId) return
+  try {
+    commands.value = await chatApi.listCommands(chat.currentSessionId)
+    commandsLoadedFor = chat.currentSessionId
+  } catch (e: any) {
+    console.error('[ChatInput] load commands failed', e)
+  }
+}
+
+/** 输入首个 token(/cmd 名称) */
+const firstToken = computed(() => {
+  const t = text.value.trim()
+  if (!t.startsWith('/')) return ''
+  return t.split(/\s+/)[0]
+})
+/** 是否在输入命令名(尚未输入参数空格) */
+const typingCommandName = computed(() => {
+  const t = text.value.trim()
+  return t.startsWith('/') && !t.includes(' ')
+})
+const filteredCommands = computed(() => {
+  const prefix = firstToken.value.slice(1).toLowerCase()
+  return commands.value.filter((c) => c.name.toLowerCase().startsWith(prefix))
+})
+const showCommandMenu = computed(() => typingCommandName.value && filteredCommands.value.length > 0)
+const menuIndex = ref(0)
+watch(showCommandMenu, (open) => {
+  if (open) menuIndex.value = 0
+})
+
+function chooseCommand(c: CommandItem) {
+  text.value = '/' + c.name + ' '
+  menuIndex.value = 0
+  nextTick(() => inputRef.value?.focus())
+}
+
+function onKeydown(e: KeyboardEvent) {
+  if (showCommandMenu.value) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      const n = filteredCommands.value.length
+      menuIndex.value = (menuIndex.value + (e.key === 'ArrowDown' ? 1 : n - 1)) % n
+      return
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      const c = filteredCommands.value[menuIndex.value]
+      if (c) chooseCommand(c)
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      text.value = ''
+      return
+    }
+  }
+  if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    e.preventDefault()
+    onSend()
+  }
+}
+
 
 /** 会话内上传:文件落入工作区 uploads/ 目录,并把相对路径拼到消息文本里,
  *  让 opencode 智能体(运行在同一 workspace)能按相对路径读取/操作该文件。 */
@@ -78,6 +148,20 @@ async function onSend() {
       return
     }
   }
+  // slash 命令分发:首个 token 为 /name 且命令列表中精确命中(带附件时走普通消息)
+  if (!attachments.value.length && payload.startsWith('/')) {
+    await ensureCommands()
+    const [head, ...rest] = payload.split(' ')
+    const cmd = commands.value.find((c) => c.name === head.slice(1))
+    if (cmd) {
+      text.value = ''
+      attachments.value = []
+      await chat.runCommand(cmd.name, rest.join(' ').trim())
+      await nextTick()
+      inputRef.value?.focus()
+      return
+    }
+  }
   text.value = ''
   attachments.value = []
   await chat.sendMessage(payload)
@@ -101,6 +185,21 @@ async function onAbort() {
 
 <template>
   <div class="chat-input">
+    <!-- slash 命令菜单 -->
+    <div v-if="showCommandMenu" class="cmd-menu">
+      <div
+        v-for="(c, i) in filteredCommands"
+        :key="c.name"
+        class="cmd-item"
+        :class="{ active: i === menuIndex }"
+        @mouseenter="menuIndex = i"
+        @mousedown.prevent="chooseCommand(c)"
+      >
+        <span class="cmd-name">/{{ c.name }}</span>
+        <span class="cmd-desc">{{ c.description || '' }}</span>
+      </div>
+    </div>
+
     <!-- 附件 chip 列表 -->
     <div v-if="attachments.length" class="attachments">
       <span v-for="(a, i) in attachments" :key="a.path" class="att-chip">
@@ -124,8 +223,8 @@ async function onAbort() {
         v-model="text"
         class="textarea"
         rows="1"
-        :placeholder="chat.isStreaming ? (hasPending ? '上方有待答问题,作答后发送;或直接输入以继续…' : 'AI 正在处理中,可点「停止」中断…') : '输入消息… (Enter 发送 / Shift+Enter 换行,📎 上传文件)'"
-        @keydown.enter.exact.prevent="onSend"
+        :placeholder="chat.isStreaming ? (hasPending ? '上方有待答问题,作答后发送;或直接输入以继续…' : 'AI 正在处理中,可点「停止」中断…') : '输入消息… (/ 查看命令,Enter 发送 / Shift+Enter 换行,📎 上传文件)'"
+        @keydown="onKeydown"
         @input="onInput"
       />
       <template v-if="chat.isStreaming">
@@ -137,7 +236,23 @@ async function onAbort() {
 </template>
 
 <style scoped>
-.chat-input { border-top: 1px solid #2a2a2e; padding: 12px; background: #1a1a1e; }
+.chat-input { position: relative; border-top: 1px solid #2a2a2e; padding: 12px; background: #1a1a1e; }
+
+.cmd-menu {
+  position: absolute; bottom: 100%; left: 12px; right: 12px; z-index: 20;
+  margin-bottom: 4px; max-height: 260px; overflow-y: auto;
+  background: #202024; border: 1px solid #333; border-radius: 8px;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, .35);
+}
+.cmd-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; cursor: pointer; font-size: 13px;
+}
+.cmd-item.active, .cmd-item:hover { background: #2c4a7c; }
+.cmd-name { color: #7ec3ff; font-family: ui-monospace, monospace; flex-shrink: 0; }
+.cmd-desc {
+  color: #9aa0a8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 .attachments {
   display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px;
