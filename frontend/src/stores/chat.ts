@@ -4,7 +4,7 @@ import { chatApi } from '@/api/chat'
 import { modelApi } from '@/api/admin'
 import { subscribeSession, type SseHandlers } from '@/api/sse'
 import { useAuthStore } from './auth'
-import { buildTurns } from '@/utils/turns'
+import { buildTurns, summarizeToolCall } from '@/utils/turns'
 import type {
   SessionVo,
   MessageVo,
@@ -58,6 +58,8 @@ export const useChatStore = defineStore('chat', () => {
    *  isStreaming 仅由以下信号释放:session.idle(正常结束)/ session.error / 用户手动「解除阻塞」。
    *  真卡死(进程崩溃无事件)时用户可手动点「解除阻塞」中断。 */
   const lastStreamActivityAt = ref<number>(Date.now())
+  /** 本轮生成开始时间(用于显示"已运行 Xs");0 表示未在生成 */
+  const streamStartAt = ref<number>(0)
   /** 心跳计数器:每 5s +1,用于让 streamingStuckSeconds 依赖它以实现"每 5s 重新计算运行秒数"
    *  (Date.now() 不是响应式的,必须引入一个响应式依赖才能让 computed 周期性刷新) */
   const _watchdogTick = ref<number>(0)
@@ -87,6 +89,7 @@ export const useChatStore = defineStore('chat', () => {
     streamingText.value = ''
     streamingMessageId.value = null
     touchStreamActivity()
+    streamStartAt.value = Date.now()
   }
 
   const availableModels = ref<ProviderVo[]>([])
@@ -216,6 +219,7 @@ export const useChatStore = defineStore('chat', () => {
     streamingMessageId.value = null
     isStreaming.value = true
     touchStreamActivity()
+    streamStartAt.value = Date.now()
     activityLog.value = []
 
     // 首条用户消息:并行更新标题(不依赖 sendMessage 的 await,
@@ -251,6 +255,7 @@ export const useChatStore = defineStore('chat', () => {
       await chatApi.abort(currentSessionId.value)
     } finally {
       isStreaming.value = false
+      streamStartAt.value = 0
     }
   }
 
@@ -279,6 +284,7 @@ export const useChatStore = defineStore('chat', () => {
       case 'message.part.delta': {
         if (data.field === 'text' && data.delta) {
           isStreaming.value = true
+          if (!streamStartAt.value) streamStartAt.value = Date.now()
           touchStreamActivity()
           if (data.messageID) streamingMessageId.value = data.messageID
           streamingText.value += data.delta
@@ -314,7 +320,11 @@ export const useChatStore = defineStore('chat', () => {
 
       case 'session.status':
         if (data.status?.type === 'idle') finishStreaming()
-        else if (data.status?.type === 'busy') { isStreaming.value = true; touchStreamActivity() }
+        else if (data.status?.type === 'busy') {
+          isStreaming.value = true
+          if (!streamStartAt.value) streamStartAt.value = Date.now()
+          touchStreamActivity()
+        }
         break
       case 'session.idle':
         finishStreaming()
@@ -479,6 +489,15 @@ export const useChatStore = defineStore('chat', () => {
       input: state.input,
       output: typeof state.output === 'string' ? state.output : undefined,
     }
+    const activityLabel = () => {
+      const arg = summarizeToolCall(tc)
+      return arg ? `${tc.tool}: ${arg}` : tc.tool
+    }
+    const pushActivity = (line: string) => {
+      const arr = activityLog.value
+      arr.push(line)
+      if (arr.length > 30) arr.shift()
+    }
     if (idx >= 0) {
       const msg = messages.value[idx]
       const parts: StepParts = msg.parts ? { ...msg.parts } : { toolCalls: [] }
@@ -488,9 +507,16 @@ export const useChatStore = defineStore('chat', () => {
         ? toolCalls.findIndex((t) => t.partId === partId)
         : -1
       if (existIdx >= 0) {
-        toolCalls[existIdx] = { ...toolCalls[existIdx], ...tc }
+        const prev = toolCalls[existIdx]
+        toolCalls[existIdx] = { ...prev, ...tc }
+        // 工具从运行→结束/报错:记录一条"完成/失败"活动日志
+        if (prev.status !== tc.status && tc.status !== 'running') {
+          pushActivity(`${tc.status === 'completed' ? '✓' : '✗'} ${activityLabel()}`)
+        }
       } else {
         toolCalls.push(tc)
+        // 首次见到该工具:记录"开始执行"活动日志
+        pushActivity(`🔧 ${activityLabel()}`)
       }
       parts.toolCalls = toolCalls
       messages.value[idx] = { ...msg, parts }
@@ -505,6 +531,7 @@ export const useChatStore = defineStore('chat', () => {
         createdAt: new Date().toISOString(),
         parts: { toolCalls: [tc] },
       })
+      pushActivity(`🔧 ${activityLabel()}`)
     }
   }
 
@@ -654,6 +681,7 @@ export const useChatStore = defineStore('chat', () => {
       finalizeTextPart(streamingMessageId.value, streamingText.value, true)
     }
     isStreaming.value = false
+    streamStartAt.value = 0
   }
 
   /** 当前会话是否存在未回复的 pending question/permission(AI 真的在等待用户输入)。
@@ -676,21 +704,62 @@ export const useChatStore = defineStore('chat', () => {
     )
   })
 
-  /** 流式阻塞秒数:isStreaming=true 且 >15s 无活动则认为"卡住"了,UI 可显示提示。
+  /** 当前"明确可知"的 AI 活动,用于状态条展示具体在做什么(而非笼统"无响应")。
    *  <p>
-   *  阈值 15s(原 10s):模型 API 首 token 延迟(尤其 DeepSeek 思考模式)与工具执行
-   *  (如 bash npm install)常达 10s+,过低的阈值会频繁误报。15s 兼顾早提示与少误报。 */
+   *  优先:工具仍在执行中(有 status==='running' 的 tool call)→ 正在流式出 token → 其余视为思考。
+   *  只有没有任何可观测活动时才返回 thinking;工具执行 30s+ 无 token 是正常的,不应视为卡住。 */
+  type RunningActivity =
+    | { kind: 'tool'; tool: string; arg: string }
+    | { kind: 'streaming' }
+    | { kind: 'thinking' }
+    | null
+
+  const runningActivity = computed<RunningActivity>(() => {
+    if (!isStreaming.value) return null
+    const ts = turns.value
+    if (ts.length) {
+      const last = ts[ts.length - 1]
+      const steps = [...last.steps]
+      if (last.finalAnswer) steps.push(last.finalAnswer)
+      // 从后往前找仍在运行的工具
+      for (let i = steps.length - 1; i >= 0; i--) {
+        const tcs = steps[i].toolCalls || []
+        for (let j = tcs.length - 1; j >= 0; j--) {
+          if (tcs[j].status === 'running') {
+            return { kind: 'tool', tool: tcs[j].tool, arg: summarizeToolCall(tcs[j]) }
+          }
+        }
+      }
+    }
+    if (streamingText.value) return { kind: 'streaming' }
+    return { kind: 'thinking' }
+  })
+
+  /** 本轮生成已运行秒数(用于状态条"已运行 Xs") */
+  const streamingElapsedSeconds = computed(() => {
+    void _watchdogTick.value
+    if (!isStreaming.value || !streamStartAt.value) return 0
+    return Math.max(0, Math.floor((Date.now() - streamStartAt.value) / 1000))
+  })
+
+  /** "无任何活动"的秒数:isStreaming=true 且 >15s 无 token/事件,且当前没有可解释的忙碌原因。
+   *  <p>
+   *  不再驱动警告横幅(UI 改为信息式状态条);仅用于:
+   *   - 输入框允许"打断后发送"的快捷路径(长时间无响应时);
+   *   - 状态条上 >60s 的温和提示"可点停止后重试"。 */
   const streamingStuckSeconds = computed(() => {
-    // 读取 _watchdogTick 以注册响应式依赖:每 5s +1 → computed 失效并重算 → banner 可在运行中出现
     void _watchdogTick.value
     if (!isStreaming.value) return 0
+    // 有明确活动(工具执行中/正在出 token)不算"卡住"
+    if (runningActivity.value?.kind === 'tool' || streamingText.value) return 0
     const s = Math.floor((Date.now() - lastStreamActivityAt.value) / 1000)
     return s > 15 ? s : 0
   })
 
   return {
     sessions, currentSessionId, currentSession, messages, turns, streamingText,
-    streamingMessageId, isStreaming, streamingStuckSeconds, hasPendingInteraction, connected, activityLog,
+    streamingMessageId, isStreaming, streamingStuckSeconds, streamingElapsedSeconds, runningActivity,
+    hasPendingInteraction, connected, activityLog,
     availableModels, selectedProviderId, selectedModelId,
     manualCollapseOverride, setCollapse,
     loadModels, selectModel, loadSessions, createSession, selectSession,

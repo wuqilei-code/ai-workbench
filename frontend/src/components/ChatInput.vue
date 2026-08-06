@@ -17,17 +17,34 @@ interface Attachment { name: string; path: string }
 const attachments = ref<Attachment[]>([])
 const uploading = ref(false)
 
-/** 当流式"卡住"(>15s 无活动)时:
- *  - 若用户已输入内容,点击"发送"会先解除阻塞(abort + finishStreaming)再真正发送;
- *  - 若用户未输入内容,展示"解除阻塞"按钮。
- *
- *  hasPending:AI 真的在等用户输入(question/permission)。
- *  正常情况下此时 isStreaming 已被置 false,banner 不显示;此标志仅作兜底区分文案。
- *  - 有 pending:文案引导用户去上方"提问区域"作答(而非误以为 AI 没问问题)。
- *  - 无 pending:AI 只是无响应(模型慢/工具执行中),文案如实说明。
- */
-const isStuck = computed(() => chat.streamingStuckSeconds > 0)
+/** 状态条:AI 工作时始终显示"具体在做什么",而不是等到"卡住"才弹警告。
+ *  <p>
+ *  - 工具执行中 → "🔧 正在执行 bash: npm install · 已运行 Xs"
+ *  - 流式出 token → "正在生成回复 · 已运行 Xs"
+ *  - 其余(模型思考/工具准备)→ "正在思考 · 已运行 Xs"
+ *  <p>
+ *  hasPending:AI 真的在等用户输入(question/permission),此时不显示状态条。 */
 const hasPending = computed(() => chat.hasPendingInteraction)
+
+const statusText = computed(() => {
+  const act = chat.runningActivity
+  if (!act) return ''
+  if (act.kind === 'tool') return `🔧 正在执行 ${act.tool}${act.arg ? `: ${act.arg}` : ''}`
+  if (act.kind === 'streaming') return '正在生成回复'
+  return '正在思考'
+})
+
+/** 长时间(>60s)既无工具在跑、又无 token、也无任何事件时的温和提示(非警告) */
+const idleHint = computed(() => {
+  if (!chat.isStreaming || chat.runningActivity?.kind === 'tool' || chat.streamingText) return ''
+  if (chat.streamingStuckSeconds > 60) return '仍未收到响应,可点「停止」后重试'
+  return ''
+})
+
+const elapsedText = computed(() => {
+  const s = chat.streamingElapsedSeconds
+  return s > 0 ? ` · 已运行 ${s}s` : ''
+})
 
 const canSend = computed(() => !!(text.value.trim() || attachments.value.length))
 
@@ -78,13 +95,12 @@ async function onSend() {
   const payload = buildPayload()
   if (!payload) return
   if (chat.isStreaming) {
-    if (isStuck.value) {
-      // 解除阻塞后再发
+    if (chat.streamingStuckSeconds > 0) {
+      // 长时间无活动(无工具在跑、无 token):解除阻塞后再发送
       await chat.forceReleaseStreaming()
-      // 注意: 阻塞的当前 turn 实际正在等用户答案(而不是 session.idle)
-      // 所以发送下一条用户消息让对话继续即可
     } else {
-      // 还在正常流式中:忽略(避免竞争)
+      // AI 正在正常工作中:不静默忽略,给出轻柔提示
+      msg.info('AI 正在处理中,可点「停止」中断后再发送')
       return
     }
   }
@@ -103,11 +119,9 @@ function onInput() {
 }
 
 async function onAbort() {
-  if (isStuck.value) {
-    await chat.forceReleaseStreaming()
-  } else {
-    chat.abort()
-  }
+  // 长时间无活动:forceRelease 兜底清理本地流式状态;正常情况直接 abort
+  if (chat.streamingStuckSeconds > 0) await chat.forceReleaseStreaming()
+  else await chat.abort()
 }
 </script>
 
@@ -116,21 +130,12 @@ async function onAbort() {
     <div class="activity" v-if="chat.activityLog.length">
       <div v-for="(a, i) in chat.activityLog" :key="i" class="act-line">{{ a }}</div>
     </div>
-    <div v-if="isStuck" class="stuck-banner">
-      <n-alert :type="hasPending ? 'info' : 'warning'" show-icon>
-        <template #header>
-          <span v-if="hasPending">AI 正在等待您的回答(已等待 {{ chat.streamingStuckSeconds }}s)</span>
-          <span v-else>AI 暂时无响应(已空闲 {{ chat.streamingStuckSeconds }}s)</span>
-        </template>
-        <div class="stuck-tips">
-          <template v-if="hasPending">
-            AI 在上方提出了问题/权限请求,请滚动到 <b>提问区域</b> 作答后点「提交回答」;也可直接在下方输入框发送以继续。
-          </template>
-          <template v-else>
-            AI 可能正在执行耗时操作(如运行命令)或模型响应较慢。请耐心等待,点 <b>解除阻塞</b> 可中断当前生成。
-          </template>
-        </div>
-      </n-alert>
+    <div v-if="chat.isStreaming && !hasPending" class="status-bar">
+      <span class="status-dot"></span>
+      <span class="status-text">
+        {{ statusText }}<template v-if="elapsedText">{{ elapsedText }}</template>
+        <template v-if="idleHint"><span class="idle-hint"> — {{ idleHint }}</span></template>
+      </span>
     </div>
 
     <!-- 附件 chip 列表 -->
@@ -156,13 +161,12 @@ async function onAbort() {
         v-model="text"
         class="textarea"
         rows="1"
-        :placeholder="isStuck ? (hasPending ? '上方有待答问题,作答后发送;或直接输入以继续…' : 'AI 响应较慢,可输入新消息发送或点解除阻塞…') : '输入消息… (Enter 发送 / Shift+Enter 换行,📎 上传文件)'"
+        :placeholder="chat.isStreaming ? (hasPending ? '上方有待答问题,作答后发送;或直接输入以继续…' : 'AI 正在处理中,可点「停止」中断…') : '输入消息… (Enter 发送 / Shift+Enter 换行,📎 上传文件)'"
         @keydown.enter.exact.prevent="onSend"
         @input="onInput"
       />
       <template v-if="chat.isStreaming">
-        <n-button v-if="isStuck" type="warning" @click="onAbort">解除阻塞</n-button>
-        <n-button v-else type="error" @click="onAbort">停止</n-button>
+        <n-button type="error" @click="onAbort">停止</n-button>
       </template>
       <n-button v-else type="primary" :disabled="!canSend" @click="onSend">发送</n-button>
     </div>
@@ -170,8 +174,18 @@ async function onAbort() {
 </template>
 
 <style scoped>
-.stuck-banner { margin-bottom: 10px; }
-.stuck-tips { margin-top: 6px; font-size: 13px; color: #c8c8c8; }
+.status-bar {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 10px; padding: 6px 12px;
+  border-radius: 8px; font-size: 12.5px; color: #9aa3b2;
+  background: #1f2630; border: 1px solid #2a3342;
+}
+.status-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  background: #56b6c2; animation: status-pulse 1.2s ease-in-out infinite;
+}
+@keyframes status-pulse { 50% { opacity: .25; } }
+.idle-hint { color: #7f8ea3; }
 </style>
 
 <style scoped>
