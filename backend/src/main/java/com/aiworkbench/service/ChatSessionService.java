@@ -16,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Service
@@ -25,6 +26,20 @@ public class ChatSessionService {
     private final ChatSessionMapper chatSessionMapper;
     private final OpencodeClient opencodeClient;
     private final WorkspaceService workspaceService;
+
+    /**
+     * opencodeSessionId → ChatSession 进程内缓存(访问序 LRU,容量 512)。
+     * <p>
+     * SSE 流式期间每条 part 事件都会经 {@link #findByOpencodeSessionId} 反查会话,
+     * 直接查库是典型的 N+1(数百次/分钟)。会话 id 全局唯一且不随消息流变化,
+     * 缓存到进程生命周期级别安全。delete/rebind 时主动失效,无脏读。
+     */
+    private final Map<String, ChatSession> sessionCache = new java.util.LinkedHashMap<>(128, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, ChatSession> eldest) {
+            return size() > 512;
+        }
+    };
 
     public SessionVo create(CreateSessionRequest req, Long userId) {
         workspaceService.ensureUserWorkspace(userId);
@@ -100,12 +115,31 @@ public class ChatSessionService {
             log.warn("delete opencode session failed, continue to delete local: {}", e.toString());
         }
         chatSessionMapper.deleteById(sessionId);
+        // 缓存失效:防止删除后残留会话仍被事件流反查命中
+        synchronized (sessionCache) {
+            sessionCache.remove(s.getOpencodeSessionId());
+        }
     }
 
-    /** 供 SSE 消费者按 opencodeSessionId 反查(可能查不到,如非本实例会话) */
+    /** 供 SSE 消费者按 opencodeSessionId 反查(可能查不到,如非本实例会话)。走进程内缓存避免流式 N+1。 */
     public ChatSession findByOpencodeSessionId(String opencodeSessionId) {
-        return chatSessionMapper.selectOne(new LambdaQueryWrapper<ChatSession>()
+        if (opencodeSessionId == null) {
+            return null;
+        }
+        synchronized (sessionCache) {
+            ChatSession cached = sessionCache.get(opencodeSessionId);
+            if (cached != null) {
+                return cached;
+            }
+        }
+        ChatSession s = chatSessionMapper.selectOne(new LambdaQueryWrapper<ChatSession>()
                 .eq(ChatSession::getOpencodeSessionId, opencodeSessionId));
+        if (s != null) {
+            synchronized (sessionCache) {
+                sessionCache.put(opencodeSessionId, s);
+            }
+        }
+        return s;
     }
 
     /**
@@ -120,8 +154,15 @@ public class ChatSessionService {
         if (s == null) {
             return;
         }
+        String oldId = s.getOpencodeSessionId();
         s.setOpencodeSessionId(newOpencodeSessionId);
         chatSessionMapper.updateById(s);
+        // 缓存失效:旧 id 已不再指向该会话;新 id 首条事件自然 miss 后回填
+        if (oldId != null) {
+            synchronized (sessionCache) {
+                sessionCache.remove(oldId);
+            }
+        }
     }
 
     private SessionVo toVo(ChatSession s) {

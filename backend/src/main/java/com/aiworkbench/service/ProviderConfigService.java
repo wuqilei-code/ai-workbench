@@ -30,6 +30,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Provider/Model 配置管理 + applyConfig(渲染 opencode.json/env + 重启 opencode)。
@@ -233,15 +235,44 @@ public class ProviderConfigService {
             throw new BusinessException(ResultCode.INTERNAL_ERROR.getCode(), "写入 opencode 配置失败");
         }
 
-        // 扇出:对每个活跃用户进程 restart(start 会从最新模板 seed)
+        // 扇出:对每个活跃用户进程 restart(start 会从最新模板 seed)。
+        // 跳过正在生成的用户(restart 会打断活跃对话);被跳过的用户在其进程被空闲回收、下次首启时自动拿新模板。
         Set<Long> active = new HashSet<>(processManager.activeUserIds());
-        log.info("applyConfig: template rendered, fanning out restart to {} active user(s)", active.size());
+        List<Long> toRestart = new ArrayList<>();
         for (Long userId : active) {
-            try {
-                processManager.restart(userId);
-            } catch (Exception e) {
-                log.warn("applyConfig fan-out restart failed for user {}: {}", userId, e.toString());
+            if (processManager.isStreaming(userId)) {
+                log.info("applyConfig: skip user {} (streaming), will pick up new config on next process start", userId);
+            } else {
+                toRestart.add(userId);
             }
+        }
+        if (toRestart.isEmpty()) {
+            return;
+        }
+        log.info("applyConfig: template rendered, restarting {} of {} active user process(es)", toRestart.size(), active.size());
+        // 并发限流(5):restart 为阻塞操作(健康轮询),串行在活跃用户多时会让 apply 超时。
+        int threads = Math.min(5, toRestart.size());
+        ExecutorService pool = Executors.newFixedThreadPool(threads, r -> {
+            Thread t = new Thread(r, "apply-config-fanout");
+            t.setDaemon(true);
+            return t;
+        });
+        try {
+            List<java.util.concurrent.Callable<Void>> tasks = toRestart.stream()
+                    .map(userId -> (java.util.concurrent.Callable<Void>) () -> {
+                        try {
+                            processManager.restart(userId);
+                        } catch (Exception e) {
+                            log.warn("applyConfig fan-out restart failed for user {}: {}", userId, e.toString());
+                        }
+                        return null;
+                    }).toList();
+            pool.invokeAll(tasks);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("applyConfig fan-out interrupted");
+        } finally {
+            pool.shutdown();
         }
     }
 

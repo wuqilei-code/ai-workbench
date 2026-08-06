@@ -57,6 +57,15 @@ public class OpencodeClient {
                 .block();
     }
 
+    /**
+     * 预热:按需启动该用户的 opencode 进程(阻塞至 READY),不产生会话/消息。
+     * <p>
+     * 用于用户进入会话页时提前拉起进程,避免首条消息冷启动阻塞数秒(进程由空闲回收管理,15min 无活动自动释放)。
+     */
+    public void warmup(long userId) {
+        processManager.getOrStart(userId);
+    }
+
     /** POST /session/{id}/prompt_async — 异步发消息,流式走 /event(由实例消费者投递)。 */
     public void promptAsync(long userId, String opencodeSessionId, PromptAsyncBody body) {
         UserProcess proc = processManager.getOrStart(userId);

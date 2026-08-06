@@ -212,28 +212,11 @@ public class ChatMessageService {
             return;
         }
         String messageID = part.get("messageID").asText();
-
-        ChatMessage existing = chatMessageMapper.selectOne(new LambdaQueryWrapper<ChatMessage>()
-                .eq(ChatMessage::getSessionId, session.getId())
-                .eq(ChatMessage::getOpencodeMessageId, messageID)
-                .last("limit 1"));
-
-        boolean isNew = existing == null;
-        if (isNew) {
-            // message.updated 尚未到达(理论上不会发生,做兜底):建壳
-            existing = new ChatMessage();
-            existing.setSessionId(session.getId());
-            existing.setUserId(session.getUserId());
-            existing.setOpencodeMessageId(messageID);
-            existing.setRole("assistant");
-            existing.setContent("");
-            existing.setStatus("streaming");
-        }
+        ChatMessage existing = findOrCreateMessage(session, messageID);
 
         if ("text".equals(partType)) {
             // text part:写 content(用户消息 & 助手消息文本都走这里)
-            String text = part.has("text") ? part.get("text").asText() : "";
-            existing.setContent(text);
+            existing.setContent(part.has("text") ? part.get("text").asText() : "");
         } else {
             // tool / step-finish 等结构化 part:合并到 parts JSON 列
             ObjectNode partsNode = parsePartsObject(existing.getParts());
@@ -244,11 +227,58 @@ public class ChatMessageService {
                 log.warn("serialize parts failed (messageID={}): {}", messageID, e.toString());
             }
         }
+        persistMessage(existing);
+    }
 
-        if (isNew) {
-            chatMessageMapper.insert(existing);
+    /**
+     * 由 SSE 消费者对<b>节流后</b>的流式文本落库(消费者层已把中间态合并进内存)。
+     * <p>
+     * 与 {@link #upsertPartFromEvent} 的 text 分支等价,但只更新 content,
+     * 供 {@link com.aiworkbench.service.opencode.OpencodeInstanceEventConsumer} 以
+     * 一定时间间隔调用,避免流式期间把整段 MEDIUMTEXT 反复重写。
+     *
+     * @param opencodeSessionId 事件中的 opencode 会话 id
+     * @param messageID         目标消息的 opencode 消息 id
+     * @param text              最新文本内容
+     */
+    public void upsertStreamingText(String opencodeSessionId, String messageID, String text) {
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        ChatSession session = chatSessionService.findByOpencodeSessionId(opencodeSessionId);
+        if (session == null) {
+            return;
+        }
+        ChatMessage existing = findOrCreateMessage(session, messageID);
+        existing.setContent(text);
+        persistMessage(existing);
+    }
+
+    /** 按 (sessionId, opencodeMessageId) 查找消息;不存在则建 assistant 壳(message.updated 前的兜底)。 */
+    private ChatMessage findOrCreateMessage(ChatSession session, String messageID) {
+        ChatMessage existing = chatMessageMapper.selectOne(new LambdaQueryWrapper<ChatMessage>()
+                .eq(ChatMessage::getSessionId, session.getId())
+                .eq(ChatMessage::getOpencodeMessageId, messageID)
+                .last("limit 1"));
+        if (existing != null) {
+            return existing;
+        }
+        ChatMessage m = new ChatMessage();
+        m.setSessionId(session.getId());
+        m.setUserId(session.getUserId());
+        m.setOpencodeMessageId(messageID);
+        m.setRole("assistant");
+        m.setContent("");
+        m.setStatus("streaming");
+        return m;
+    }
+
+    /** 新消息 insert,已有消息 updateById。 */
+    private void persistMessage(ChatMessage m) {
+        if (m.getId() != null) {
+            chatMessageMapper.updateById(m);
         } else {
-            chatMessageMapper.updateById(existing);
+            chatMessageMapper.insert(m);
         }
     }
 

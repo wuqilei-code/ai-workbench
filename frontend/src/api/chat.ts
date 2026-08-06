@@ -9,6 +9,7 @@ export const chatApi = {
   updateSession: (id: number, data: Partial<{ title: string; providerId: string; modelId: string; archived: number }>) =>
     http.patch<SessionVo>(`/chat/sessions/${id}`, data).then(unwrap),
   deleteSession: (id: number) => http.delete(`/chat/sessions/${id}`),
+  warmup: (id: number) => http.post(`/chat/sessions/${id}/warmup`),
   listMessages: (id: number, limit = 200) =>
     http.get<MessageVo[]>(`/chat/sessions/${id}/messages`, { params: { limit } }).then(unwrap),
   sendMessage: (id: number, data: { text: string; providerId?: string; modelId?: string }) =>

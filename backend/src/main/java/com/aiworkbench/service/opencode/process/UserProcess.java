@@ -23,6 +23,8 @@ public class UserProcess {
     private final OpencodeInstanceEventConsumer eventConsumer;
     private final AtomicReference<State> state = new AtomicReference<>(State.STARTING);
     private volatile Instant lastActivityAt = Instant.now();
+    /** 是否正在生成(由 SSE 消费者上报;applyConfig 据此跳过重启,避免打断活跃对话) */
+    private volatile boolean streaming = false;
 
     public UserProcess(long userId, int uid, int gid, int port, Process process,
                        WebClient webClient, OpencodeInstanceEventConsumer eventConsumer) {
@@ -54,4 +56,6 @@ public class UserProcess {
     public State getState() { return state.get(); }
     public void setState(State s) { state.set(s); }
     public Instant getLastActivityAt() { return lastActivityAt; }
+    public boolean isStreaming() { return streaming; }
+    public void setStreaming(boolean streaming) { this.streaming = streaming; }
 }

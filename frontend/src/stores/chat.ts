@@ -167,6 +167,8 @@ export const useChatStore = defineStore('chat', () => {
     }
     subscribe()
     startWatchdog()
+    // 预热 opencode 进程:提前拉起,避免首条消息冷启动阻塞数秒(后端幂等 + 15min 空闲回收)
+    chatApi.warmup(id).catch((e) => console.debug('[chat] warmup skipped', e))
   }
 
   async function deleteSession(id: number) {

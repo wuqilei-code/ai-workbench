@@ -26,11 +26,24 @@ import java.util.List;
 public class ChatSessionController {
 
     private final ChatSessionService chatSessionService;
+    private final com.aiworkbench.service.opencode.OpencodeClient opencodeClient;
 
     @PostMapping
     @AuditLog(action = "创建会话")
     public R<SessionVo> create(@Valid @RequestBody CreateSessionRequest req) {
         return R.ok(chatSessionService.create(req, SecurityUtil.currentUserId()));
+    }
+
+    /**
+     * 预热:进入会话页时调用,提前拉起该用户 opencode 进程(幂等,阻塞至就绪),
+     * 避免首条消息冷启动等待。不审计(高频无业务语义)。
+     */
+    @PostMapping("/{id}/warmup")
+    public R<Void> warmup(@PathVariable Long id) {
+        Long userId = SecurityUtil.currentUserId();
+        chatSessionService.getOwned(id, userId);
+        opencodeClient.warmup(userId);
+        return R.ok();
     }
 
     @GetMapping

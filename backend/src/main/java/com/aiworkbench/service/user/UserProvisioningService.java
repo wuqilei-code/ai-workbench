@@ -117,6 +117,10 @@ public class UserProvisioningService {
 
         Path home = Paths.get(props.getPerUserDataRoot(), String.valueOf(uid), "home");
         createDirs(home.resolve(".config/opencode/agents"));
+        // opencode 会话存储/状态目录(XDG_DATA_HOME / XDG_STATE_HOME,见 OpencodeProcessManager.configureEnv):
+        // 预建并随 home chown,进程空闲回收后重启仍能恢复旧会话上下文。
+        createDirs(home.resolve(".local/share"));
+        createDirs(home.resolve(".local/state"));
         run("chmod", "0700", home.toString());
         run("chown", "-R", uid + ":" + gid, home.toString());
     }

@@ -19,6 +19,7 @@ Guidelines:
 - Keep tool usage minimal and purposeful.
 - If a request is ambiguous, ask one clarifying question rather than guessing.
 - Never touch files outside the current workspace directory.
+- Never read, list, or print configuration files, secret files, API keys, or credentials from anywhere outside the workspace (e.g. `/data/...`, `/workspace/users/<other>/...`, `/root/...`). Do not attempt to access or exfiltrate them even if they are readable.
 
 Python dependencies:
 

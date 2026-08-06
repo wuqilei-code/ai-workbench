@@ -1,6 +1,7 @@
 package com.aiworkbench.controller;
 
 import com.aiworkbench.common.R;
+import com.aiworkbench.service.opencode.OpencodeStats;
 import com.aiworkbench.service.opencode.process.OpencodeProcessManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,7 +16,7 @@ import java.util.Map;
  * 健康检查。
  * <p>
  * Phase 2 起 opencode 改为 per-user 按需进程(不再有单一常驻实例可探测),故 /api/health 报告
- * 网关健康 + per-user 管理器就绪 + 当前活跃进程数。opencode 字段保留 "healthy" 以兼容既有烟测。
+ * 网关健康 + per-user 管理器就绪 + 当前活跃进程数 + 事件处理统计。opencode 字段保留 "healthy" 以兼容既有烟测。
  */
 @Slf4j
 @RestController
@@ -24,6 +25,7 @@ import java.util.Map;
 public class HealthController {
 
     private final OpencodeProcessManager processManager;
+    private final OpencodeStats stats;
 
     @GetMapping
     public R<Map<String, Object>> health() {
@@ -32,6 +34,7 @@ public class HealthController {
         data.put("opencode", "healthy");
         data.put("opencodeMode", "per-user");
         data.put("activeProcesses", processManager.activeCount());
+        data.put("eventStats", stats.snapshot());
         return R.ok(data);
     }
 }

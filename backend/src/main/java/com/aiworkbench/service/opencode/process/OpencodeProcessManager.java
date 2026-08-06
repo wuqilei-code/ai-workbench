@@ -54,6 +54,7 @@ public class OpencodeProcessManager {
     private final ChatMessageService chatMessageService;
     private final ObjectMapper objectMapper;
     private final WebClient.Builder webClientBuilder;
+    private final com.aiworkbench.service.opencode.OpencodeStats stats;
 
     public OpencodeProcessManager(OpencodeProperties props,
                                   PortAllocator portAllocator,
@@ -63,7 +64,8 @@ public class OpencodeProcessManager {
                                   OpencodeEventRouter router,
                                   ChatMessageService chatMessageService,
                                   ObjectMapper objectMapper,
-                                  @Qualifier("opencodeWebClientBuilder") WebClient.Builder webClientBuilder) {
+                                  @Qualifier("opencodeWebClientBuilder") WebClient.Builder webClientBuilder,
+                                  com.aiworkbench.service.opencode.OpencodeStats stats) {
         this.props = props;
         this.portAllocator = portAllocator;
         this.registry = registry;
@@ -73,6 +75,7 @@ public class OpencodeProcessManager {
         this.chatMessageService = chatMessageService;
         this.objectMapper = objectMapper;
         this.webClientBuilder = webClientBuilder;
+        this.stats = stats;
     }
 
     /** 健康检查轮询:最多 30 次 × 500ms = 15s */
@@ -91,7 +94,14 @@ public class OpencodeProcessManager {
     public UserProcess start(Long userId) {
         int uid = props.uidOf(userId);
         int gid = uid;
-        int port = portAllocator.allocate();
+        int port;
+        try {
+            port = portAllocator.allocate();
+        } catch (IllegalStateException e) {
+            log.warn("port pool exhausted ({} active) while starting user {}", activeCount(), userId);
+            throw new BusinessException(ResultCode.TOO_MANY_REQUESTS.getCode(),
+                    "当前并发用户数已达上限,请稍后重试");
+        }
         log.info("starting opencode for user {} (uid={} port={})", userId, uid, port);
 
         // 1. 确保 uid/账户/目录就绪(幂等)
@@ -134,8 +144,9 @@ public class OpencodeProcessManager {
                         "opencode 健康检查超时: " + tailLog(logFile));
             }
 
-            // 6. 挂事件消费者
-            consumer = new OpencodeInstanceEventConsumer(instanceClient, router, chatMessageService, objectMapper, port);
+            // 6. 挂事件消费者(上报生成状态给本管理器,供 applyConfig 跳过 streaming 用户)
+            consumer = new OpencodeInstanceEventConsumer(instanceClient, router, chatMessageService,
+                    objectMapper, port, userId, s -> markStreaming(userId, s), stats);
             consumer.start();
 
             UserProcess up = new UserProcess(userId, uid, gid, port, process, instanceClient, consumer);
@@ -183,6 +194,20 @@ public class OpencodeProcessManager {
     /** 仅返回已存在的进程;不启动。用于 abort 等不应触发首启的场景。 */
     public UserProcess getIfPresent(Long userId) {
         return registry.getIfPresent(userId);
+    }
+
+    /** 该用户进程当前是否正在生成(opencode 事件流上报;无活跃进程视为否)。applyConfig 据此跳过重启。 */
+    public boolean isStreaming(Long userId) {
+        UserProcess up = registry.getIfPresent(userId);
+        return up != null && up.isStreaming();
+    }
+
+    /** 由 SSE 消费者上报生成状态(part.updated → busy;session.idle/error → 空闲)。 */
+    public void markStreaming(Long userId, boolean streaming) {
+        UserProcess up = registry.getIfPresent(userId);
+        if (up != null) {
+            up.setStreaming(streaming);
+        }
     }
 
     // ============ 停止 / 重启 ============
@@ -300,11 +325,15 @@ public class OpencodeProcessManager {
         return null;
     }
 
-    /** 设置子进程环境:HOME / XDG_CONFIG_HOME / Basic auth 凭据 + 解析用户 opencode.env 里的 API key。 */
+    /** 设置子进程环境:HOME / XDG 三个目录(显式固定,避免依赖默认值漂移) / Basic auth 凭据 + 解析用户 opencode.env 里的 API key。 */
     private void configureEnv(Map<String, String> env, Long userId, int uid) {
         Path home = Paths.get(props.getPerUserDataRoot(), String.valueOf(uid), "home");
         env.put("HOME", home.toString());
         env.put("XDG_CONFIG_HOME", home.resolve(".config").toString());
+        // 显式固定数据/状态目录:opencode 会话存储落在 XDG_DATA_HOME,
+        // 进程被空闲回收后重启仍能按原 opencode_session_id 恢复上下文(同 uid 同 HOME 同目录)。
+        env.put("XDG_DATA_HOME", home.resolve(".local/share").toString());
+        env.put("XDG_STATE_HOME", home.resolve(".local/state").toString());
         env.put("OPENCODE_SERVER_USERNAME", props.getUsername());
         env.put("OPENCODE_SERVER_PASSWORD", props.getPassword());
         // 解析用户 opencode.env 中的 KEY=VALUE(解密后的 API key),注入子进程 env

@@ -80,4 +80,4 @@ ai-workbench/
 └── frontend/      Vue 3 + Vite + TS
 ```
 
-详见 [实施方案](.trae/documents/ai-workbench-mvp-plan.md)。
+详见 [多用户安全加固方案](.trae/documents/ai-workbench-per-user-isolation.md)。
