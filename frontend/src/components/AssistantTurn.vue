@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 import { useChatStore } from '@/stores/chat'
 import { renderMarkdown } from '@/utils/markdown'
@@ -36,6 +36,40 @@ const turnInProgress = computed(() => chat.isStreaming && isLastTurn.value)
 
 /** 本轮生成已运行秒数:秒数在走 = AI 仍在工作,用于安抚"以为断线/暂停"的疑虑 */
 const runningSeconds = computed(() => chat.streamingElapsedSeconds)
+
+/** 友好提示:有工具在跑就展示(即使已有消息壳,不再依赖 !activeMessageId)。
+ *  - 内容生成/写文件类工具 → "正在生成/写入内容…"
+ *  - 其它工具 → "正在执行 xxx…"
+ *  - 无工具无文本(纯思考)→ "AI 正在处理中…" */
+const showWorkingHint = computed(() =>
+  turnInProgress.value &&
+  !pendingQuestionHost.value &&
+  !pendingPermissionHost.value &&
+  (chat.runningActivity?.kind === 'tool' || !activeMessageId.value),
+)
+
+const pendingHint = computed(() => {
+  const act = chat.runningActivity
+  if (act?.kind === 'tool') {
+    if (isFileProducingTool({ tool: act.tool } as ToolCall)) {
+      return act.arg ? `正在生成/写入内容:${act.arg},请稍候…` : '正在生成/写入内容,请稍候…'
+    }
+    return act.arg ? `正在执行 ${act.tool}(${act.arg}),请稍候…` : `正在执行 ${act.tool},请稍候…`
+  }
+  return 'AI 正在处理中,请稍候…'
+})
+
+/** 内容生成/写文件类工具刚开始执行时,弹一次轻提示第一时间安抚用户(去重防连弹) */
+let lastHintedTool = ''
+watch(() => chat.runningActivity, (act) => {
+  if (!act || act.kind !== 'tool') return
+  const key = `${act.tool}|${act.arg}`
+  if (key === lastHintedTool) return
+  lastHintedTool = key
+  if (isFileProducingTool({ tool: act.tool } as ToolCall)) {
+    msg.info('AI 正在生成/写入内容,可能需要一点时间,请稍候…')
+  }
+})
 
 /** 某个 step 是否正在流式接收文本 */
 function isStepActive(step: Step | null): boolean {
@@ -464,10 +498,13 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
         />
         <span v-if="isStepActive(turn.finalAnswer)" class="cursor">▋</span>
       </div>
-      <div v-else-if="turnInProgress && !activeMessageId && !pendingQuestionHost && !pendingPermissionHost" class="pending">
+      <div v-else-if="showWorkingHint" class="pending">
         <n-spin size="small" />
         <span v-if="chat.streamingStuckSeconds > 60">仍未收到响应,可点「停止」后重试</span>
-        <span v-else>AI 正在处理中<template v-if="runningSeconds > 0">,已运行 {{ runningSeconds }}s</template>,请稍候…</span>
+        <template v-else>
+          <span>{{ pendingHint }}</span>
+          <span v-if="runningSeconds > 0" class="pending-elapsed">已运行 {{ runningSeconds }}s</span>
+        </template>
       </div>
 
       <!-- 结果文件区:AI 声明的交付文件,点击预览 -->
@@ -705,6 +742,7 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
 @keyframes blink { 50% { opacity: 0; } }
 
 .pending { display: flex; align-items: center; gap: 8px; color: #888; font-size: 13px; padding: 4px 0; }
+.pending-elapsed { color: #9aa3b2; font-size: 12px; }
 
 /* ========== pending block (custom, replaces n-alert) ========== */
 .pending-block {
