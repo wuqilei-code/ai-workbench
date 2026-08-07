@@ -48,6 +48,59 @@ export function buildTurns(messages: MessageVo[]): Turn[] {
   return turns
 }
 
+/** 渲染流条目:一轮对话(turn)或一张 AI 变更总结卡片(summary),按时间顺序交错。 */
+export type FlowItem =
+  | { kind: 'turn'; turn: Turn }
+  | { kind: 'summary'; summary: {
+      summary: string
+      files: { status: string; path: string }[]
+      at?: string
+      sha?: string
+      parentSha?: string
+    } }
+
+/** summary 条目形状(与 chat store 的 summaries 元素对齐) */
+export interface SummaryItem {
+  summary: string
+  files: { status: string; path: string }[]
+  at?: string
+  sha?: string
+  parentSha?: string
+}
+
+/**
+ * 把"轮 + 总结"按时间交错成有序渲染流,让每张总结卡片紧跟它所属的那一轮。
+ * <p>
+ * 轮结束时间 = 该轮最后一条 assistant 的 createdAt(无则用 user 时间);
+ * 总结时间 = 其 createdAt/at。总结诞生于对应轮 idle 之后、下一条 user 之前,按时间归并即可原位放置。
+ */
+export function buildFlow(turns: Turn[], summaries: SummaryItem[]): FlowItem[] {
+  const items: FlowItem[] = []
+  const turnEnd = (t: Turn): number => {
+    const steps = [...t.steps]
+    if (t.finalAnswer) steps.push(t.finalAnswer)
+    const last = steps[steps.length - 1]
+    const ts = last?.message?.createdAt ?? t.userMessage?.createdAt
+    return ts ? new Date(ts).getTime() : 0
+  }
+  const summaryAt = (s: SummaryItem): number => (s.at ? new Date(s.at).getTime() : 0)
+
+  let i = 0
+  let j = 0
+  while (i < turns.length || j < summaries.length) {
+    const hasTurn = i < turns.length
+    const hasSum = j < summaries.length
+    if (hasTurn && (!hasSum || turnEnd(turns[i]) <= summaryAt(summaries[j]))) {
+      items.push({ kind: 'turn', turn: turns[i++] })
+    } else if (hasSum) {
+      items.push({ kind: 'summary', summary: summaries[j++] })
+    } else {
+      break
+    }
+  }
+  return items
+}
+
 /** 把 turn 内最后一条 step 提为 finalAnswer;若有 stop 标记则优先它 */
 function finalizeTurn(turn: Turn) {
   if (turn.steps.length === 0) return

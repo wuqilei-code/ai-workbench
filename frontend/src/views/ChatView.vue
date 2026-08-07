@@ -125,14 +125,13 @@ const showThinkingFallback = computed(
 
     <div class="chat-body" ref="scrollRef">
       <template v-if="chat.currentSessionId">
-        <template v-for="t in chat.turns" :key="t.id">
-          <ChatMessage v-if="t.userMessage" :message="t.userMessage" />
-          <AssistantTurn v-if="t.finalAnswer || t.steps.length" :turn="t" :session-id="chat.currentSessionId" />
+        <template v-for="item in chat.flow" :key="item.kind === 'turn' ? item.turn.id : 'sum-' + item.summary.at + '-' + item.summary.summary.length">
+          <template v-if="item.kind === 'turn'">
+            <ChatMessage v-if="item.turn.userMessage" :message="item.turn.userMessage" />
+            <AssistantTurn v-if="item.turn.finalAnswer || item.turn.steps.length" :turn="item.turn" :session-id="chat.currentSessionId" />
+          </template>
+          <ChangeSummaryCard v-else :summary="item.summary" />
         </template>
-        <!-- AI 变更总结卡片:本轮 AI 改了什么 -->
-        <div v-if="chat.summaries.length" class="summary-area">
-          <ChangeSummaryCard v-for="(s, si) in chat.summaries" :key="si" :summary="s" />
-        </div>
         <!-- 流式兜底:token 已到但 meta 尚未并入 turn -->
         <ChatMessage
           v-if="showStreamingBubble"
@@ -173,6 +172,5 @@ const showThinkingFallback = computed(
 .head-left .title { font-weight: 600; }
 .head-right { display: flex; align-items: center; gap: 8px; }
 .chat-body { flex: 1; overflow-y: auto; padding: 20px; }
-.summary-area { display: flex; flex-direction: column; }
 .thinking { display: flex; align-items: center; gap: 8px; color: #888; padding: 8px 0; }
 </style>

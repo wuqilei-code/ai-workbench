@@ -4,7 +4,7 @@ import { chatApi } from '@/api/chat'
 import { modelApi } from '@/api/admin'
 import { subscribeSession, type SseHandlers } from '@/api/sse'
 import { useAuthStore } from './auth'
-import { buildTurns, summarizeToolCall } from '@/utils/turns'
+import { buildTurns, buildFlow, summarizeToolCall } from '@/utils/turns'
 import type {
   SessionVo,
   MessageVo,
@@ -106,6 +106,9 @@ export const useChatStore = defineStore('chat', () => {
 
   /** 由 messages 派生的 Turn 列表(只依赖 messages,不依赖流式文本) */
   const turns = computed(() => buildTurns(messages.value))
+
+  /** 轮 + 变更总结按时间交错的有序渲染流:让总结卡片紧跟所属轮,而非堆到底部 */
+  const flow = computed(() => buildFlow(turns.value, summaries.value))
 
   /** 用户手动折叠覆盖:turnId → 是否展开思考区(true 展开 / false 折叠);undefined 未覆盖 */
   const manualCollapseOverride = ref<Record<string, boolean>>({})
@@ -872,7 +875,7 @@ export const useChatStore = defineStore('chat', () => {
   })
 
   return {
-    sessions, agents, currentSessionId, currentSession, messages, turns, summaries, streamingText,
+    sessions, agents, currentSessionId, currentSession, messages, turns, flow, summaries, streamingText,
     streamingMessageId, isStreaming, streamingStuckSeconds, streamingElapsedSeconds, runningActivity,
     hasPendingInteraction, connected, changedFilePaths,
     availableModels, selectedProviderId, selectedModelId,
