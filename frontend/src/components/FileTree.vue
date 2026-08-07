@@ -480,7 +480,7 @@ onMounted(() => load(''))
             </span>
             <span v-else class="hist-diff-title">选择基线后显示差异</span>
           </div>
-          <n-spin :show="diffLoading">
+          <n-spin class="hist-diff-spin" :show="diffLoading">
             <div v-if="diffResult" class="diff-view">
               <div v-if="!diffResult.textDiff" class="diff-note">二进制文件,无法按行显示差异</div>
               <div v-else-if="!diffResult.lines.length" class="diff-note">两版内容一致,无差异</div>
@@ -528,8 +528,10 @@ onMounted(() => load(''))
 .hist-body { display: flex; flex-direction: column; gap: 12px; height: 100%; min-height: 0; }
 .hist-list { overflow-y: auto; flex: 0 0 auto; max-height: 38%; border-bottom: 1px solid #2a2a2e; padding-bottom: 10px; }
 .hist-diff { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.hist-diff-head { margin-bottom: 8px; }
+.hist-diff-head { margin-bottom: 8px; flex: 0 0 auto; }
 .hist-diff-title { font-size: 12px; color: #7ab8ff; font-family: ui-monospace, monospace; }
+.hist-diff-spin { flex: 1; min-height: 0; display: flex; }
+.hist-diff-spin :deep(.n-spin-content) { flex: 1; min-height: 0; display: flex; }
 .hist-item {
   padding: 8px 10px; border: 1px solid #2a2a2e; border-radius: 6px;
   margin-bottom: 6px; cursor: pointer; background: #1f1f23;
