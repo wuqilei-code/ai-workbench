@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { fileApi } from '@/api/files'
-import { useMessage } from 'naive-ui'
-import type { FileNode } from '@/types'
+import { useMessage, useDialog } from 'naive-ui'
+import type { FileNode, FileHistoryEntry, FileDiffResult } from '@/types'
 
 /**
  * 工作区文件树浏览器。
@@ -16,6 +16,7 @@ const props = withDefaults(defineProps<{ root?: string; skillsMode?: boolean }>(
 })
 
 const msg = useMessage()
+const dialog = useDialog()
 const nodes = ref<FileNode[]>([])
 const currentPath = ref('')
 const selectedFile = ref<string | null>(null)
@@ -26,6 +27,18 @@ const previewSize = ref<number | undefined>(undefined)
 const fileInput = ref<HTMLInputElement | null>(null)
 const uploadDir = ref('')
 const uploading = ref(false)
+
+// ---------- 版本历史 / diff / 回滚 ----------
+const histVisible = ref(false)
+const histPath = ref('')
+const histLoading = ref(false)
+const histEntries = ref<FileHistoryEntry[]>([])
+/** 选中的两个 sha:index 0 为基线(from),index 1 为对比(to);只选一个时 to=null 对比工作区当前 */
+const diffFrom = ref<string | null>(null)
+const diffTo = ref<string | null>(null)
+const diffResult = ref<FileDiffResult | null>(null)
+const diffLoading = ref(false)
+const restoring = ref(false)
 
 /** 技能名校验正则(与 opencode 一致:小写字母数字 + 单连字符分隔,1-64 字符) */
 const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/
@@ -175,7 +188,96 @@ function triggerUpload() {
   fileInput.value?.click()
 }
 
-async function handleUpload(e: Event) {
+async function openHistory(node: FileNode) {
+  if (node.directory) return
+  histPath.value = node.path
+  histVisible.value = true
+  histEntries.value = []
+  diffFrom.value = null
+  diffTo.value = null
+  diffResult.value = null
+  histLoading.value = true
+  try {
+    histEntries.value = await fileApi.history(node.path)
+  } catch (e: any) {
+    msg.error(e.message)
+  } finally {
+    histLoading.value = false
+  }
+}
+
+function fmtTime(ts: number): string {
+  const d = new Date(ts)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+function shortSha(sha: string): string {
+  return sha.length > 7 ? sha.slice(0, 7) : sha
+}
+
+/** 选择基线:点某条历史 → 设为 from;再点另一条设为 to */
+function pickVersion(sha: string) {
+  if (diffFrom.value === null || diffFrom.value === sha) {
+    diffFrom.value = sha
+    diffTo.value = null
+  } else if (diffTo.value === null) {
+    diffTo.value = sha
+  } else {
+    // 已选了 to:重新从 from 开始
+    diffFrom.value = sha
+    diffTo.value = null
+  }
+  loadDiff()
+}
+
+async function loadDiff() {
+  if (!diffFrom.value) {
+    diffResult.value = null
+    return
+  }
+  diffLoading.value = true
+  try {
+    diffResult.value = await fileApi.diff(histPath.value, diffFrom.value, diffTo.value || undefined)
+  } catch (e: any) {
+    msg.error(e.message)
+  } finally {
+    diffLoading.value = false
+  }
+}
+
+function restoreVersion(sha: string) {
+  dialog.warning({
+    title: '回滚确认',
+    content: `将「${histPath.value}」回滚到 ${shortSha(sha)} 这个版本的内容,并保存为一个新版本。确定继续?`,
+    positiveText: '回滚',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      restoring.value = true
+      try {
+        await fileApi.restore(histPath.value, sha)
+        msg.success('已回滚')
+        histVisible.value = false
+        // 回滚后刷新文件列表(内容/大小变化)与历史
+        await load(currentPath.value)
+        selectedFile.value = null
+      } catch (e: any) {
+        msg.error(e.message)
+      } finally {
+        restoring.value = false
+      }
+    },
+  })
+}
+
+function closeHistory() {
+  histVisible.value = false
+  histPath.value = ''
+  histEntries.value = []
+  diffFrom.value = null
+  diffTo.value = null
+  diffResult.value = null
+}async function handleUpload(e: Event) {
   const input = e.target as HTMLInputElement
   const files = input.files
   if (!files || !files.length) return
@@ -279,6 +381,13 @@ onMounted(() => load(''))
             v-if="!n.directory"
             size="tiny"
             quaternary
+            title="版本历史/回滚"
+            @click.stop="openHistory(n)"
+          >🕘</n-button>
+          <n-button
+            v-if="!n.directory"
+            size="tiny"
+            quaternary
             title="下载"
             @click.stop="downloadNode(n)"
           >📥</n-button>
@@ -312,6 +421,63 @@ onMounted(() => load(''))
         :size="previewSize"
       />
     </n-modal>
+
+    <n-modal
+      v-model:show="histVisible"
+      preset="card"
+      :title="`历史 · ${histPath ? histPath.split(/[\\/]/).pop() : ''}`"
+      :style="{ width: '86vw', maxWidth: '900px' }"
+      :mask-closable="true"
+      :bordered="false"
+      class="fp-modal hist-modal"
+      @update:show="(s) => !s && closeHistory()"
+    >
+      <div class="hist-body">
+        <div class="hist-list">
+          <div v-if="histLoading" class="hist-empty">加载中…</div>
+          <div v-else-if="!histEntries.length" class="hist-empty">暂无历史版本(该文件尚未被快照)</div>
+          <div
+            v-for="h in histEntries"
+            :key="h.sha"
+            class="hist-item"
+            :class="{
+              isFrom: diffFrom === h.sha,
+              isTo: diffTo === h.sha,
+            }"
+            @click="pickVersion(h.sha)"
+          >
+            <div class="hist-meta">
+              <span class="hist-sha">{{ shortSha(h.sha) }}</span>
+              <span class="hist-time">{{ fmtTime(h.timestamp) }}</span>
+            </div>
+            <div class="hist-msg">{{ h.message || '(无说明)' }}</div>
+            <div class="hist-ops">
+              <span class="hist-tag" v-if="diffFrom === h.sha">基线</span>
+              <span class="hist-tag" v-else-if="diffTo === h.sha">对比</span>
+              <n-button size="tiny" quaternary @click.stop="restoreVersion(h.sha)" :loading="restoring">回滚到此</n-button>
+            </div>
+          </div>
+          <div class="hist-tip">点击历史条目选择基线,再点另一条对比;只选一条则对比工作区当前版本。</div>
+        </div>
+        <div class="hist-diff">
+          <div class="hist-diff-head">
+            <span v-if="diffFrom" class="hist-diff-title">
+              {{ diffTo ? `${shortSha(diffFrom)} → ${shortSha(diffTo)}` : `${shortSha(diffFrom)} → 当前` }}
+            </span>
+            <span v-else class="hist-diff-title">选择基线后显示差异</span>
+          </div>
+          <n-spin :show="diffLoading">
+            <div v-if="diffResult" class="diff-view">
+              <div v-if="!diffResult.textDiff" class="diff-note">二进制文件,无法按行显示差异</div>
+              <div v-else-if="!diffResult.lines.length" class="diff-note">两版内容一致,无差异</div>
+              <pre v-else class="diff-pre"><code>
+                <span v-for="(l, i) in diffResult.lines" :key="i" class="diff-line" :class="'dl-' + l.kind">{{ l.content }}</span>
+              </code></pre>
+            </div>
+          </n-spin>
+        </div>
+      </div>
+    </n-modal>
   </div>
 </template>
 
@@ -344,6 +510,48 @@ onMounted(() => load(''))
 .node-sub { color: #5a8fbf; font-size: 11px; font-family: ui-monospace, monospace; flex-shrink: 0; margin-left: auto; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .node-ops { display: flex; gap: 2px; flex-shrink: 0; }
 
+.hist-body { display: flex; gap: 14px; height: 100%; min-height: 0; }
+.hist-list { width: 46%; border-right: 1px solid #2a2a2e; padding-right: 12px; overflow-y: auto; }
+.hist-diff { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.hist-diff-head { margin-bottom: 8px; }
+.hist-diff-title { font-size: 12px; color: #7ab8ff; font-family: ui-monospace, monospace; }
+.hist-item {
+  padding: 8px 10px; border: 1px solid #2a2a2e; border-radius: 6px;
+  margin-bottom: 6px; cursor: pointer; background: #1f1f23;
+}
+.hist-item:hover { border-color: #3a3a40; }
+.hist-item.isFrom { border-color: #63e2b7; background: #102e26; }
+.hist-item.isTo { border-color: #7ab8ff; background: #10273f; }
+.hist-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.hist-sha { color: #7ab8ff; font-family: ui-monospace, monospace; font-size: 12px; }
+.hist-time { color: #888; font-size: 11px; }
+.hist-msg {
+  margin: 4px 0; color: #ddd; font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.hist-ops { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.hist-tag { font-size: 11px; padding: 1px 6px; border-radius: 3px; }
+.hist-item.isFrom .hist-tag { background: #1f6f4a; color: #c8ffe0; }
+.hist-item.isTo .hist-tag { background: #1f4e7a; color: #cfe9ff; }
+.hist-tip { margin-top: 8px; font-size: 11px; color: #777; line-height: 1.5; }
+.hist-empty { color: #777; font-size: 12px; padding: 12px 4px; }
+
+.diff-view { flex: 1; min-height: 0; overflow: auto; }
+.diff-pre { margin: 0; font-size: 12px; line-height: 1.55; font-family: ui-monospace, monospace; white-space: pre; overflow-x: auto; }
+.diff-pre code { display: block; padding: 8px 0; }
+.diff-line { display: block; padding: 0 8px; }
+.dl-add { background: #1f4a2e; color: #b6e7c5; }
+.dl-del { background: #4a2020; color: #e7b6b6; }
+.dl-hunk { background: #24304a; color: #9db8e0; }
+.dl-meta { color: #666; }
+.dl-ctx { color: #ccc; }
+.diff-note { color: #888; font-size: 12px; padding: 12px 4px; }
+
+@media (max-width: 720px) {
+  .hist-body { flex-direction: column; }
+  .hist-list { width: auto; border-right: none; padding-right: 0; margin-bottom: 10px; max-height: 40%; }
+}
+
 </style>
 
 <style>
@@ -353,4 +561,6 @@ onMounted(() => load(''))
   overflow: hidden;
   padding: 0;
 }
+.hist-modal .n-card__content { padding: 16px; }
+.hist-modal .hist-body { height: calc(86vh - 100px); }
 </style>

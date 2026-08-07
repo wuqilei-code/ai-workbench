@@ -5,6 +5,7 @@ import com.aiworkbench.common.SecurityUtil;
 import com.aiworkbench.common.audit.AuditLog;
 import com.aiworkbench.dto.file.FileWriteRequest;
 import com.aiworkbench.service.WorkspaceService;
+import com.aiworkbench.service.WorkspaceSnapshotService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.InputStreamResource;
@@ -34,6 +35,7 @@ import java.util.List;
 public class FileController {
 
     private final WorkspaceService workspaceService;
+    private final WorkspaceSnapshotService snapshotService;
 
     @GetMapping
     public R<List<WorkspaceService.FileNode>> list(@RequestParam(defaultValue = "") String path) {
@@ -119,6 +121,30 @@ public class FileController {
     @AuditLog(action = "删除文件")
     public R<Void> delete(@RequestParam String path) {
         workspaceService.deleteFile(SecurityUtil.currentUserId(), path);
+        return R.ok();
+    }
+
+    /**
+     * 文件历史:列出某文件的历史 commit(版本号/时间/说明),供前端 diff 与回滚。
+     */
+    @GetMapping("/history")
+    public R<List<WorkspaceSnapshotService.FileHistoryEntry>> history(@RequestParam String path) {
+        return R.ok(snapshotService.fileHistory(SecurityUtil.currentUserId(), path));
+    }
+
+    /** 两版文本 diff。to 可省略=对比当前工作区版本。 */
+    @GetMapping("/diff")
+    public R<WorkspaceSnapshotService.FileDiffResult> diff(
+            @RequestParam String path, @RequestParam String from,
+            @RequestParam(required = false) String to) {
+        return R.ok(snapshotService.fileDiff(SecurityUtil.currentUserId(), path, from, to));
+    }
+
+    /** 回滚到某版本:把文件内容恢复到指定 commit 的版本并提交一次快照。 */
+    @PostMapping("/restore")
+    @AuditLog(action = "回滚文件", targetSpel = "#path")
+    public R<Void> restore(@RequestParam String path, @RequestParam String sha) {
+        snapshotService.restoreFile(SecurityUtil.currentUserId(), path, sha);
         return R.ok();
     }
 

@@ -214,7 +214,6 @@ public class WorkspaceService {
         }
     }
 
-    /** 解析相对路径并校验未逃逸用户目录 */
     private Path safeResolve(Long userId, String relativePath) {
         Path base = Paths.get(userDir(userId)).toAbsolutePath().normalize();
         String rel = relativePath == null ? "" : relativePath;
@@ -226,6 +225,11 @@ public class WorkspaceService {
             throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "path traversal denied");
         }
         return resolved;
+    }
+
+    /** 供快照/回滚等写入场景使用:同 safeResolve 校验,返回已校验的工作区路径。 */
+    public Path resolveWritePath(Long userId, String relativePath) {
+        return safeResolve(userId, relativePath);
     }
 
     private String relativize(Long userId, Path absolute) {

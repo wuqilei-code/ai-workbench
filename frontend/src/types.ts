@@ -27,7 +27,7 @@ export interface SessionVo {
 export interface MessageVo {
   id: number
   opencodeMessageId?: string
-  role: 'user' | 'assistant' | 'tool' | 'system'
+  role: 'user' | 'assistant' | 'tool' | 'system' | 'summary'
   content: string
   /** 结构化 part:工具调用 & 步骤结束标记;旧消息为 null */
   parts?: StepParts | null
@@ -38,6 +38,8 @@ export interface MessageVo {
   _streaming?: boolean
   /** 前端本地态:生成失败时展示的错误文案 */
   error?: string
+  /** 前端本地态:AI 变更总结附带的信息 */
+  summaryFiles?: { status: string; path: string }[]
 }
 
 /** agent 选择项(opencode GET /agent 裁剪) */
@@ -165,4 +167,31 @@ export interface FileNode {
   directory: boolean
   size: number
   modified: number
+}
+
+/** 文件历史条目(对应后端 WorkspaceSnapshotService.FileHistoryEntry) */
+export interface FileHistoryEntry {
+  sha: string
+  timestamp: number
+  message: string
+}
+
+/** diff 单行 */
+export interface DiffLine {
+  kind: 'meta' | 'hunk' | 'add' | 'del' | 'ctx'
+  content: string
+}
+
+/** 文件 diff 结果 */
+export interface FileDiffResult {
+  textDiff: boolean
+  raw: string
+  lines: DiffLine[]
+}
+
+/** AI 变更总结卡片(role=summary 消息 + SSE 事件) */
+export interface ChangeSummary {
+  summary: string
+  files: { status: string; path: string }[]
+  at?: string
 }

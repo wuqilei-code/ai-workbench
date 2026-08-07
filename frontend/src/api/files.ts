@@ -1,5 +1,5 @@
 import { http, unwrap } from './http'
-import type { FileNode } from '@/types'
+import type { FileNode, FileHistoryEntry, FileDiffResult } from '@/types'
 
 export const fileApi = {
   list: (path = '') => http.get<FileNode[]>('/files', { params: { path } }).then(unwrap),
@@ -56,4 +56,14 @@ export const fileApi = {
 
   /** 新建目录 */
   mkdir: (path: string) => http.post('/files/mkdir', null, { params: { path } }),
+
+  /** 文件历史(版本列表) */
+  history: (path: string) => http.get<FileHistoryEntry[]>('/files/history', { params: { path } }).then(unwrap),
+
+  /** 两版 diff;to 省略=对比当前工作区版本 */
+  diff: (path: string, from: string, to?: string) =>
+    http.get<FileDiffResult>('/files/diff', { params: { path, from, to } }).then(unwrap),
+
+  /** 回滚到某版本 */
+  restore: (path: string, sha: string) => http.post('/files/restore', null, { params: { path, sha } }),
 }
