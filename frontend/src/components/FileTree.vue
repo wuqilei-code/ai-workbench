@@ -10,9 +10,15 @@ import type { FileNode, FileHistoryEntry, FileDiffResult } from '@/types'
  * - skillsMode:技能模式,显示「新建技能」按钮(建目录 + 生成合规 SKILL.md 并进入),并在空态/提示上引导。
  * currentPath 始终相对 root 记录;与后端交互时用 abs() 转成工作区相对路径。
  */
-const props = withDefaults(defineProps<{ root?: string; skillsMode?: boolean }>(), {
+const props = withDefaults(defineProps<{
+  root?: string
+  skillsMode?: boolean
+  /** 本会话内被 AI 改过的文件路径集合(工作区相对路径),用于高亮标记 */
+  changedPaths?: string[]
+}>(), {
   root: '',
   skillsMode: false,
+  changedPaths: () => [],
 })
 
 const msg = useMessage()
@@ -341,6 +347,13 @@ function onSearchInput() {
 const displayNodes = computed<FileNode[]>(() => searchResults.value ?? nodes.value)
 const isSearchMode = computed(() => searchResults.value !== null)
 
+/** 该节点是否属于本会话 AI 改动文件(高亮标记)。深度优先判完整路径是否命中。 */
+function isAiChanged(node: FileNode): boolean {
+  const paths = props.changedPaths
+  if (!paths || paths.length === 0) return false
+  return paths.includes(node.path) || paths.some((p) => p && p.startsWith(node.path + '/'))
+}
+
 onMounted(() => load(''))
 </script>
 
@@ -372,6 +385,7 @@ onMounted(() => load(''))
       <div v-for="n in displayNodes" :key="n.path" class="node">
         <div class="node-main" @click="open(n)">
           <span class="node-icon">{{ n.directory ? '📁' : '📄' }}</span>
+          <span v-if="isAiChanged(n)" class="ai-mark" title="本轮 AI 改动">✦</span>
           <span class="node-name" :class="{ dir: n.directory }">{{ n.name }}</span>
           <span v-if="isSearchMode" class="node-sub" :title="relFromAbs(n.path)">{{ relFromAbs(n.path) }}</span>
           <span v-if="!n.directory && !isSearchMode" class="node-size">{{ fmtSize(n.size) }}</span>
@@ -505,6 +519,7 @@ onMounted(() => load(''))
 }
 .node-icon { flex-shrink: 0; }
 .node-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-mark { color: #d4a72c; font-size: 11px; flex-shrink: 0; }
 .node-name.dir { font-weight: 600; }
 .node-size { color: #666; font-size: 11px; flex-shrink: 0; margin-left: auto; }
 .node-sub { color: #5a8fbf; font-size: 11px; font-family: ui-monospace, monospace; flex-shrink: 0; margin-left: auto; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

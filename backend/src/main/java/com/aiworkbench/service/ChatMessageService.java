@@ -686,14 +686,35 @@ public class ChatMessageService {
     }
 
     private MessageVo toVo(ChatMessage m) {
+        JsonNode parts = parseParts(m.getParts());
         return MessageVo.builder()
                 .id(m.getId())
                 .opencodeMessageId(m.getOpencodeMessageId())
                 .role(m.getRole())
                 .content(m.getContent())
-                .parts(parseParts(m.getParts()))
+                .parts(parts)
                 .status(m.getStatus())
                 .createdAt(m.getCreatedAt())
+                .summarySha("summary".equals(m.getRole()) && parts != null ? parts.path("summarySha").asText(null) : null)
+                .summaryParentSha("summary".equals(m.getRole()) && parts != null ? parts.path("summaryParentSha").asText(null) : null)
+                .summaryFiles(extractSummaryFiles(m.getRole(), parts))
                 .build();
+    }
+
+    /** 从 summary 消息的 parts 里解出变更文件清单(role != summary 时为空)。 */
+    private List<MessageVo.SummaryFileVo> extractSummaryFiles(String role, JsonNode parts) {
+        if (!"summary".equals(role) || parts == null) {
+            return null;
+        }
+        JsonNode arr = parts.path("summaryFiles");
+        if (!arr.isArray() || arr.isEmpty()) {
+            return null;
+        }
+        List<MessageVo.SummaryFileVo> list = new java.util.ArrayList<>();
+        arr.forEach(n -> list.add(MessageVo.SummaryFileVo.builder()
+                .status(n.path("status").asText(""))
+                .path(n.path("path").asText(""))
+                .build()));
+        return list;
     }
 }

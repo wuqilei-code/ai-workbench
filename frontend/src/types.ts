@@ -38,8 +38,12 @@ export interface MessageVo {
   _streaming?: boolean
   /** 前端本地态:生成失败时展示的错误文案 */
   error?: string
-  /** 前端本地态:AI 变更总结附带的信息 */
+  /** AI 变更总结附带的信息(role=summary 时由后端透传) */
   summaryFiles?: { status: string; path: string }[]
+  /** AI 变更总结对应快照 commit sha(role=summary 时后端透传) */
+  summarySha?: string
+  /** 该快照的父提交 sha,用于展示"本轮(parent→sha)变更" */
+  summaryParentSha?: string
 }
 
 /** agent 选择项(opencode GET /agent 裁剪) */
@@ -194,4 +198,8 @@ export interface ChangeSummary {
   summary: string
   files: { status: string; path: string }[]
   at?: string
+  /** 触发该总结的快照 commit sha(点击卡片看 diff/回滚用) */
+  sha?: string
+  /** 该快照的父提交 sha,与 sha 组成"本轮变更"的 diff 范围 */
+  parentSha?: string
 }

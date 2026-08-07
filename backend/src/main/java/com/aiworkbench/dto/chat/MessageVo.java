@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 @Builder
@@ -17,4 +18,17 @@ public class MessageVo {
     private JsonNode parts;
     private String status;
     private LocalDateTime createdAt;
+    /** 仅 role=summary:本次快照 commit sha(历史重建总结卡片 + 跳转 diff 用) */
+    private String summarySha;
+    /** 仅 role=summary:该快照的父提交 sha,用于展示"本轮(parent→sha)变更" */
+    private String summaryParentSha;
+    /** 仅 role=summary:本轮变更文件清单 */
+    private List<SummaryFileVo> summaryFiles;
+
+    @Data
+    @Builder
+    public static class SummaryFileVo {
+        private String status;
+        private String path;
+    }
 }

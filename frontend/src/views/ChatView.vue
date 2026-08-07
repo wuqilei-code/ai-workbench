@@ -152,10 +152,10 @@ const showThinkingFallback = computed(
       <n-drawer-content title="工作区" closable>
         <n-tabs type="line" animated size="small">
           <n-tab-pane name="files" tab="文件">
-            <FileTree />
+            <FileTree :changed-paths="Array.from(chat.changedFilePaths)" />
           </n-tab-pane>
           <n-tab-pane name="skills" tab="技能">
-            <FileTree root=".opencode/skills" skills-mode />
+            <FileTree root=".opencode/skills" skills-mode :changed-paths="Array.from(chat.changedFilePaths)" />
           </n-tab-pane>
         </n-tabs>
       </n-drawer-content>

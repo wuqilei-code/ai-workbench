@@ -103,6 +103,19 @@ public class WorkspaceSnapshotService {
         return out;
     }
 
+    /** sha 的父提交 sha;无父(首个 commit)或无效 → null。用于总结卡片展示"本轮(parent→sha)变更"。 */
+    public String parentSha(Long userId, String sha) {
+        if (sha == null || sha.isBlank()) {
+            return null;
+        }
+        Result r = git(userDir(userId), uidOf(userId), "rev-parse", sha + "^");
+        if (r.exitCode != 0) {
+            return null;
+        }
+        String p = r.text().trim();
+        return p.isEmpty() ? null : p;
+    }
+
     /** 单文件历史:按时间倒序的 commit 列表。 */
     public List<FileHistoryEntry> fileHistory(Long userId, String relativePath) {
         String path = normalizePath(relativePath);

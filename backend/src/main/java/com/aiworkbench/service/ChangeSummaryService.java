@@ -13,6 +13,7 @@ import com.aiworkbench.service.opencode.dto.PromptAsyncBody;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -22,6 +23,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * AI 变更总结服务:每轮对话快照后,用 scratch 会话(独立目录,避免操作真实工作区)
@@ -51,55 +53,74 @@ public class ChangeSummaryService {
     private static final long POLL_INTERVAL_MS = 1000L;
     private static final long POLL_TIMEOUT_MS = 60_000L;
 
+    /** 每用户总结进行中标志,防 scratch 会话自身 idle 再次触发总结导致的递归/风暴。 */
+    private final ConcurrentHashMap<Long, Boolean> inFlight = new ConcurrentHashMap<>();
+
     /**
      * 对某次快照生成变更总结并落库 + 推送。由事件消费者在 session.idle 时(快照成功后)异步调用。
      *
      * @param sha 本次快照 commit 的完整 sha(若为 null 表示无变更,直接跳过)
      */
     public void summarizeAfterSnapshot(Long userId, String opencodeSessionId, String sha) {
+        if (userId == null) {
+            return;
+        }
+        // 防递归:同一用户已在总结中则跳过(scratch 会话自身 idle 也会触发本方法)
+        if (inFlight.putIfAbsent(userId, Boolean.TRUE) != null) {
+            log.debug("summary already in flight for user {}, skip", userId);
+            return;
+        }
         try {
-            // 1. 归属校验:scratch 会话/非本实例会话查不到 ChatSession → 取用户最近活跃会话兜底;仍无则跳过(防递归)
-            ChatSession session = opencodeSessionId != null
-                    ? chatSessionService.findByOpencodeSessionId(opencodeSessionId)
-                    : null;
-            boolean resolved = session != null;
-            if (session == null && userId != null) {
-                session = chatSessionService.findMostRecentByUserId(userId);
-            }
-            if (session == null) {
-                return;
-            }
-            // 若从 idle 事件拿到了 opencode 会话 id 且落库成功,用它向用户会话推送;否则按活跃会话推送
-            // 2. 取本次变更的文件清单
-            List<WorkspaceSnapshotService.ChangedFile> files = snapshotService.lastCommitChanges(userId, sha);
-            if (files.isEmpty()) {
-                log.info("change summary skipped: no file changes for user {} sha {}", userId, sha);
-                return;
-            }
-            // 3. 生成一句话总结
-            String summary = generateSummary(userId, files);
-            if (summary == null || summary.isBlank()) {
-                log.debug("change summary empty for user {} sha {}", userId, sha);
-                return;
-            }
-            // 4. 落库 role=summary + SSE 推送卡片
-            saveSummaryMessage(session.getId(), userId, summary);
-            ArrayNode filesJson = objectMapper.createArrayNode();
-            for (WorkspaceSnapshotService.ChangedFile cf : files) {
-                filesJson.addObject().put("status", cf.status()).put("path", cf.path());
-            }
-            String payload = objectMapper.createObjectNode()
-                    .put("summary", summary)
-                    .put("at", LocalDateTime.now().toString())
-                    .set("files", filesJson)
-                    .toString();
-            String targetSessionId = resolved ? opencodeSessionId : session.getOpencodeSessionId();
-            router.dispatch(targetSessionId, "change.summary", payload);
-            log.info("change summary for user={} opencodeSessionId={} resolved={} ({} files)",
-                    userId, opencodeSessionId, resolved, files.size());
+            summarizeAfterSnapshotInner(userId, opencodeSessionId, sha);
         } catch (Exception e) {
             log.warn("change summary failed (userId={}): {}", userId, e.toString());
+        } finally {
+            inFlight.remove(userId);
         }
+    }
+
+    private void summarizeAfterSnapshotInner(Long userId, String opencodeSessionId, String sha) {
+        // 1. 归属校验:scratch 会话/非本实例会话查不到 ChatSession → 取用户最近活跃会话兜底;仍无则跳过
+        ChatSession session = opencodeSessionId != null
+                ? chatSessionService.findByOpencodeSessionId(opencodeSessionId)
+                : null;
+        boolean resolved = session != null;
+        if (session == null && userId != null) {
+            session = chatSessionService.findMostRecentByUserId(userId);
+        }
+        if (session == null) {
+            return;
+        }
+        // 2. 取本次变更的文件清单
+        List<WorkspaceSnapshotService.ChangedFile> files = snapshotService.lastCommitChanges(userId, sha);
+        if (files.isEmpty()) {
+            log.debug("change summary skipped: no file changes for user {} sha {}", userId, sha);
+            return;
+        }
+        // 3. 生成一句话总结
+        String summary = generateSummary(userId, files);
+        if (summary == null || summary.isBlank()) {
+            log.debug("change summary empty for user {} sha {}", userId, sha);
+            return;
+        }
+        // 4. 落库 role=summary(含文件清单与快照 sha)+ SSE 推送卡片
+        ArrayNode filesJson = objectMapper.createArrayNode();
+        for (WorkspaceSnapshotService.ChangedFile cf : files) {
+            filesJson.addObject().put("status", cf.status()).put("path", cf.path());
+        }
+        String parentSha = snapshotService.parentSha(userId, sha);
+        saveSummaryMessage(session.getId(), userId, summary, sha, parentSha, filesJson);
+        String payload = objectMapper.createObjectNode()
+                .put("summary", summary)
+                .put("at", LocalDateTime.now().toString())
+                .put("sha", sha)
+                .put("parentSha", parentSha != null ? parentSha : "")
+                .set("files", filesJson)
+                .toString();
+        String targetSessionId = resolved ? opencodeSessionId : session.getOpencodeSessionId();
+        router.dispatch(targetSessionId, "change.summary", payload);
+        log.info("change summary for user={} opencodeSessionId={} resolved={} ({} files)",
+                userId, opencodeSessionId, resolved, files.size());
     }
 
     /**
@@ -121,7 +142,7 @@ public class ChangeSummaryService {
         }
         String prompt = "这是某次 AI 对话对用户工作区文件的变更清单:\n" + fileList
                 + "\n请用一句简洁的中文、面向普通人的语言,概括这次 AI 做了什么,不超过 40 字,不要引用文件名之外的细节。";
-        log.info("generate summary for user {} in {} ({} files)", userId, scratch, files.size());
+        log.debug("generate summary for user {} in {} ({} files)", userId, scratch, files.size());
 
         OpencodeSessionDto oc;
         try {
@@ -168,7 +189,7 @@ public class ChangeSummaryService {
                     return lastAssistant.trim();
                 }
                 if (msgs != null && msgs.size() > 0 && System.currentTimeMillis() > deadline - 15_000) {
-                    log.info("summary poll still no assistant text: {} msgs roles={}",
+                    log.debug("summary poll still no assistant text: {} msgs roles={}",
                             msgs.size(), msgs.stream().map(OpencodeMessageDto::getRole).toList());
                 }
             } catch (Exception e) {
@@ -191,14 +212,19 @@ public class ChangeSummaryService {
         return sb.length() == 0 ? null : sb.toString();
     }
 
-    /** 落库一条 role=summary 的消息(展示为对话流内卡片)。 */
-    private void saveSummaryMessage(Long chatSessionId, Long userId, String summary) {
+    /** 落库一条 role=summary 的消息(展示为对话流内卡片),并把文件清单与快照 sha 存进 parts(历史可重建)。 */
+    private void saveSummaryMessage(Long chatSessionId, Long userId, String summary, String sha, String parentSha, ArrayNode filesJson) {
         try {
+            ObjectNode parts = objectMapper.createObjectNode();
+            parts.put("summarySha", sha != null ? sha : "");
+            parts.put("summaryParentSha", parentSha != null ? parentSha : "");
+            parts.set("summaryFiles", filesJson);
             ChatMessage m = new ChatMessage();
             m.setSessionId(chatSessionId);
             m.setUserId(userId);
             m.setRole("summary");
             m.setContent(summary);
+            m.setParts(objectMapper.writeValueAsString(parts));
             m.setStatus("completed");
             chatMessageMapper.insert(m);
         } catch (Exception e) {

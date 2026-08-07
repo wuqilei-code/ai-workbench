@@ -386,6 +386,8 @@ export const useChatStore = defineStore('chat', () => {
           summary: data.summary || '',
           files: data.files || [],
           at: data.at,
+          sha: data.sha,
+          parentSha: data.parentSha,
         })
         break
 
@@ -745,6 +747,8 @@ export const useChatStore = defineStore('chat', () => {
         summary: m.content,
         files: m.summaryFiles || [],
         at: m.createdAt,
+        sha: m.summarySha,
+        parentSha: m.summaryParentSha,
       }))
   }
 
@@ -858,10 +862,19 @@ export const useChatStore = defineStore('chat', () => {
     return s > 15 ? s : 0
   })
 
+  /** 本会话内被 AI 改过的文件路径集合(从变更总结的 files 汇总),供文件树高亮。 */
+  const changedFilePaths = computed(() => {
+    const set = new Set<string>()
+    for (const s of summaries.value) {
+      for (const f of s.files || []) set.add(f.path)
+    }
+    return set as ReadonlySet<string>
+  })
+
   return {
     sessions, agents, currentSessionId, currentSession, messages, turns, summaries, streamingText,
     streamingMessageId, isStreaming, streamingStuckSeconds, streamingElapsedSeconds, runningActivity,
-    hasPendingInteraction, connected,
+    hasPendingInteraction, connected, changedFilePaths,
     availableModels, selectedProviderId, selectedModelId,
     manualCollapseOverride, setCollapse,
     loadModels, selectModel, loadSessions, loadAgents, createSession, switchAgent, selectSession,
