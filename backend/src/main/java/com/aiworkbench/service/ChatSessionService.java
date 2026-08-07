@@ -89,6 +89,15 @@ public class ChatSessionService {
         return s;
     }
 
+    /** 用户最近活跃(未归档)的会话;用于事件缺少 opencodeSessionId 时的归属兜底。无则 null。 */
+    public ChatSession findMostRecentByUserId(Long userId) {
+        return chatSessionMapper.selectOne(new LambdaQueryWrapper<ChatSession>()
+                .eq(ChatSession::getUserId, userId)
+                .eq(ChatSession::getArchived, 0)
+                .orderByDesc(ChatSession::getUpdatedAt)
+                .last("limit 1"));
+    }
+
     /** 取归属会话并转 VO */
     public SessionVo get(Long sessionId, Long userId) {
         return toVo(getOwned(sessionId, userId));

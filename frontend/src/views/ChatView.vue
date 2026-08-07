@@ -8,6 +8,7 @@ import AssistantTurn from '@/components/AssistantTurn.vue'
 import ChatInput from '@/components/ChatInput.vue'
 import ModelSelector from '@/components/ModelSelector.vue'
 import FileTree from '@/components/FileTree.vue'
+import ChangeSummaryCard from '@/components/ChangeSummaryCard.vue'
 
 const route = useRoute()
 const chat = useChatStore()
@@ -128,6 +129,10 @@ const showThinkingFallback = computed(
           <ChatMessage v-if="t.userMessage" :message="t.userMessage" />
           <AssistantTurn v-if="t.finalAnswer || t.steps.length" :turn="t" :session-id="chat.currentSessionId" />
         </template>
+        <!-- AI 变更总结卡片:本轮 AI 改了什么 -->
+        <div v-if="chat.summaries.length" class="summary-area">
+          <ChangeSummaryCard v-for="(s, si) in chat.summaries" :key="si" :summary="s" />
+        </div>
         <!-- 流式兜底:token 已到但 meta 尚未并入 turn -->
         <ChatMessage
           v-if="showStreamingBubble"
@@ -168,5 +173,6 @@ const showThinkingFallback = computed(
 .head-left .title { font-weight: 600; }
 .head-right { display: flex; align-items: center; gap: 8px; }
 .chat-body { flex: 1; overflow-y: auto; padding: 20px; }
+.summary-area { display: flex; flex-direction: column; }
 .thinking { display: flex; align-items: center; gap: 8px; color: #888; padding: 8px 0; }
 </style>

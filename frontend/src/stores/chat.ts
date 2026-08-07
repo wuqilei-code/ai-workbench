@@ -17,6 +17,7 @@ import type {
   PendingPermissionV1,
   PendingPermissionV2,
   QuestionItem,
+  ChangeSummary,
 } from '@/types'
 
 interface StreamHandle { close: () => void }
@@ -47,6 +48,8 @@ export const useChatStore = defineStore('chat', () => {
   const agents = ref<AgentItem[]>([])
   const currentSessionId = ref<number | null>(null)
   const messages = ref<MessageVo[]>([])
+  /** AI 变更总结卡片(role=summary 的消息与 SSE 事件聚合) */
+  const summaries = ref<ChangeSummary[]>([])
   const streamingText = ref('')
   const streamingMessageId = ref<string | null>(null)
   const isStreaming = ref(false)
@@ -177,12 +180,14 @@ export const useChatStore = defineStore('chat', () => {
     closeStream()
     currentSessionId.value = id
     messages.value = []
+    summaries.value = []
     streamingText.value = ''
     streamingMessageId.value = null
     isStreaming.value = false
     manualCollapseOverride.value = {}
     try {
       messages.value = await chatApi.listMessages(id)
+      hydrateSummaries()
       hydratePendingState()
     } catch (e) {
       messages.value = []
@@ -374,6 +379,16 @@ export const useChatStore = defineStore('chat', () => {
       case 'session.idle':
         finishStreaming()
         break
+
+      // AI 变更总结卡片(由后端在快照后异步生成推送)
+      case 'change.summary':
+        summaries.value.push({
+          summary: data.summary || '',
+          files: data.files || [],
+          at: data.at,
+        })
+        break
+
       case 'session.error': {
         // 生成出错:完整清理流式态(不 finalize 半截文本,避免把残片当完整答案),并展示可读失败文案。
         isStreaming.value = false
@@ -722,6 +737,17 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  /** 从历史消息里提取 role=summary 的 AI 变更总结卡片 */
+  function hydrateSummaries() {
+    summaries.value = messages.value
+      .filter((m) => m.role === 'summary')
+      .map((m) => ({
+        summary: m.content,
+        files: m.summaryFiles || [],
+        at: m.createdAt,
+      }))
+  }
+
   /** 会话空闲:生成结束。兜底落定未提交的流式文本 */
   function finishStreaming() {
     if (streamingMessageId.value && streamingText.value) {
@@ -833,7 +859,7 @@ export const useChatStore = defineStore('chat', () => {
   })
 
   return {
-    sessions, agents, currentSessionId, currentSession, messages, turns, streamingText,
+    sessions, agents, currentSessionId, currentSession, messages, turns, summaries, streamingText,
     streamingMessageId, isStreaming, streamingStuckSeconds, streamingElapsedSeconds, runningActivity,
     hasPendingInteraction, connected,
     availableModels, selectedProviderId, selectedModelId,

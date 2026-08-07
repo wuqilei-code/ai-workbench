@@ -26,6 +26,27 @@ public class OpencodeMessageDto {
     private String agent;
     private String finish;
     private String error;
+    /** REST /message 列表接口的元信息嵌套在 info 节点里(SSE 事件则是扁平结构)。 */
+    @JsonProperty("info")
+    private JsonNode info;
+
+    public String getRole() {
+        if (role != null) {
+            return role;
+        }
+        return info != null ? info.path("role").asText(null) : null;
+    }
+
+    public JsonNode getParts() {
+        return parts;
+    }
+
+    public String getSessionID() {
+        if (sessionID != null) {
+            return sessionID;
+        }
+        return info != null ? info.path("sessionID").asText(null) : null;
+    }
 
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)

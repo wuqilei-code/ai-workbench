@@ -4,7 +4,9 @@ import com.aiworkbench.common.BusinessException;
 import com.aiworkbench.common.ResultCode;
 import com.aiworkbench.config.OpencodeProperties;
 import com.aiworkbench.service.ChatMessageService;
+import com.aiworkbench.service.ChangeSummaryService;
 import com.aiworkbench.service.WorkspaceService;
+import com.aiworkbench.service.WorkspaceSnapshotService;
 import com.aiworkbench.service.opencode.OpencodeEventRouter;
 import com.aiworkbench.service.opencode.OpencodeInstanceEventConsumer;
 import com.aiworkbench.service.opencode.dto.HealthDto;
@@ -52,6 +54,8 @@ public class OpencodeProcessManager {
     private final WorkspaceService workspaceService;
     private final OpencodeEventRouter router;
     private final ChatMessageService chatMessageService;
+    private final WorkspaceSnapshotService snapshotService;
+    private final ChangeSummaryService changeSummaryService;
     private final ObjectMapper objectMapper;
     private final WebClient.Builder webClientBuilder;
     private final com.aiworkbench.service.opencode.OpencodeStats stats;
@@ -63,6 +67,8 @@ public class OpencodeProcessManager {
                                   WorkspaceService workspaceService,
                                   OpencodeEventRouter router,
                                   ChatMessageService chatMessageService,
+                                  WorkspaceSnapshotService snapshotService,
+                                  ChangeSummaryService changeSummaryService,
                                   ObjectMapper objectMapper,
                                   @Qualifier("opencodeWebClientBuilder") WebClient.Builder webClientBuilder,
                                   com.aiworkbench.service.opencode.OpencodeStats stats) {
@@ -73,6 +79,8 @@ public class OpencodeProcessManager {
         this.workspaceService = workspaceService;
         this.router = router;
         this.chatMessageService = chatMessageService;
+        this.snapshotService = snapshotService;
+        this.changeSummaryService = changeSummaryService;
         this.objectMapper = objectMapper;
         this.webClientBuilder = webClientBuilder;
         this.stats = stats;
@@ -146,7 +154,7 @@ public class OpencodeProcessManager {
 
             // 6. 挂事件消费者(上报生成状态给本管理器,供 applyConfig 跳过 streaming 用户)
             consumer = new OpencodeInstanceEventConsumer(instanceClient, router, chatMessageService,
-                    objectMapper, port, userId, s -> markStreaming(userId, s), stats);
+                    snapshotService, changeSummaryService, objectMapper, port, userId, s -> markStreaming(userId, s), stats);
             consumer.start();
 
             UserProcess up = new UserProcess(userId, uid, gid, port, process, instanceClient, consumer);

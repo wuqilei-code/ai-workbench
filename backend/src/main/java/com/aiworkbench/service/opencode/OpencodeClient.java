@@ -49,10 +49,17 @@ public class OpencodeClient {
 
     /** POST /session — 建会话,目录隔离通过 header。按需首启该用户的 opencode 进程。 */
     public OpencodeSessionDto createSession(long userId, CreateSessionBody body) {
+        return createSessionAt(userId, workspaceService.userDir(userId), body);
+    }
+
+    /**
+     * POST /session — 建会话并显式指定工作目录(独立于用户工作区,用于变更总结等 scratch 会话,
+     * 避免在用户真实工作区里被 agent 产生副作用)。按需首启该用户的 opencode 进程。
+     */
+    public OpencodeSessionDto createSessionAt(long userId, String directory, CreateSessionBody body) {
         UserProcess proc = processManager.getOrStart(userId);
-        String dir = workspaceService.userDir(userId);
         return proc.getWebClient().post().uri("/session")
-                .header("x-opencode-directory", dir)
+                .header("x-opencode-directory", directory)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
                 .retrieve().bodyToMono(OpencodeSessionDto.class)
@@ -70,10 +77,14 @@ public class OpencodeClient {
 
     /** POST /session/{id}/prompt_async — 异步发消息,流式走 /event(由实例消费者投递)。 */
     public void promptAsync(long userId, String opencodeSessionId, PromptAsyncBody body) {
+        promptAsyncAt(userId, opencodeSessionId, workspaceService.userDir(userId), body);
+    }
+
+    /** POST /session/{id}/prompt_async — 显式指定目录(scratch 变更总结会话用,避免操作真实工作区)。 */
+    public void promptAsyncAt(long userId, String opencodeSessionId, String directory, PromptAsyncBody body) {
         UserProcess proc = processManager.getOrStart(userId);
-        String dir = workspaceService.userDir(userId);
         proc.getWebClient().post().uri("/session/{id}/prompt_async", opencodeSessionId)
-                .header("x-opencode-directory", dir)
+                .header("x-opencode-directory", directory)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
                 .retrieve().bodyToMono(Void.class)
@@ -131,11 +142,15 @@ public class OpencodeClient {
 
     /** GET /session/{id}/message?limit=N — 消息历史(opencode 侧) */
     public List<OpencodeMessageDto> listMessages(long userId, String opencodeSessionId, int limit) {
+        return listMessagesAt(userId, opencodeSessionId, workspaceService.userDir(userId), limit);
+    }
+
+    /** GET /session/{id}/message?limit=N — 显式指定目录(scratch 会话按该目录隔离查询)。 */
+    public List<OpencodeMessageDto> listMessagesAt(long userId, String opencodeSessionId, String directory, int limit) {
         UserProcess proc = processManager.getOrStart(userId);
-        String dir = workspaceService.userDir(userId);
         return proc.getWebClient().get()
                 .uri(b -> b.path("/session/{id}/message").queryParam("limit", limit).build(opencodeSessionId))
-                .header("x-opencode-directory", dir)
+                .header("x-opencode-directory", directory)
                 .retrieve().bodyToMono(new ParameterizedTypeReference<List<OpencodeMessageDto>>() {})
                 .block();
     }

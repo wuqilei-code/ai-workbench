@@ -1,6 +1,8 @@
 package com.aiworkbench.service.opencode;
 
 import com.aiworkbench.service.ChatMessageService;
+import com.aiworkbench.service.ChangeSummaryService;
+import com.aiworkbench.service.WorkspaceSnapshotService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -12,6 +14,7 @@ import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
@@ -51,6 +54,8 @@ public class OpencodeInstanceEventConsumer {
     private final WebClient instanceClient;
     private final OpencodeEventRouter router;
     private final ChatMessageService chatMessageService;
+    private final WorkspaceSnapshotService snapshotService;
+    private final ChangeSummaryService changeSummaryService;
     private final ObjectMapper objectMapper;
     private final int port;
     private final long userId;
@@ -75,12 +80,16 @@ public class OpencodeInstanceEventConsumer {
 
     private record TextBuffer(String sessionID, String text) {}
 
-    public OpencodeInstanceEventConsumer(WebClient instanceClient, OpencodeEventRouter router,
-                                         ChatMessageService chatMessageService, ObjectMapper objectMapper, int port,
-                                         long userId, Consumer<Boolean> streamingSink, OpencodeStats stats) {
+public OpencodeInstanceEventConsumer(WebClient instanceClient, OpencodeEventRouter router,
+                                     ChatMessageService chatMessageService, WorkspaceSnapshotService snapshotService,
+                                     ChangeSummaryService changeSummaryService,
+                                     ObjectMapper objectMapper, int port,
+                                     long userId, Consumer<Boolean> streamingSink, OpencodeStats stats) {
         this.instanceClient = instanceClient;
         this.router = router;
         this.chatMessageService = chatMessageService;
+        this.snapshotService = snapshotService;
+        this.changeSummaryService = changeSummaryService;
         this.objectMapper = objectMapper;
         this.port = port;
         this.userId = userId;
@@ -167,7 +176,7 @@ public class OpencodeInstanceEventConsumer {
             String sessionID = extractSessionId(properties);
 
             // 生成状态标记:applyConfig 借此跳过正在生成的用户(不打断活跃对话)
-            markStreaming(resolvedType, properties);
+            markStreaming(resolvedType, properties, sessionID);
 
             // 持久化:message.updated 写元信息,message.part.updated 写文本内容/parts
             if ("message.updated".equals(resolvedType) && sessionID != null) {
@@ -250,7 +259,7 @@ public class OpencodeInstanceEventConsumer {
      * 约定:从第一条 part 出现到 session.idle/session.error 之间视为 streaming=true;
      * question/permission 等待用户期间也保持 true(避免 applyConfig 重启打断待答交互)。
      */
-    private void markStreaming(String resolvedType, JsonNode properties) {
+    private void markStreaming(String resolvedType, JsonNode properties, String sessionID) {
         switch (resolvedType) {
             case "message.part.updated" -> streamingSink.accept(true);
             case "session.status" -> {
@@ -258,9 +267,30 @@ public class OpencodeInstanceEventConsumer {
                 boolean busy = status != null && "busy".equals(status.get("type").asText(""));
                 streamingSink.accept(busy);
             }
-            case "session.idle", "session.error" -> streamingSink.accept(false);
+            case "session.idle", "session.error" -> {
+                streamingSink.accept(false);
+                // 每轮对话结束(正常空闲或异常结束)对用户工作区做一次 git 快照,
+                // 把 AI 本轮产生的文件改动固化为一个可回滚的版本;随后对本次改动生成 AI 变更总结。
+                String snapshotId = sessionID;
+                asyncSnapshot(snapshotId);
+            }
             default -> { }
         }
+    }
+
+    /** 每轮对话结束:异步快照,成功后对本次快照生成 AI 变更总结;异步且静默,避免阻塞事件流。 */
+    private void asyncSnapshot(String sessionID) {
+        final long uid = userId;
+        final String sid = sessionID;
+        CompletableFuture.runAsync(() -> {
+            String sha = snapshotService.snapshot(uid, "AI 对话结束");
+            if (sha != null) {
+                changeSummaryService.summarizeAfterSnapshot(uid, sid, sha);
+            }
+        }).exceptionally(e -> {
+            log.warn("snapshot/summary failed (userId={}): {}", uid, e.toString());
+            return null;
+        });
     }
 
     // ============ 文本落库节流 ============
