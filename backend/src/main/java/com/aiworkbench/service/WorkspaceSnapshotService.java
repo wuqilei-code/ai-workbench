@@ -219,6 +219,8 @@ public class WorkspaceSnapshotService {
         cmd.add("--clear-groups");
         cmd.add("--");
         cmd.add("git");
+        cmd.add("-c");
+        cmd.add("core.quotePath=false");
         cmd.addAll(List.of(args));
         return exec(cmd, dir, uid);
     }
