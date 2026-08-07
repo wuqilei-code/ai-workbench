@@ -95,7 +95,7 @@ function restoreTo(sha = props.summary.sha) {
       <span class="icon">📝</span>
       <span class="title">AI 变更总结</span>
       <span v-if="summary.files?.length" class="count">本轮改动 {{ summary.files.length }} 个文件</span>
-      <span v-if="summary.sha" class="count" :title="summary.sha">@{shortSha(summary.sha)}</span>
+      <span v-if="summary.sha" class="count" :title="summary.sha">@{{ shortSha(summary.sha) }}</span>
     </div>
     <div class="summary-text">{{ summary.summary }}</div>
     <div v-if="summary.files?.length" class="summary-files">
