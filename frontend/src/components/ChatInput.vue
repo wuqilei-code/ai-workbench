@@ -174,6 +174,8 @@ function onInput() {
   if (!el) return
   el.style.height = 'auto'
   el.style.height = Math.min(el.scrollHeight, 200) + 'px'
+  // 输入 / 时懒加载命令列表(菜单需要先有数据才能弹出)
+  if (text.value.trim().startsWith('/')) ensureCommands()
 }
 
 async function onAbort() {
