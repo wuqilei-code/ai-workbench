@@ -54,6 +54,80 @@ public class ChatMessageService {
         }).toList();
     }
 
+    /** 全部消息(导出用,不受 listBySession 500 条上限约束) */
+    public List<ChatMessage> allBySession(Long sessionId, Long userId) {
+        chatSessionService.getOwned(sessionId, userId); // 越权校验
+        return chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
+                .eq(ChatMessage::getSessionId, sessionId)
+                .orderByAsc(ChatMessage::getId));
+    }
+
+    /** 清空会话消息(仅删本地 MySQL 镜像,不删会话本身) */
+    public int clearBySession(Long sessionId, Long userId) {
+        chatSessionService.getOwned(sessionId, userId); // 越权校验
+        return chatMessageMapper.delete(new LambdaQueryWrapper<ChatMessage>()
+                .eq(ChatMessage::getSessionId, sessionId));
+    }
+
+    /** 导出会话为 Markdown(可读的对话记录) */
+    public String exportMarkdown(Long sessionId, Long userId, String title) {
+        List<ChatMessage> msgs = allBySession(sessionId, userId);
+        StringBuilder sb = new StringBuilder();
+        sb.append("# ").append(title == null ? "会话导出" : title).append("\n\n");
+        sb.append("- 导出时间: ").append(java.time.LocalDateTime.now()).append("\n");
+        sb.append("- 消息数: ").append(msgs.size()).append("\n\n");
+        sb.append("---\n\n");
+        for (ChatMessage m : msgs) {
+            String roleLabel = switch (m.getRole() == null ? "" : m.getRole()) {
+                case "user" -> "用户";
+                case "assistant" -> "AI";
+                case "tool" -> "工具";
+                case "system" -> "系统";
+                case "summary" -> "AI 变更总结";
+                default -> m.getRole();
+            };
+            sb.append("## ").append(roleLabel);
+            if (m.getCreatedAt() != null) {
+                sb.append(" · ").append(m.getCreatedAt());
+            }
+            sb.append("\n\n");
+            String content = m.getContent() == null ? "" : m.getContent();
+            if (content.isBlank() && m.getParts() != null) {
+                sb.append("```json\n").append(m.getParts()).append("\n```\n\n");
+            } else {
+                sb.append(content).append("\n\n");
+            }
+            sb.append("---\n\n");
+        }
+        return sb.toString();
+    }
+
+    /** 导出会话为 JSON(机器可读,含 content + parts 完整数据) */
+    public String exportJson(Long sessionId, Long userId, String title) {
+        List<ChatMessage> msgs = allBySession(sessionId, userId);
+        com.fasterxml.jackson.databind.node.ArrayNode arr = objectMapper.createArrayNode();
+        for (ChatMessage m : msgs) {
+            ObjectNode o = arr.addObject();
+            o.put("id", m.getId());
+            o.put("role", m.getRole());
+            o.put("content", m.getContent() == null ? "" : m.getContent());
+            o.put("status", m.getStatus());
+            if (m.getCreatedAt() != null) o.put("createdAt", m.getCreatedAt().toString());
+            if (m.getParts() != null && !m.getParts().isBlank()) {
+                try {
+                    o.set("parts", objectMapper.readTree(m.getParts()));
+                } catch (Exception e) {
+                    o.put("parts", m.getParts());
+                }
+            }
+        }
+        ObjectNode root = objectMapper.createObjectNode();
+        root.put("sessionTitle", title == null ? "会话导出" : title);
+        root.put("exportedAt", java.time.LocalDateTime.now().toString());
+        root.set("messages", arr);
+        return root.toPrettyString();
+    }
+
     /** 兜底:若 pendingPermission 残留但其关联 toolCall 已 completed(权限已授予),
      *  说明是清除竞态导致的残留,从 parts 移除并更新 DB,避免重新加载会话时重复弹框。 */
     private void sanitizeStalePending(ChatMessage m) {

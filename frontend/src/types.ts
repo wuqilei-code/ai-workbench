@@ -20,6 +20,7 @@ export interface SessionVo {
   providerId: string | null
   modelId: string | null
   archived: number
+  pinned: number
   createdAt: string
   updatedAt: string
 }

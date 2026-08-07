@@ -67,6 +67,7 @@ public class ChatSessionService {
         s.setProviderId(req.getProviderId());
         s.setModelId(req.getModelId());
         s.setArchived(0);
+        s.setPinned(0);
         chatSessionMapper.insert(s);
 
         return toVo(s);
@@ -76,6 +77,16 @@ public class ChatSessionService {
         List<ChatSession> list = chatSessionMapper.selectList(new LambdaQueryWrapper<ChatSession>()
                 .eq(ChatSession::getUserId, userId)
                 .eq(ChatSession::getArchived, 0)
+                .orderByDesc(ChatSession::getPinned)
+                .orderByDesc(ChatSession::getUpdatedAt));
+        return list.stream().map(this::toVo).toList();
+    }
+
+    /** 已归档会话列表(按更新时间倒序) */
+    public List<SessionVo> listArchived(Long userId) {
+        List<ChatSession> list = chatSessionMapper.selectList(new LambdaQueryWrapper<ChatSession>()
+                .eq(ChatSession::getUserId, userId)
+                .eq(ChatSession::getArchived, 1)
                 .orderByDesc(ChatSession::getUpdatedAt));
         return list.stream().map(this::toVo).toList();
     }
@@ -107,6 +118,7 @@ public class ChatSessionService {
         ChatSession s = getOwned(sessionId, userId);
         if (req.getTitle() != null) s.setTitle(req.getTitle());
         if (req.getArchived() != null) s.setArchived(req.getArchived());
+        if (req.getPinned() != null) s.setPinned(req.getPinned());
         // 可清空字段:IGNORED 策略保证 null 写入(项目记忆教训)
         if (req.getProviderId() != null || req.getModelId() != null) {
             s.setProviderId(req.getProviderId());
@@ -192,6 +204,7 @@ public class ChatSessionService {
                 .providerId(s.getProviderId())
                 .modelId(s.getModelId())
                 .archived(s.getArchived())
+                .pinned(s.getPinned())
                 .createdAt(s.getCreatedAt())
                 .updatedAt(s.getUpdatedAt())
                 .build();

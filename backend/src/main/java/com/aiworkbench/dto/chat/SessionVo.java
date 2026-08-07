@@ -15,6 +15,8 @@ public class SessionVo {
     private String providerId;
     private String modelId;
     private Integer archived;
+    /** 0=未置顶, 1=置顶 */
+    private Integer pinned;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

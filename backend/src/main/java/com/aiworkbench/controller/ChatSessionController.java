@@ -71,6 +71,12 @@ public class ChatSessionController {
         return R.ok(chatSessionService.list(SecurityUtil.currentUserId()));
     }
 
+    /** 已归档会话列表 */
+    @GetMapping("/archived")
+    public R<List<SessionVo>> listArchived() {
+        return R.ok(chatSessionService.listArchived(SecurityUtil.currentUserId()));
+    }
+
     @GetMapping("/{id}")
     public R<SessionVo> get(@PathVariable Long id) {
         return R.ok(chatSessionService.get(id, SecurityUtil.currentUserId()));

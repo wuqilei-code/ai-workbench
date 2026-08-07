@@ -45,6 +45,8 @@ function deriveTitle(text: string): string {
 
 export const useChatStore = defineStore('chat', () => {
   const sessions = ref<SessionVo[]>([])
+  /** 已归档会话列表(侧边栏"归档"视图) */
+  const archivedSessions = ref<SessionVo[]>([])
   const agents = ref<AgentItem[]>([])
   const currentSessionId = ref<number | null>(null)
   const messages = ref<MessageVo[]>([])
@@ -148,6 +150,14 @@ export const useChatStore = defineStore('chat', () => {
     sessions.value = await chatApi.listSessions()
   }
 
+  async function loadArchivedSessions() {
+    try {
+      archivedSessions.value = await chatApi.listArchivedSessions()
+    } catch (e) {
+      archivedSessions.value = []
+    }
+  }
+
   async function loadAgents() {
     if (agents.value.length) return
     try {
@@ -204,11 +214,77 @@ export const useChatStore = defineStore('chat', () => {
   async function deleteSession(id: number) {
     await chatApi.deleteSession(id)
     sessions.value = sessions.value.filter((s) => s.id !== id)
+    archivedSessions.value = archivedSessions.value.filter((s) => s.id !== id)
     if (currentSessionId.value === id) {
       closeStream()
       currentSessionId.value = null
       messages.value = []
     }
+  }
+
+  /** 置顶/取消置顶 */
+  async function pinSession(id: number, pinned: boolean) {
+    const updated = await chatApi.updateSession(id, { pinned: pinned ? 1 : 0 })
+    const idx = sessions.value.findIndex((s) => s.id === id)
+    if (idx >= 0) sessions.value[idx] = updated
+    // 置顶会话排前:重新按 pinned→updatedAt 排序
+    sessions.value = [...sessions.value].sort((a, b) => {
+      if ((a.pinned || 0) !== (b.pinned || 0)) return (b.pinned || 0) - (a.pinned || 0)
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    })
+    return updated
+  }
+
+  /** 归档会话(移出主列表) */
+  async function archiveSession(id: number) {
+    const updated = await chatApi.updateSession(id, { archived: 1 })
+    sessions.value = sessions.value.filter((s) => s.id !== id)
+    archivedSessions.value.unshift(updated)
+    return updated
+  }
+
+  /** 取消归档(从归档视图移回主列表) */
+  async function unarchiveSession(id: number) {
+    const updated = await chatApi.updateSession(id, { archived: 0 })
+    archivedSessions.value = archivedSessions.value.filter((s) => s.id !== id)
+    sessions.value.unshift(updated)
+    return updated
+  }
+
+  /** 重命名会话标题 */
+  async function renameSession(id: number, title: string) {
+    const updated = await chatApi.updateSession(id, { title })
+    const idx = sessions.value.findIndex((s) => s.id === id)
+    if (idx >= 0) sessions.value[idx] = updated
+    const aIdx = archivedSessions.value.findIndex((s) => s.id === id)
+    if (aIdx >= 0) archivedSessions.value[aIdx] = updated
+    return updated
+  }
+
+  /** 清空当前会话消息(本地 MySQL 镜像;会话保留) */
+  async function clearSession(id: number) {
+    await chatApi.clearMessages(id)
+    if (currentSessionId.value === id) {
+      messages.value = []
+      summaries.value = []
+      streamingText.value = ''
+    }
+  }
+
+  /** 导出会话(触发浏览器下载)。format: md | json */
+  async function exportSession(id: number, format: 'md' | 'json' = 'md') {
+    const res: any = await chatApi.exportSession(id, format)
+    const blob = res?.data instanceof Blob ? res.data : new Blob([res.data], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const s = currentSession ? currentSession.title : `会话${id}`
+    const safe = (s || `session-${id}`).replace(/[\\/:*?"<>|]/g, '_').slice(0, 60)
+    a.href = url
+    a.download = `${safe}.${format}`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
   }
 
   // ---------- 发消息 + SSE ----------
@@ -875,12 +951,13 @@ export const useChatStore = defineStore('chat', () => {
   })
 
   return {
-    sessions, agents, currentSessionId, currentSession, messages, turns, flow, summaries, streamingText,
+    sessions, archivedSessions, agents, currentSessionId, currentSession, messages, turns, flow, summaries, streamingText,
     streamingMessageId, isStreaming, streamingStuckSeconds, streamingElapsedSeconds, runningActivity,
     hasPendingInteraction, connected, changedFilePaths,
     availableModels, selectedProviderId, selectedModelId,
     manualCollapseOverride, setCollapse,
-    loadModels, selectModel, loadSessions, loadAgents, createSession, switchAgent, selectSession,
-    deleteSession, sendMessage, runCommand, abort, closeStream, forceReleaseStreaming, resumeStreaming,
+    loadModels, selectModel, loadSessions, loadArchivedSessions, loadAgents, createSession, switchAgent, selectSession,
+    deleteSession, pinSession, archiveSession, unarchiveSession, renameSession, clearSession, exportSession,
+    sendMessage, runCommand, abort, closeStream, forceReleaseStreaming, resumeStreaming,
   }
 })

@@ -34,6 +34,9 @@ public class ChatSession {
     /** 0=正常, 1=归档 */
     private Integer archived;
 
+    /** 0=未置顶, 1=置顶(列表优先展示) */
+    private Integer pinned;
+
     /** 时间戳由 DB 管理,update 时 NEVER 不写入(项目记忆教训:避免覆盖自动值) */
     @TableField(value = "created_at", updateStrategy = FieldStrategy.NEVER)
     private LocalDateTime createdAt;

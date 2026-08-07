@@ -34,12 +34,16 @@ CREATE TABLE IF NOT EXISTS chat_session (
     provider_id         VARCHAR(64)  NULL,
     model_id            VARCHAR(128) NULL,
     archived            TINYINT      NOT NULL DEFAULT 0,
+    pinned              TINYINT      NOT NULL DEFAULT 0,
     created_at          DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at          DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (id),
     UNIQUE KEY uk_session_opencode (opencode_session_id),
     KEY idx_session_user (user_id, updated_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 会话置顶:为已存在的 chat_session 表补 pinned 列(幂等,重复列 1060 错误被 continue-on-error 忽略)
+ALTER TABLE chat_session ADD COLUMN pinned TINYINT NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS chat_message (
     id                  BIGINT       NOT NULL AUTO_INCREMENT,

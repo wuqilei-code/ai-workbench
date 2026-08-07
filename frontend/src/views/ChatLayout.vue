@@ -6,7 +6,7 @@ import Sidebar from '@/components/Sidebar.vue'
 const chat = useChatStore()
 
 onMounted(async () => {
-  await Promise.all([chat.loadModels(), chat.loadSessions()])
+  await Promise.all([chat.loadModels(), chat.loadSessions(), chat.loadArchivedSessions()])
 })
 </script>
 

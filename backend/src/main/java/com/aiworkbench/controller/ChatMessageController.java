@@ -15,6 +15,10 @@ import com.aiworkbench.service.opencode.OpencodeEventRouter;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -24,6 +28,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -51,6 +57,44 @@ public class ChatMessageController {
     public R<Void> send(@PathVariable Long id, @Valid @RequestBody SendMessageRequest req) {
         chatMessageService.sendUserMessage(id, SecurityUtil.currentUserId(), req);
         return R.ok();
+    }
+
+    /** 清空会话消息(仅删本地 MySQL 镜像,会话保留) */
+    @DeleteMapping("/messages")
+    @AuditLog(action = "清空会话", targetSpel = "#id")
+    public R<Void> clear(@PathVariable Long id) {
+        chatMessageService.clearBySession(id, SecurityUtil.currentUserId());
+        return R.ok();
+    }
+
+    /** 导出会话内容(md 默认 / json)。返回文件下载。 */
+    @GetMapping(value = "/export", produces = MediaType.APPLICATION_OCTET_STREAM_VALUE)
+    public ResponseEntity<byte[]> export(@PathVariable Long id,
+                                         @RequestParam(defaultValue = "md") String format) {
+        Long userId = SecurityUtil.currentUserId();
+        ChatSession s = chatSessionService.getOwned(id, userId);
+        String title = s.getTitle() == null ? "会话导出" : s.getTitle();
+        String body;
+        String ext;
+        String mediaType;
+        if ("json".equalsIgnoreCase(format)) {
+            body = chatMessageService.exportJson(id, userId, title);
+            ext = "json";
+            mediaType = MediaType.APPLICATION_JSON_VALUE;
+        } else {
+            body = chatMessageService.exportMarkdown(id, userId, title);
+            ext = "md";
+            mediaType = "text/markdown";
+        }
+        // RFC 5987 编码文件名,支持中文
+        String encoded = URLEncoder.encode(title + "." + ext, StandardCharsets.UTF_8).replace("+", "%20");
+        byte[] data = body.getBytes(StandardCharsets.UTF_8);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"" + encoded + "\"; filename*=UTF-8''" + encoded)
+                .contentType(MediaType.parseMediaType(mediaType))
+                .contentLength(data.length)
+                .body(data);
     }
 
     /**
