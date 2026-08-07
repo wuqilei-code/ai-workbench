@@ -526,7 +526,7 @@ onMounted(() => load(''))
 .node-ops { display: flex; gap: 2px; flex-shrink: 0; }
 
 .hist-body { display: flex; flex-direction: column; gap: 12px; height: 100%; min-height: 0; }
-.hist-list { overflow-y: auto; flex: 0 0 auto; max-height: 38%; border-bottom: 1px solid #2a2a2e; padding-bottom: 10px; }
+.hist-list { overflow-y: auto; flex: 0 0 auto; max-height: 26%; border-bottom: 1px solid #2a2a2e; padding-bottom: 10px; }
 .hist-diff { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .hist-diff-head { margin-bottom: 8px; flex: 0 0 auto; }
 .hist-diff-title { font-size: 12px; color: #7ab8ff; font-family: ui-monospace, monospace; }
@@ -565,7 +565,7 @@ onMounted(() => load(''))
 .diff-note { color: #888; font-size: 12px; padding: 12px 4px; }
 
 @media (max-width: 720px) {
-  .hist-list { max-height: 35%; }
+  .hist-list { max-height: 30%; }
 }
 
 </style>
