@@ -125,7 +125,7 @@ onBeforeUnmount(stopPolling)
 <template>
   <div class="task-panel">
     <div class="panel-head">
-      <span class="hint">tasks/ 后台任务 · {{ hasActive ? '运行中,自动刷新' : '已空闲' }}</span>
+      <span class="hint">{{ hasActive ? '运行中,自动刷新' : '已空闲' }} · {{ tasks.length }} 个任务</span>
       <n-button size="tiny" quaternary circle title="刷新" @click="refresh">↻</n-button>
     </div>
 
@@ -133,26 +133,31 @@ onBeforeUnmount(stopPolling)
       <div v-if="error" class="task-error">{{ error }}</div>
       <div v-else-if="!tasks.length" class="task-empty">暂无后台任务</div>
       <div v-else class="task-list">
+        <div class="task-grid task-head">
+          <span class="c-status">状态</span>
+          <span class="c-task">任务</span>
+          <span class="c-session">来源会话</span>
+          <span class="c-time">时间 / 时长</span>
+          <span></span>
+        </div>
         <div v-for="t in tasks" :key="t.id" class="task-item" :class="{ active: expandedId === t.id }">
-          <div class="task-row" @click="toggle(t.id)">
-            <div class="task-line1">
-              <span class="task-id" :title="t.id">{{ t.id }}</span>
-              <n-tag size="tiny" :type="statusType(t)" :bordered="false">
+          <div class="task-grid task-main" @click="toggle(t.id)">
+            <span class="c-status">
+              <n-tag size="tiny" :type="statusType(t)" :bordered="false" class="status-tag">
                 <template v-if="t.status === 'running'" #icon><n-spin :size="10" class="mini-spin" /></template>
                 {{ t.statusText }}
               </n-tag>
-              <span class="task-time" :title="t.delivered ? '已交付' : undefined">
-                {{ formatTime(t.startedAt) }}<template v-if="t.runningSeconds != null"> · {{ formatDuration(t.runningSeconds) }}</template>
-              </span>
-              <span class="caret">{{ expandedId === t.id ? '▾' : '▸' }}</span>
-            </div>
-            <div class="task-session">
-              <span class="session-label">来自</span>
-              <a v-if="t.sessionId" class="session-link" :title="sessionLabel(t)" @click.stop="openSession(t)">
-                💬 {{ sessionLabel(t) }}
-              </a>
+            </span>
+            <span class="c-task task-id" :title="t.id">{{ t.id }}</span>
+            <span class="c-session">
+              <a v-if="t.sessionId" class="session-link" :title="sessionLabel(t)" @click.stop="openSession(t)">{{ sessionLabel(t) }}</a>
               <span v-else class="session-none">{{ sessionLabel(t) }}</span>
-            </div>
+            </span>
+            <span class="c-time">
+              <span class="t-time" :title="t.delivered ? '已交付' : undefined">{{ formatTime(t.startedAt) }}</span>
+              <span v-if="t.runningSeconds != null" class="t-dur">{{ formatDuration(t.runningSeconds) }}</span>
+            </span>
+            <span class="caret">{{ expandedId === t.id ? '▾' : '▸' }}</span>
           </div>
           <div v-if="expandedId === t.id" class="task-detail">
             <div v-if="t.doneContent" class="task-done">{{ t.doneContent }}</div>
@@ -180,35 +185,47 @@ onBeforeUnmount(stopPolling)
 .panel-head .hint { font-size: 12px; color: #888; }
 .task-error { color: #e88080; font-size: 12px; padding: 8px 0; }
 .task-empty { color: #888; font-size: 12px; padding: 16px 0; text-align: center; }
-.task-list { display: flex; flex-direction: column; gap: 6px; }
+
+.task-list { display: flex; flex-direction: column; gap: 4px; }
+.task-grid {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) minmax(0, 1.4fr) 84px 14px;
+  gap: 8px; align-items: center;
+}
+.task-head {
+  padding: 4px 10px; font-size: 11px; color: #777;
+  border-bottom: 1px solid #2a2a2e;
+}
+.task-head .c-time { white-space: nowrap; }
 .task-item {
   border: 1px solid #2a2a2e; border-radius: 6px; background: #202024; overflow: hidden;
 }
 .task-item.active { border-color: #3d4a66; }
-.task-row {
-  padding: 8px 10px 6px; cursor: pointer;
+.task-main { padding: 7px 10px; cursor: pointer; }
+.task-main:hover { background: #26262a; }
+.c-status { display: flex; min-width: 0; }
+.status-tag {
+  max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.task-row:hover { background: #26262a; }
-.task-line1 {
-  display: flex; align-items: center; gap: 8px;
-}
+.c-task { min-width: 0; }
 .task-id {
   font-size: 12px; font-weight: 600; color: #e8c547; font-family: monospace;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.task-time { margin-left: auto; font-size: 11px; color: #888; white-space: nowrap; }
-.caret { color: #666; font-size: 11px; }
-.mini-spin { margin-right: 4px; }
-.task-session {
-  display: flex; align-items: center; gap: 6px; margin-top: 4px; min-width: 0;
-}
-.session-label { font-size: 11px; color: #666; flex-shrink: 0; }
+.c-session { min-width: 0; }
 .session-link {
   font-size: 12px; color: #7db0ff; cursor: pointer;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block;
 }
 .session-link:hover { color: #a8ccff; text-decoration: underline; }
 .session-none { font-size: 12px; color: #777; }
+.c-time { min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.t-time { font-size: 11px; color: #bbb; white-space: nowrap; }
+.t-dur { font-size: 10px; color: #888; white-space: nowrap; }
+.caret { color: #666; font-size: 11px; text-align: right; }
+.mini-spin { margin-right: 4px; }
+
 .task-detail { border-top: 1px solid #2a2a2e; padding: 8px 10px; }
 .task-done { font-size: 12px; color: #bbb; margin-bottom: 6px; word-break: break-all; }
 .log-box {
