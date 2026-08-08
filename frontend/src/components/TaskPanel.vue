@@ -5,7 +5,7 @@ import { chatApi } from '@/api/chat'
 import type { TaskInfo } from '@/types'
 
 const msg = useMessage()
-const emit = defineEmits<{ (e: 'open-session', id: number): void }>()
+const emit = defineEmits<{ (e: 'open-session', target: { sessionId: number; messageId?: number }): void }>()
 const tasks = ref<TaskInfo[]>([])
 const loading = ref(false)
 const error = ref('')
@@ -89,7 +89,7 @@ function sessionLabel(t: TaskInfo): string {
 }
 
 function openSession(t: TaskInfo) {
-  if (t.sessionId) emit('open-session', t.sessionId)
+  if (t.sessionId) emit('open-session', { sessionId: t.sessionId, messageId: t.messageId })
 }
 
 function statusType(t: TaskInfo): 'default' | 'primary' | 'success' | 'warning' | 'error' {

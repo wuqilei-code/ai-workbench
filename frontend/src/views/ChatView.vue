@@ -147,11 +147,32 @@ async function ensureSession() {
   }
 }
 
-/** 任务面板「来自」点击:关闭工作区抽屉并跳到该会话。 */
-function onOpenSession(id: number) {
+/** 任务面板「来源会话」点击:关抽屉、切会话并滚动高亮触发该任务的那条用户消息。 */
+async function onOpenSession(target: { sessionId: number; messageId?: number }) {
   showFiles.value = false
-  if (sessionId.value !== id) {
-    router.push({ name: 'session', params: { id } })
+  if (sessionId.value !== target.sessionId) {
+    await router.push({ name: 'session', params: { id: target.sessionId } })
+  }
+  await flashToMessage(target.messageId)
+}
+
+/** 定位到指定用户消息所在 turn 并闪亮(消息加载是异步的,轮询等待)。 */
+async function flashToMessage(messageId?: number) {
+  if (!messageId) return
+  const flash = (turnId: string) => {
+    const el = document.getElementById('find-turn-' + turnId)
+    el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    flashedTurnId.value = turnId
+    if (_flashTimer) clearTimeout(_flashTimer)
+    _flashTimer = setTimeout(() => { flashedTurnId.value = null }, 1600)
+  }
+  for (let i = 0; i < 40; i++) {
+    const turn = chat.turns.find((t) => t.userMessage?.id === messageId)
+    if (turn) {
+      flash(turn.id)
+      return
+    }
+    await new Promise((r) => setTimeout(r, 200))
   }
 }
 

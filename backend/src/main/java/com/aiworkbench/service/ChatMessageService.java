@@ -27,6 +27,7 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 
 import java.io.ByteArrayOutputStream;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 
 /**
@@ -45,6 +46,26 @@ public class ChatMessageService {
     private final ChatSessionService chatSessionService;
     private final OpencodeClient opencodeClient;
     private final ObjectMapper objectMapper;
+
+    /**
+     * 找该会话在 beforeEpochMs(含)之前最近的一条用户消息,作为后台任务的"触发消息"。
+     * DB 存 UTC 墙上时间(MySQL 容器 SYSTEM=UTC,DATETIME 读回 LocalDateTime 不做偏移),与 epoch ms 直接按 UTC 对齐。
+     */
+    public ChatMessage findTriggerUserMessage(Long sessionId, Long userId, long beforeEpochMs) {
+        List<ChatMessage> list = chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
+                .eq(ChatMessage::getSessionId, sessionId)
+                .eq(ChatMessage::getUserId, userId)
+                .eq(ChatMessage::getRole, "user")
+                .orderByDesc(ChatMessage::getCreatedAt)
+                .last("limit 50"));
+        for (ChatMessage m : list) {
+            if (m.getCreatedAt() != null
+                    && m.getCreatedAt().toEpochSecond(ZoneOffset.UTC) * 1000L <= beforeEpochMs) {
+                return m;
+            }
+        }
+        return null;
+    }
 
     /** 历史从 MySQL 加载(由事件镜像填充) */
     public List<MessageVo> listBySession(Long sessionId, Long userId, int limit) {

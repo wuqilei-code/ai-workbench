@@ -4,6 +4,7 @@ import com.aiworkbench.common.BusinessException;
 import com.aiworkbench.common.ResultCode;
 import com.aiworkbench.dto.chat.TaskInfoVo;
 import com.aiworkbench.entity.ChatSession;
+import com.aiworkbench.entity.ChatMessage;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +36,7 @@ public class TaskService {
 
     private final WorkspaceService workspaceService;
     private final ChatSessionService chatSessionService;
+    private final ChatMessageService chatMessageService;
     private final ObjectMapper objectMapper;
 
     private static final Pattern SAFE_ID = Pattern.compile("[A-Za-z0-9._-]{1,80}");
@@ -148,6 +150,13 @@ public class TaskService {
         }
 
         SessionRef session = resolveSession(userId, id);
+        Long messageId = null;
+        if (session != null && startedAt > 0) {
+            ChatMessage trigger = chatMessageService.findTriggerUserMessage(session.id(), userId, startedAt);
+            if (trigger != null) {
+                messageId = trigger.getId();
+            }
+        }
 
         return TaskInfoVo.builder()
                 .id(id)
@@ -162,6 +171,7 @@ public class TaskService {
                 .sessionId(session == null ? null : session.id())
                 .sessionTitle(session == null ? null : session.title())
                 .sessionConfirmed(session != null && session.confirmed())
+                .messageId(messageId)
                 .build();
     }
 

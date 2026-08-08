@@ -88,6 +88,8 @@ export interface TaskInfo {
   sessionTitle?: string
   /** 会话归属是否确定(sidecar/json 明确指定;否则为最近会话推测) */
   sessionConfirmed?: boolean
+  /** 触发任务的用户消息 DB id(可跳转定位) */
+  messageId?: number
 }
 
 /** 工具调用(part 级,同一 partId 的 pending→running→completed 共用) */

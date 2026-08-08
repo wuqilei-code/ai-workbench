@@ -31,4 +31,6 @@ public class TaskInfoVo {
     private String sessionTitle;
     /** 会话归属是否确定(sidecar/json.sessionId 明确指定;否则为最近会话推测) */
     private boolean sessionConfirmed;
+    /** 触发任务的用户消息 DB id(可跳转定位;查不到时 null) */
+    private Long messageId;
 }
