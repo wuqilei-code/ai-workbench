@@ -3,6 +3,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+      target: runtime
       args:
         OPENCODE_VERSION: "1.18.8"
         # 内网部署:把下面注释打开,指向内部 opencode 二进制镜像
@@ -18,7 +19,7 @@ services:
       OPENCODE_BASE_URL: http://127.0.0.1:4096
       # --- Phase 3 每用户 agent 容器隔离(容器模式) ---
       OPENCODE_CONTAINER_MODE: "${OPENCODE_CONTAINER_MODE:-true}"
-      AGENT_IMAGE: ai-workbench-app
+      AGENT_IMAGE: "${AGENT_IMAGE:-ai-workbench-agent}"
       OPENCODE_IDLE_TIMEOUT: "${OPENCODE_IDLE_TIMEOUT:-900}"
       OPENCODE_AGENT_CPUS: "${OPENCODE_AGENT_CPUS:-1}"
       OPENCODE_AGENT_MEMORY_MB: "${OPENCODE_AGENT_MEMORY_MB:-1024}"
@@ -49,6 +50,20 @@ services:
       mysql:
         condition: service_healthy
     restart: unless-stopped
+
+  # 仅构建 agent 专用精简镜像(容器模式每用户 agent 容器用);profile=build 不随默认 up 启动,
+  # 部署时用 `docker compose --profile build build agent-build` 单独构建。
+  agent-build:
+    profiles: ["build"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: agent-runtime
+      args:
+        OPENCODE_VERSION: "1.18.8"
+    image: ai-workbench-agent
+    restart: "no"
+    command: ["true"]
 
   mysql:
     image: docker.m.daocloud.io/mysql:8.0

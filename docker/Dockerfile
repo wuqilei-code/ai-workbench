@@ -23,7 +23,7 @@ RUN mvn -B -q clean package -DskipTests
 # 镜像且无法回源。这里复用已拉取的 maven:3.9-eclipse-temurin-21(含 JDK 21,Ubuntu 22.04 基础,
 # apt 源 archive.ubuntu.com 可达)作为运行时基镜像,确保烟测可构建。生产环境(Docker Hub 可达)请改回
 # FROM ${DOCKER_REGISTRY}/eclipse-temurin:21-jre-bookworm 以获得更小的 JRE 镜像。
-FROM ${DOCKER_REGISTRY}/maven:3.9-eclipse-temurin-21
+FROM ${DOCKER_REGISTRY}/maven:3.9-eclipse-temurin-21 AS runtime
 
 ARG OPENCODE_VERSION=1.18.8
 ARG OPENCODE_DOWNLOAD_URL=
@@ -114,3 +114,61 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=40s --retries=10 \
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]
+
+# ---------- Stage 4: agent-runtime(每用户 agent 容器专用精简镜像) ----------
+# 基础镜像 python:3.11-slim-bookworm(daocloud 官方命名空间可拉取,198MB)。
+# 只含 agent 运行所需:opencode 二进制 + python 文档/数据处理依赖 + git + 基础工具。
+# 不含 java/nginx/supervisord/docker CLI/app jar/前端 —— 镜像更小、启动更快、每容器内存更低。
+# python 依赖仍在构建期经 PIP_INDEX_URL(默认阿里云,内网构建指内网 PyPI)烘焙进镜像,
+# 运行期内网无网也能 import(docx/pptx/xlsx/pdf/图表等文档处理能力与 app 镜像完全一致)。
+# 本镜像不声明 VOLUME /workspace /data,避免 agent 容器被自动创建匿名卷(挂载由网关按用户子目录 bind)。
+FROM ${DOCKER_REGISTRY}/python:3.11-slim-bookworm AS agent-runtime
+
+ARG OPENCODE_VERSION=1.18.8
+ARG OPENCODE_DOWNLOAD_URL=
+ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends \
+       curl ca-certificates git procps mawk bash \
+       unzip poppler-utils \
+       fonts-noto-cjk \
+  && rm -rf /var/lib/apt/lists/*
+
+# Python 常用依赖(与 runtime 阶段同清单):文档操作 / 数据处理 / API / 图表
+RUN pip3 install --no-cache-dir --break-system-packages \
+      --index-url ${PIP_INDEX_URL} \
+      python-docx python-pptx openpyxl reportlab PyPDF2 pdfplumber markdown \
+      numpy pandas matplotlib \
+      requests httpx aiohttp \
+      flask fastapi uvicorn pydantic \
+      beautifulsoup4 lxml Pillow \
+ && python3 -c "import docx, pptx, openpyxl, reportlab, PyPDF2, pdfplumber, markdown, numpy, pandas, matplotlib, requests, httpx, aiohttp, flask, fastapi, uvicorn, pydantic, bs4, lxml, PIL; print('agent python deps ok')"
+
+# 运行时禁止 AI 自行 pip install(与 runtime 阶段一致):移除 pip/ensurepip,预装依赖不受影响。
+RUN rm -f /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.11 \
+  && rm -rf /usr/local/lib/python3.11/site-packages/pip* \
+  && rm -rf /usr/local/lib/python3.11/ensurepip /usr/lib/python3*/ensurepip \
+  && python3 -c "import docx, openpyxl, pandas, matplotlib; print('preinstalled deps still ok')"
+
+# 下载 opencode 二进制(与 runtime 阶段同源同版本)
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) asset="opencode-linux-x64-baseline.tar.gz" ;; \
+      arm64) asset="opencode-linux-arm64.tar.gz" ;; \
+      *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \
+    esac; \
+    url="${OPENCODE_DOWNLOAD_URL:-https://github.com/sst/opencode/releases/download/v${OPENCODE_VERSION}/${asset}}"; \
+    tmpdir="$(mktemp -d)"; \
+    curl -fsSL "$url" -o "$tmpdir/$asset"; \
+    tar -xzf "$tmpdir/$asset" -C "$tmpdir"; \
+    bin="$(find "$tmpdir" -type f -name opencode | head -n1)"; \
+    test -n "$bin"; \
+    install -m 0755 "$bin" /usr/local/bin/opencode; \
+    rm -rf "$tmpdir"; \
+    opencode --version
+
+# 网关创建容器时会显式 --entrypoint opencode serve ...;此处仅保证直接 docker run 可运行
+ENTRYPOINT ["opencode"]
