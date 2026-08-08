@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, onMounted, onBeforeUnmount, computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useMessage } from 'naive-ui'
 import ChatMessage from '@/components/ChatMessage.vue'
@@ -14,6 +14,7 @@ import { chatApi } from '@/api/chat'
 import type { MessageVo, SkillInfo } from '@/types'
 
 const route = useRoute()
+const router = useRouter()
 const chat = useChatStore()
 const msg = useMessage()
 const scrollRef = ref<HTMLDivElement | null>(null)
@@ -143,6 +144,14 @@ const sessionId = computed(() => {
 async function ensureSession() {
   if (sessionId.value && sessionId.value !== chat.currentSessionId) {
     await chat.selectSession(sessionId.value)
+  }
+}
+
+/** 任务面板「来自」点击:关闭工作区抽屉并跳到该会话。 */
+function onOpenSession(id: number) {
+  showFiles.value = false
+  if (sessionId.value !== id) {
+    router.push({ name: 'session', params: { id } })
   }
 }
 
@@ -332,7 +341,7 @@ const showThinkingFallback = computed(
               <FileTree root=".opencode/skills" skills-mode :changed-paths="Array.from(chat.changedFilePaths)" />
             </n-tab-pane>
             <n-tab-pane name="tasks" tab="任务">
-              <TaskPanel />
+              <TaskPanel @open-session="onOpenSession" />
             </n-tab-pane>
         </n-tabs>
       </n-drawer-content>

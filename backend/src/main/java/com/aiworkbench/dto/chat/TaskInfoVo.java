@@ -25,4 +25,10 @@ public class TaskInfoVo {
     private Long runningSeconds;
     /** 日志尾部(列表返回短尾,详情返回全尾) */
     private String logTail;
+    /** 来源会话 DB id(可用于跳转;无归属时 null) */
+    private Long sessionId;
+    /** 来源会话标题(无归属时 null) */
+    private String sessionTitle;
+    /** 会话归属是否确定(sidecar/json.sessionId 明确指定;否则为最近会话推测) */
+    private boolean sessionConfirmed;
 }

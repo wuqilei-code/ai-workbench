@@ -100,6 +100,8 @@ public class BackgroundTaskWatcher {
             return;
         }
 
+        stampSession(userId, tasksDir, id, spec);
+
         String status = finishedStatus(tasksDir, id, taskFile);
         if (status == null) {
             long age = System.currentTimeMillis() - Files.getLastModifiedTime(taskFile).toMillis();
@@ -146,8 +148,36 @@ public class BackgroundTaskWatcher {
         }
     }
 
-    /** 完成判定:优先 <id>.done 状态文件;其次 <id>.pid 进程已退出;均无则未完成。 */
-    private String finishedStatus(Path tasksDir, String id, Path taskFile) {
+    /**
+     * 任务来源会话归因:agent 未在 json.sessionId 中声明来源时,首次发现任务即把当时活跃/最近会话
+     * 写入 tasks/&lt;id&gt;.session 侧车(仅一次),供「任务」面板展示"来自哪个对话"。json 已声明则不重复落盘。
+     */
+    private void stampSession(Long userId, Path tasksDir, String id, JsonNode spec) {
+        if (!spec.path("sessionId").asText("").isBlank()) {
+            return;
+        }
+        Path sidecar = tasksDir.resolve(id + ".session");
+        if (Files.exists(sidecar)) {
+            return;
+        }
+        String sid = processManager.lastEventSessionId(userId);
+        if (sid == null || sid.isBlank()) {
+            ChatSession recent = chatSessionService.findMostRecentByUserId(userId);
+            if (recent != null) {
+                sid = recent.getOpencodeSessionId();
+            }
+        }
+        if (sid == null || sid.isBlank()) {
+            return;
+        }
+        try {
+            Files.writeString(sidecar, sid, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+        } catch (IOException e) {
+            log.debug("stamp session for background task {} (user {}) failed: {}", id, userId, e.toString());
+        }
+    }
+
+    /** 完成判定:优先 <id>.done 状态文件;其次 <id>.pid 进程已退出;均无则未完成。 */    private String finishedStatus(Path tasksDir, String id, Path taskFile) {
         Path done = tasksDir.resolve(id + ".done");
         if (Files.exists(done)) {
             try {

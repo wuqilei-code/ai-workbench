@@ -5,6 +5,7 @@ import { chatApi } from '@/api/chat'
 import type { TaskInfo } from '@/types'
 
 const msg = useMessage()
+const emit = defineEmits<{ (e: 'open-session', id: number): void }>()
 const tasks = ref<TaskInfo[]>([])
 const loading = ref(false)
 const error = ref('')
@@ -80,6 +81,17 @@ function formatDuration(sec?: number): string {
   return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`
 }
 
+/** 会话展示文案:标题 + 推测标记;无归属时提示。 */
+function sessionLabel(t: TaskInfo): string {
+  const base = t.sessionTitle ? t.sessionTitle : t.sessionId ? `会话 #${t.sessionId}` : ''
+  if (!base) return t.sessionConfirmed ? '会话已删除' : '未关联会话'
+  return t.sessionConfirmed ? base : `${base}(推测)`
+}
+
+function openSession(t: TaskInfo) {
+  if (t.sessionId) emit('open-session', t.sessionId)
+}
+
 function statusType(t: TaskInfo): 'default' | 'primary' | 'success' | 'warning' | 'error' {
   switch (t.status) {
     case 'running': return 'warning'
@@ -123,15 +135,24 @@ onBeforeUnmount(stopPolling)
       <div v-else class="task-list">
         <div v-for="t in tasks" :key="t.id" class="task-item" :class="{ active: expandedId === t.id }">
           <div class="task-row" @click="toggle(t.id)">
-            <span class="task-id" :title="t.id">{{ t.id }}</span>
-            <n-tag size="tiny" :type="statusType(t)" :bordered="false">
-              <template v-if="t.status === 'running'" #icon><n-spin :size="10" class="mini-spin" /></template>
-              {{ t.statusText }}
-            </n-tag>
-            <span class="task-time" :title="t.delivered ? '已交付' : undefined">
-              {{ formatTime(t.startedAt) }}<template v-if="t.runningSeconds != null"> · {{ formatDuration(t.runningSeconds) }}</template>
-            </span>
-            <span class="caret">{{ expandedId === t.id ? '▾' : '▸' }}</span>
+            <div class="task-line1">
+              <span class="task-id" :title="t.id">{{ t.id }}</span>
+              <n-tag size="tiny" :type="statusType(t)" :bordered="false">
+                <template v-if="t.status === 'running'" #icon><n-spin :size="10" class="mini-spin" /></template>
+                {{ t.statusText }}
+              </n-tag>
+              <span class="task-time" :title="t.delivered ? '已交付' : undefined">
+                {{ formatTime(t.startedAt) }}<template v-if="t.runningSeconds != null"> · {{ formatDuration(t.runningSeconds) }}</template>
+              </span>
+              <span class="caret">{{ expandedId === t.id ? '▾' : '▸' }}</span>
+            </div>
+            <div class="task-session">
+              <span class="session-label">来自</span>
+              <a v-if="t.sessionId" class="session-link" :title="sessionLabel(t)" @click.stop="openSession(t)">
+                💬 {{ sessionLabel(t) }}
+              </a>
+              <span v-else class="session-none">{{ sessionLabel(t) }}</span>
+            </div>
           </div>
           <div v-if="expandedId === t.id" class="task-detail">
             <div v-if="t.doneContent" class="task-done">{{ t.doneContent }}</div>
@@ -165,9 +186,12 @@ onBeforeUnmount(stopPolling)
 }
 .task-item.active { border-color: #3d4a66; }
 .task-row {
-  display: flex; align-items: center; gap: 8px; padding: 8px 10px; cursor: pointer;
+  padding: 8px 10px 6px; cursor: pointer;
 }
 .task-row:hover { background: #26262a; }
+.task-line1 {
+  display: flex; align-items: center; gap: 8px;
+}
 .task-id {
   font-size: 12px; font-weight: 600; color: #e8c547; font-family: monospace;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px;
@@ -175,6 +199,16 @@ onBeforeUnmount(stopPolling)
 .task-time { margin-left: auto; font-size: 11px; color: #888; white-space: nowrap; }
 .caret { color: #666; font-size: 11px; }
 .mini-spin { margin-right: 4px; }
+.task-session {
+  display: flex; align-items: center; gap: 6px; margin-top: 4px; min-width: 0;
+}
+.session-label { font-size: 11px; color: #666; flex-shrink: 0; }
+.session-link {
+  font-size: 12px; color: #7db0ff; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.session-link:hover { color: #a8ccff; text-decoration: underline; }
+.session-none { font-size: 12px; color: #777; }
 .task-detail { border-top: 1px solid #2a2a2e; padding: 8px 10px; }
 .task-done { font-size: 12px; color: #bbb; margin-bottom: 6px; word-break: break-all; }
 .log-box {

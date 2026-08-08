@@ -3,6 +3,9 @@ package com.aiworkbench.service;
 import com.aiworkbench.common.BusinessException;
 import com.aiworkbench.common.ResultCode;
 import com.aiworkbench.dto.chat.TaskInfoVo;
+import com.aiworkbench.entity.ChatSession;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -31,6 +34,8 @@ import java.util.stream.Stream;
 public class TaskService {
 
     private final WorkspaceService workspaceService;
+    private final ChatSessionService chatSessionService;
+    private final ObjectMapper objectMapper;
 
     private static final Pattern SAFE_ID = Pattern.compile("[A-Za-z0-9._-]{1,80}");
 
@@ -142,6 +147,8 @@ public class TaskService {
             runningSeconds = Math.max(0, (finishedAt - startedAt) / 1000);
         }
 
+        SessionRef session = resolveSession(userId, id);
+
         return TaskInfoVo.builder()
                 .id(id)
                 .status(status)
@@ -152,7 +159,62 @@ public class TaskService {
                 .finishedAt(finishedAt)
                 .runningSeconds(runningSeconds)
                 .logTail(tail(taskFile(userId, id, "log"), LIST_TAIL))
+                .sessionId(session == null ? null : session.id())
+                .sessionTitle(session == null ? null : session.title())
+                .sessionConfirmed(session != null && session.confirmed())
                 .build();
+    }
+
+    /** 会话归属:优先 tasks/<id>.session(后台 watcher 首次发现时落盘),其次 json.sessionId,最后兜底最近会话。 */
+    private SessionRef resolveSession(Long userId, String id) {
+        String sid = readSidecar(userId, id);
+        boolean confirmed = !sid.isBlank();
+        if (sid.isBlank()) {
+            sid = jsonField(userId, id, "sessionId");
+            confirmed = !sid.isBlank();
+        }
+        if (!sid.isBlank()) {
+            ChatSession s = chatSessionService.findByOpencodeSessionId(sid);
+            if (s != null && userId.equals(s.getUserId())) {
+                return new SessionRef(s.getId(), s.getTitle(), true);
+            }
+            confirmed = false;
+        }
+        ChatSession recent = chatSessionService.findMostRecentByUserId(userId);
+        if (recent != null) {
+            return new SessionRef(recent.getId(), recent.getTitle(), confirmed);
+        }
+        return null;
+    }
+
+    /** 读取任务 json 中的字段(损坏/不存在返回空串)。 */
+    private String jsonField(Long userId, String id, String field) {
+        Path json = taskFile(userId, id, "json");
+        if (!Files.isRegularFile(json)) {
+            return "";
+        }
+        try {
+            JsonNode node = objectMapper.readTree(Files.readAllBytes(json));
+            return node != null && node.isObject() ? node.path(field).asText("") : "";
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** tasks/<id>.session 侧车文件(记录来源 opencode 会话,由 BackgroundTaskWatcher 落盘)。 */
+    private String readSidecar(Long userId, String id) {
+        Path p = taskFile(userId, id, "session");
+        if (!Files.isRegularFile(p)) {
+            return "";
+        }
+        try {
+            return Files.readString(p).trim();
+        } catch (IOException e) {
+            return "";
+        }
+    }
+
+    private record SessionRef(Long id, String title, boolean confirmed) {
     }
 
     /** 任务日志尾部。 */
@@ -161,9 +223,9 @@ public class TaskService {
         return tail(taskFile(userId, id, "log"), Math.min(n, 100_000));
     }
 
-    /** 清理任务运行文件(json/log/pid/done/delivered);脚本等其它文件保留。 */
+    /** 清理任务运行文件(json/log/pid/done/delivered/session);脚本等其它文件保留。 */
     public void cleanupTask(Long userId, String id) {
-        String[] exts = { "json", "log", "pid", "done", "delivered" };
+        String[] exts = { "json", "log", "pid", "done", "delivered", "session" };
         for (String ext : exts) {
             Path p = taskFile(userId, id, ext);
             try {
