@@ -40,6 +40,13 @@ opencode:
   idle-timeout-seconds: ${OPENCODE_IDLE_TIMEOUT:900}
   per-user-data-root: ${OPENCODE_PER_USER_DATA_ROOT:/data/users}
   template-dir: ${OPENCODE_TEMPLATE_DIR:/data/opencode/template}
+  # Phase 3 每用户 Docker 容器隔离(容器模式)
+  container-mode: ${OPENCODE_CONTAINER_MODE:false}
+  agent-image: ${AGENT_IMAGE:ai-workbench-app}
+  agent-cpus: ${OPENCODE_AGENT_CPUS:1}
+  agent-memory-mb: ${OPENCODE_AGENT_MEMORY_MB:1024}
+  agent-stop-grace-seconds: ${OPENCODE_AGENT_STOP_GRACE:5}
+  agent-network: ${OPENCODE_AGENT_NETWORK:aiwb-agents}
 
 # JWT
 jwt:

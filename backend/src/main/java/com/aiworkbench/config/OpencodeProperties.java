@@ -24,8 +24,22 @@ public class OpencodeProperties {
     private int portMin = 14100;
     /** 每用户 opencode 进程监听端口上限(支持 300 个并发实例) */
     private int portMax = 14399;
-    /** 空闲回收阈值(秒),Phase 2 的 idleSweep 用;Phase 1 仅声明 */
+    /** 空闲回收阈值(秒),idleSweep 用 */
     private int idleTimeoutSeconds = 900;
+
+    // ---- Phase 3:每用户 Docker 容器隔离(容器模式替代 setpriv 进程) ----
+    /** 容器模式:每用户一个 Docker 容器运行 opencode serve,替代 setpriv 进程;false 时回退 Phase 2 进程模式 */
+    private boolean containerMode = false;
+    /** agent 容器镜像(须为含 opencode 运行时 + python 依赖的镜像,默认与 app 同镜像) */
+    private String agentImage = "ai-workbench-app";
+    /** agent 容器 CPU 配额(核) */
+    private double agentCpus = 1.0;
+    /** agent 容器内存上限(MB),--memory 与 --memory-swap 同值(禁用 swap,OOM 时杀容器保护宿主机) */
+    private int agentMemoryMb = 1024;
+    /** agent 容器 docker stop 宽限(秒),超时 SIGKILL */
+    private int agentStopGraceSeconds = 5;
+    /** agent 容器所在的 docker 网络(app 容器须同网);容器内 DNS 按容器名直连,无需发布端口 */
+    private String agentNetwork = "aiwb-agents";
     /** 每用户私有数据根:/data/users/<uid>/home/.config/opencode/ */
     private String perUserDataRoot = "/data/users";
     /** 后台长任务扫描间隔(ms),BackgroundTaskWatcher 轮询用户 tasks/ 目录 */

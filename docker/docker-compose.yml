@@ -7,6 +7,8 @@ services:
         OPENCODE_VERSION: "1.18.8"
         # 内网部署:把下面注释打开,指向内部 opencode 二进制镜像
         # OPENCODE_DOWNLOAD_URL: "http://internal-mirror/opencode-linux-x64-baseline.tar.gz"
+    # 固定镜像 tag:每用户 agent 容器复用本镜像(容器模式)
+    image: ai-workbench-app
     ports:
       - "8080:80"
     environment:
@@ -14,6 +16,13 @@ services:
       OPENCODE_SERVER_USERNAME: opencode
       OPENCODE_SERVER_PASSWORD: ${OPENCODE_SERVER_PASSWORD:?set in .env}
       OPENCODE_BASE_URL: http://127.0.0.1:4096
+      # --- Phase 3 每用户 agent 容器隔离(容器模式) ---
+      OPENCODE_CONTAINER_MODE: "${OPENCODE_CONTAINER_MODE:-true}"
+      AGENT_IMAGE: ai-workbench-app
+      OPENCODE_IDLE_TIMEOUT: "${OPENCODE_IDLE_TIMEOUT:-900}"
+      OPENCODE_AGENT_CPUS: "${OPENCODE_AGENT_CPUS:-1}"
+      OPENCODE_AGENT_MEMORY_MB: "${OPENCODE_AGENT_MEMORY_MB:-1024}"
+      OPENCODE_AGENT_STOP_GRACE: "${OPENCODE_AGENT_STOP_GRACE:-5}"
       # --- JWT ---
       JWT_SECRET: ${JWT_SECRET:?set in .env}
       JWT_TTL_MINUTES: "1440"
@@ -30,6 +39,12 @@ services:
     volumes:
       - workspace:/workspace
       - app-data:/data
+      # Phase 3:网关经宿主 docker 守护进程创建/回收每用户 agent 容器。
+      # 安全注意:该挂载使 app 容器拥有宿主机 docker 完全控制权,仅适用于单机管理员部署。
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - default
+      - agents
     depends_on:
       mysql:
         condition: service_healthy
@@ -58,3 +73,8 @@ volumes:
   workspace:
   app-data:
   mysql-data:
+
+networks:
+  # 每用户 agent 容器专用网络(app 容器亦接入):网关经容器名 DNS 直连各 agent 的 opencode serve
+  agents:
+    name: aiwb-agents

@@ -4,6 +4,7 @@ import com.aiworkbench.config.OpencodeProperties;
 import com.aiworkbench.entity.ChatSession;
 import com.aiworkbench.service.opencode.OpencodeClient;
 import com.aiworkbench.service.opencode.dto.PromptAsyncBody;
+import com.aiworkbench.service.opencode.process.AgentContainerManager;
 import com.aiworkbench.service.opencode.process.OpencodeProcessManager;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -43,6 +44,7 @@ public class BackgroundTaskWatcher {
     private final ChatSessionService chatSessionService;
     private final OpencodeClient opencodeClient;
     private final OpencodeProcessManager processManager;
+    private final AgentContainerManager agentContainerManager;
     private final ObjectMapper objectMapper;
 
     private static final Pattern SAFE_ID = Pattern.compile("[A-Za-z0-9._-]{1,80}");
@@ -102,7 +104,7 @@ public class BackgroundTaskWatcher {
 
         stampSession(userId, tasksDir, id, spec);
 
-        String status = finishedStatus(tasksDir, id, taskFile);
+        String status = finishedStatus(userId, tasksDir, id, taskFile);
         if (status == null) {
             long age = System.currentTimeMillis() - Files.getLastModifiedTime(taskFile).toMillis();
             if (age > STALE_MS) {
@@ -177,7 +179,7 @@ public class BackgroundTaskWatcher {
         }
     }
 
-    /** 完成判定:优先 <id>.done 状态文件;其次 <id>.pid 进程已退出;均无则未完成。 */    private String finishedStatus(Path tasksDir, String id, Path taskFile) {
+    /** 完成判定:优先 <id>.done 状态文件;其次 <id>.pid 进程已退出;均无则未完成。 */    private String finishedStatus(Long userId, Path tasksDir, String id, Path taskFile) {
         Path done = tasksDir.resolve(id + ".done");
         if (Files.exists(done)) {
             try {
@@ -191,7 +193,10 @@ public class BackgroundTaskWatcher {
         if (Files.exists(pidFile)) {
             try {
                 long pid = Long.parseLong(Files.readString(pidFile).trim());
-                boolean alive = ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false);
+                // 容器模式:任务进程运行在 agent 容器内,pid 属于容器 PID namespace,须经 docker exec kill -0 判定
+                boolean alive = props.isContainerMode()
+                        ? agentContainerManager.processAlive(userId, pid)
+                        : ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false);
                 return alive ? null : "任务完成(进程已退出)";
             } catch (Exception e) {
                 return null;
