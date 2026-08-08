@@ -65,6 +65,12 @@ export interface CommandItem {
   hints?: string[]
 }
 
+/** 内置全局技能信息(只读展示) */
+export interface SkillInfo {
+  name: string
+  description: string
+}
+
 /** 工具调用(part 级,同一 partId 的 pending→running→completed 共用) */
 export interface ToolCall {
   partId?: string
@@ -203,4 +209,18 @@ export interface ChangeSummary {
   sha?: string
   /** 该快照的父提交 sha,与 sha 组成"本轮变更"的 diff 范围 */
   parentSha?: string
+}
+
+/** 用量统计看板(admin) */
+export interface UsageStats {
+  overview: {
+    totalUsers: number
+    totalSessions: number
+    totalMessages: number
+    totalToolCalls: number
+    todayMessages: number
+    activeUsers7d: number
+  }
+  daily: { date: string; messages: number; users: number }[]
+  topUsers: { userId: number; username: string; sessions: number; messages: number }[]
 }

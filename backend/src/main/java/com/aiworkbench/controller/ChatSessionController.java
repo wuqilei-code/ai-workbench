@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -75,6 +76,12 @@ public class ChatSessionController {
     @GetMapping("/archived")
     public R<List<SessionVo>> listArchived() {
         return R.ok(chatSessionService.listArchived(SecurityUtil.currentUserId()));
+    }
+
+    /** 会话搜索:标题或消息内容模糊匹配(含归档)。字面量 /search 优先于 /{id} 匹配。 */
+    @GetMapping("/search")
+    public R<List<SessionVo>> search(@RequestParam String q) {
+        return R.ok(chatSessionService.search(q, SecurityUtil.currentUserId()));
     }
 
     @GetMapping("/{id}")

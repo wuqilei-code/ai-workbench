@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useMessage } from 'naive-ui'
 import { renderMarkdown } from '@/utils/markdown'
 import { fileApi } from '@/api/files'
 import type { MessageVo } from '@/types'
 
 const props = defineProps<{ message: MessageVo; streaming?: boolean }>()
+const msg = useMessage()
 
 const isUser = computed(() => props.message.role === 'user')
 
@@ -37,12 +39,26 @@ async function downloadAttachment(path: string) {
     console.error('[ChatMessage] download attachment failed', e)
   }
 }
+
+async function copyContent() {
+  const text = props.message.content || ''
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    msg.success('已复制')
+  } catch {
+    msg.error('复制失败')
+  }
+}
 </script>
 
 <template>
   <div class="msg" :class="isUser ? 'user' : 'assistant'">
     <div class="avatar">{{ isUser ? '我' : 'AI' }}</div>
     <div class="bubble">
+      <div class="bubble-tools">
+        <button class="copy-btn" title="复制内容" @click="copyContent">📋</button>
+      </div>
       <div v-if="message._pending" class="status">发送中…</div>
       <div v-else-if="message.status === 'error'" class="status err">{{ message.error || '发送失败' }}</div>
       <div v-if="parsed.text" class="content" v-html="html" />
@@ -70,9 +86,17 @@ async function downloadAttachment(path: string) {
 }
 .msg.user .avatar { background: #3a5a8c; }
 .bubble {
+  position: relative;
   max-width: 75%; padding: 10px 14px; border-radius: 10px;
   background: #26262a; line-height: 1.6; word-break: break-word;
 }
+.bubble-tools { position: absolute; top: 4px; right: 6px; opacity: 0; transition: opacity .15s; }
+.bubble:hover .bubble-tools { opacity: 1; }
+.copy-btn {
+  background: transparent; border: none; cursor: pointer; font-size: 13px;
+  padding: 2px 4px; border-radius: 4px; line-height: 1;
+}
+.copy-btn:hover { background: rgba(255,255,255,.12); }
 .msg.user .bubble { background: #2c4a7c; }
 .content :deep(p) { margin: 6px 0; }
 .content :deep(pre.hljs) { background: #18181c; border-radius: 6px; padding: 10px; overflow-x: auto; }

@@ -156,6 +156,10 @@ async function createSkill() {
     msg.error('描述不能为空')
     return
   }
+  if (description.trim().length > 1024) {
+    msg.error('描述过长(最多 1024 字符)')
+    return
+  }
   try {
     await fileApi.mkdir(abs(name))
     const md =

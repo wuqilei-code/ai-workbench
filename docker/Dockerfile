@@ -35,6 +35,7 @@ RUN apt-get update \
        nginx supervisor curl ca-certificates git procps bash \
        python3 python3-pip python3-venv \
        fonts-noto-cjk \
+       unzip poppler-utils \
   && rm -rf /var/lib/apt/lists/*
 
 # Python 常用依赖:文档操作 / API / 数据处理(系统级安装,所有 uid 可读;AI 生成的脚本直接 import 即可)

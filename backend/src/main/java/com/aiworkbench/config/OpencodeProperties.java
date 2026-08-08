@@ -28,8 +28,22 @@ public class OpencodeProperties {
     private int idleTimeoutSeconds = 900;
     /** 每用户私有数据根:/data/users/<uid>/home/.config/opencode/ */
     private String perUserDataRoot = "/data/users";
+    /** 后台长任务扫描间隔(ms),BackgroundTaskWatcher 轮询用户 tasks/ 目录 */
+    private int backgroundTaskPollMs = 5000;
+    /** 后台任务结果日志取尾部字符数上限 */
+    private int backgroundTaskLogTail = 4000;
     /** 配置模板真相源:/data/opencode/template/(root 0700),applyConfig 渲染、PerUserConfigWriter 拷贝 */
     private String templateDir = "/data/opencode/template";
+
+    // ---- 工具在途看门狗(StuckToolWatcher):兜底「卡死但无人回答」的权限/工具在途 ----
+    /** 判定阈值:生成中且在途但超过该时长(ms)无任何事件 → 视为卡死 */
+    private long stuckToolTimeoutMs = 90_000;
+    /** 权限未被回答的兜底阈值(ms):超过即在对话中注入提示(不自动 abort) */
+    private long stuckPermissionPromptMs = 30_000;
+    /** 看门狗扫描间隔(ms) */
+    private long stuckSweepMs = 5_000;
+    /** 同一用户连续 abort 的最小间隔(ms),避免误杀后立刻再杀 */
+    private long stuckCooldownMs = 120_000;
 
     /** uid = uidBase + userId(确定性,免协调;与 UserProvisioningService 一致) */
     public int uidOf(Long userId) {

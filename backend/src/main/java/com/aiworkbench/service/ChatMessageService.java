@@ -19,9 +19,14 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.poi.xwpf.usermodel.XWPFDocument;
+import org.apache.poi.xwpf.usermodel.XWPFParagraph;
+import org.apache.poi.xwpf.usermodel.XWPFRun;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
+import java.io.ByteArrayOutputStream;
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -126,6 +131,137 @@ public class ChatMessageService {
         root.put("exportedAt", java.time.LocalDateTime.now().toString());
         root.set("messages", arr);
         return root.toPrettyString();
+    }
+
+    /** 导出会话为 Word(docx,POI 生成;中文字体名 SimHei,由打开端渲染)。 */
+    public byte[] exportDocx(Long sessionId, Long userId, String title) {
+        List<ChatMessage> msgs = allBySession(sessionId, userId);
+        try (XWPFDocument doc = new XWPFDocument();
+             ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
+            XWPFParagraph titleP = doc.createParagraph();
+            XWPFRun titleRun = titleP.createRun();
+            titleRun.setText(title == null ? "会话导出" : title);
+            setDocxFont(titleRun, 18, true);
+
+            XWPFParagraph metaP = doc.createParagraph();
+            XWPFRun metaRun = metaP.createRun();
+            metaRun.setText("导出时间: " + LocalDateTime.now() + "    消息数: " + msgs.size());
+            setDocxFont(metaRun, 10, false);
+
+            for (ChatMessage m : msgs) {
+                XWPFParagraph headP = doc.createParagraph();
+                headP.setSpacingBefore(180);
+                XWPFRun headRun = headP.createRun();
+                String head = roleLabel(m.getRole());
+                if (m.getCreatedAt() != null) {
+                    head += "  ·  " + m.getCreatedAt();
+                }
+                headRun.setText(head);
+                setDocxFont(headRun, 12, true);
+
+                XWPFParagraph bodyP = doc.createParagraph();
+                XWPFRun bodyRun = bodyP.createRun();
+                String content = m.getContent() == null ? "" : m.getContent();
+                boolean isPartsFallback = content.isBlank() && m.getParts() != null;
+                String text = isPartsFallback ? m.getParts() : content;
+                if (text.isEmpty()) {
+                    bodyRun.setText("(无文本内容)");
+                } else {
+                    String[] lines = text.split("\n", -1);
+                    bodyRun.setText(lines[0]);
+                    for (int i = 1; i < lines.length; i++) {
+                        bodyRun.addBreak();
+                        bodyRun.setText(lines[i]);
+                    }
+                }
+                setDocxFont(bodyRun, 11, false);
+                if (isPartsFallback) {
+                    bodyRun.setFontFamily("Consolas");
+                }
+            }
+            doc.write(bos);
+            return bos.toByteArray();
+        } catch (Exception e) {
+            throw new BusinessException(ResultCode.INTERNAL_ERROR.getCode(), "Word 导出失败: " + e.getMessage());
+        }
+    }
+
+    /** 导出会话为 PDF(openhtmltopdf + 内置 simhei.ttf,中文正常渲染)。 */
+    public byte[] exportPdf(Long sessionId, Long userId, String title) {
+        List<ChatMessage> msgs = allBySession(sessionId, userId);
+        String html = buildExportHtml(title, msgs);
+        try {
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            com.openhtmltopdf.pdfboxout.PdfRendererBuilder builder = new com.openhtmltopdf.pdfboxout.PdfRendererBuilder();
+            builder.useFont(() -> getClass().getResourceAsStream("/fonts/simhei.ttf"), "SimHei");
+            builder.withHtmlContent(html, null);
+            builder.toStream(out);
+            builder.run();
+            return out.toByteArray();
+        } catch (Exception e) {
+            throw new BusinessException(ResultCode.INTERNAL_ERROR.getCode(), "PDF 导出失败: " + e.getMessage());
+        }
+    }
+
+    /** 会话内容渲染为 HTML(PDF 导出用;内嵌 SimHei 字体)。 */
+    private String buildExportHtml(String title, List<ChatMessage> msgs) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("<!DOCTYPE html><html><head><meta charset='utf-8'/><style>")
+                .append("@page{size:A4;margin:2cm}")
+                .append("body{font-family:'SimHei',sans-serif;font-size:11px;color:#222;line-height:1.8}")
+                .append("h1{font-size:18px;border-bottom:2px solid #ccc;padding-bottom:8px}")
+                .append(".meta{color:#888;font-size:10px;margin-bottom:18px}")
+                .append(".msg{margin:12px 0;padding:8px 10px;border-left:3px solid #999;background:#f6f6f6;page-break-inside:avoid}")
+                .append(".msg.user{border-color:#4a7abd}")
+                .append(".head{font-weight:bold;margin-bottom:5px}")
+                .append(".content{white-space:pre-wrap;word-break:break-word}")
+                .append(".parts{font-family:monospace;font-size:9px;color:#555;white-space:pre-wrap}")
+                .append("</style></head><body>");
+        sb.append("<h1>").append(escapeHtml(title == null ? "会话导出" : title)).append("</h1>");
+        sb.append("<div class='meta'>导出时间: ").append(LocalDateTime.now())
+                .append("    ·    消息数: ").append(msgs.size()).append("</div>");
+        for (ChatMessage m : msgs) {
+            String role = m.getRole() == null ? "" : m.getRole();
+            sb.append("<div class='msg").append("user".equals(role) ? " user" : "").append("'>");
+            sb.append("<div class='head'>").append(escapeHtml(roleLabel(role)));
+            if (m.getCreatedAt() != null) {
+                sb.append("  ·  ").append(escapeHtml(m.getCreatedAt().toString()));
+            }
+            sb.append("</div>");
+            String content = m.getContent() == null ? "" : m.getContent();
+            if (content.isBlank() && m.getParts() != null) {
+                sb.append("<div class='parts'>").append(escapeHtml(m.getParts())).append("</div>");
+            } else {
+                sb.append("<div class='content'>").append(escapeHtml(content)).append("</div>");
+            }
+            sb.append("</div>");
+        }
+        sb.append("</body></html>");
+        return sb.toString();
+    }
+
+    private static String escapeHtml(String s) {
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace("\"", "&quot;").replace("'", "&#39;");
+    }
+
+    /** 设置 docx 段落的字体与字号(ascii/hAnsi;中文由打开端按默认中文字体回退渲染)。 */
+    private static void setDocxFont(XWPFRun run, int size, boolean bold) {
+        run.setFontFamily("SimHei");
+        run.setFontSize(size);
+        run.setBold(bold);
+    }
+
+    /** role 的中文展示名(导出 md/docx/pdf 共用)。 */
+    private static String roleLabel(String role) {
+        return switch (role == null ? "" : role) {
+            case "user" -> "用户";
+            case "assistant" -> "AI";
+            case "tool" -> "工具";
+            case "system" -> "系统";
+            case "summary" -> "AI 变更总结";
+            default -> role;
+        };
     }
 
     /** 兜底:若 pendingPermission 残留但其关联 toolCall 已 completed(权限已授予),
@@ -757,6 +893,26 @@ public class ChatMessageService {
         if (questions == null || !questions.isArray() || questions.isEmpty()) return false;
         JsonNode first = questions.get(0);
         return first.has("header") || (first.has("options") && first.get("options").isArray());
+    }
+
+    /** 该会话当前是否存在未回答的 pendingPermission(parts 含 pendingPermission 的最新 assistant 消息)。看门狗判定卡死用。 */
+    public boolean hasUnresolvedPending(Long sessionId) {
+        List<ChatMessage> candidates = chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
+                .eq(ChatMessage::getSessionId, sessionId)
+                .eq(ChatMessage::getRole, "assistant")
+                .isNotNull(ChatMessage::getParts)
+                .like(ChatMessage::getParts, "pendingPermission")
+                .orderByDesc(ChatMessage::getId)
+                .last("limit 5"));
+        for (ChatMessage m : candidates) {
+            try {
+                JsonNode parts = objectMapper.readTree(m.getParts());
+                if (parts != null && parts.has("pendingPermission")) {
+                    return true;
+                }
+            } catch (Exception ignored) {}
+        }
+        return false;
     }
 
     private MessageVo toVo(ChatMessage m) {

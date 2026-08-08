@@ -25,6 +25,12 @@ public class UserProcess {
     private volatile Instant lastActivityAt = Instant.now();
     /** 是否正在生成(由 SSE 消费者上报;applyConfig 据此跳过重启,避免打断活跃对话) */
     private volatile boolean streaming = false;
+    /** 最近一次事件到达时间(opencode 全局事件流;看门狗用它判定“在途但长时间无事件”的卡死) */
+    private volatile Instant lastEventAt = Instant.MIN;
+    /** 最近事件所属 opencode 会话 id(看门狗 abort 定位用) */
+    private volatile String lastEventSessionId;
+    /** 最近事件类型(仅排查日志用) */
+    private volatile String lastEventType;
 
     public UserProcess(long userId, int uid, int gid, int port, Process process,
                        WebClient webClient, OpencodeInstanceEventConsumer eventConsumer) {
@@ -58,4 +64,15 @@ public class UserProcess {
     public Instant getLastActivityAt() { return lastActivityAt; }
     public boolean isStreaming() { return streaming; }
     public void setStreaming(boolean streaming) { this.streaming = streaming; }
+
+    /** 记录一次事件到达(推进 lastEventAt 与排查信息)。看门狗据此判定“流式在途但无事件”超时。 */
+    public void noteEvent(String sessionId, String type) {
+        this.lastEventAt = Instant.now();
+        this.lastEventSessionId = sessionId;
+        this.lastEventType = type;
+    }
+
+    public Instant getLastEventAt() { return lastEventAt; }
+    public String getLastEventSessionId() { return lastEventSessionId; }
+    public String getLastEventType() { return lastEventType; }
 }

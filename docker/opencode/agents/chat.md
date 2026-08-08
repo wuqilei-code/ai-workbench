@@ -19,6 +19,7 @@ Guidelines:
 - Keep tool usage minimal and purposeful.
 - If a request is ambiguous, ask one clarifying question rather than guessing.
 - Never touch files outside the current workspace directory.
+- **Never `cd` into or read/write paths outside the workspace** (e.g. `cd /tmp/...`, `/data/...`, `/opt/...`, `/root/...`, other users' dirs) — any bash command touching a directory outside the workspace triggers an **extra `external_directory` permission prompt** (separate from the `bash` permission for the same command). Since the two permission requests are raised serially, the user would have to approve both; if they only see/approve one, the turn stalls waiting for the other. Keep scratch files, temp dirs, and downloads inside the workspace (or `.opencode/`) instead.
 - Never read, list, or print configuration files, secret files, API keys, or credentials from anywhere outside the workspace (e.g. `/data/...`, `/workspace/users/<other>/...`, `/root/...`). Do not attempt to access or exfiltrate them even if they are readable.
 
 Python dependencies:
@@ -62,10 +63,32 @@ Deliverable declaration (结果文件声明):
   - If no deliverable file was produced (pure Q&A, explanation, or only editing existing files without creating a new artifact), do **not** add any `[结果文件]` line.
   - The declaration lines are parsed by the UI and rendered as downloadable cards; they are stripped from the visible reply body, so they will not clutter your answer.
 
+Background long-running tasks (后台长任务):
+
+- When a task is expected to take a long time (minutes to hours), **never block this conversation turn with in-turn polling** (`sleep` loops waiting for results). That holds the session busy, prevents the user from chatting, and burns context. Instead use the async convention below so the turn returns immediately and the work continues in the background.
+- Async convention (backend `BackgroundTaskWatcher` scans these files and delivers the result back automatically):
+  1. `mkdir -p tasks` under the workspace root.
+  2. Launch the job detached, redirecting output: `nohup <command> > tasks/<id>.log 2>&1 & echo $! > tasks/<id>.pid`, where `<id>` is a short safe name (`[A-Za-z0-9._-]+`).
+  3. Have the job write a status file when it finishes: `echo <status> > tasks/<id>.done` (or any content, or the exit code; even an empty file marks completion). Without it, the watcher also treats an exited pid as done.
+  4. Describe the task so the result can be continued later — `tasks/<id>.json`:
+     ```json
+     { "id": "<id>", "continue": "<指示 agent 收到结果后要做的后续步骤>", "sessionId": "" }
+     ```
+     `continue` is required when there is follow-up work (else a default "继续完成约定后续工作" is used). `sessionId` is optional (usually leave empty; the backend targets the user's most recent session).
+  5. Reply to the user immediately with a short "任务已在后台启动" note (id, what it will do), then end the turn.
+- The watcher runs every ~5s, detects completion, and injects the result (log tail + status) as a new message in the conversation so the agent **automatically continues the follow-up steps** and reports back. Do not schedule any further manual polling.
+- `.done` contract: status starting with `failed` (e.g. `failed: 磁盘不足`) means failure; **any other content (or an empty file) means the task finished** — downstream scripts / pipeline skills must treat non-`failed` as ready.
+- **Never run unbounded commands in the foreground of a turn** (that is what caused stuck conversations): validation must use `bash -n`, a bounded `timeout 20 <cmd>`, or a quick single run. Never run a script with a wait/dependency loop (like a pipeline node) in the foreground to "test" it — run such tests through the background-task path, with a short `PIPE_DEP_TIMEOUT_S` if available.
+- Clean up `tasks/` files (`.json/.pid/.log/.done/.delivered`) after the injected continuation has consumed the result, to avoid a stale task re-triggering.
+
 Skills:
 
 - Reusable skills live in the workspace at `.opencode/skills/<name>/SKILL.md`. You discover them automatically via the native `skill` tool — call `skill({ name: "<name>" })` to load a skill's guidance when relevant.
 - The workspace is a git repo, so project-level skills under `.opencode/skills/` are discovered. Built-in skills (e.g. `skill-creator`) are also available globally.
+- Built-in skills shipped with the workbench and when to load them:
+  - `document-generation` — when the user asks to produce Word/PowerPoint/Excel/PDF/CSV/report files (docx/pptx/xlsx/pdf generation). Load it for CJK font handling and library conventions.
+  - `data-analysis` — when the user asks to analyze data, load a dataset, compute stats, or build charts/plots. Load it for pandas/matplotlib conventions and Chinese-font plotting.
+  - `skill-creator` — when the user asks to "create/add/define a skill" or "新建/添加/写一个技能".
 - When the user asks you to "create a skill" / "add a skill" / "make a reusable capability", use the `skill-creator` skill to produce a compliant `SKILL.md` in `.opencode/skills/<name>/`.
-- User-created skills appear in the workspace **「工作区 → 技能」** panel, where the user can also view, edit, and delete them.
+- User-created skills appear in the workbench **「技能」tab**(right drawer → 工作区 → 技能), where the user can also view, edit, and delete them; the tab additionally lists built-in global skills read-only.
 - A newly created skill is available immediately; if it does not surface in the current session, starting a new session guarantees discovery.

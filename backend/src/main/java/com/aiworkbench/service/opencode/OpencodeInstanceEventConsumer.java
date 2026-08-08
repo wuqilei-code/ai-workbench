@@ -60,6 +60,7 @@ public class OpencodeInstanceEventConsumer {
     private final int port;
     private final long userId;
     private final Consumer<Boolean> streamingSink;
+    private final java.util.function.BiConsumer<String, String> eventSink;
     private final OpencodeStats stats;
 
     /** 消费者实例序号(仅用于线程命名;不能用 port,因 scheduler 字段初始化早于构造函数赋值 port) */
@@ -84,7 +85,8 @@ public OpencodeInstanceEventConsumer(WebClient instanceClient, OpencodeEventRout
                                      ChatMessageService chatMessageService, WorkspaceSnapshotService snapshotService,
                                      ChangeSummaryService changeSummaryService,
                                      ObjectMapper objectMapper, int port,
-                                     long userId, Consumer<Boolean> streamingSink, OpencodeStats stats) {
+                                     long userId, Consumer<Boolean> streamingSink,
+                                     java.util.function.BiConsumer<String, String> eventSink, OpencodeStats stats) {
         this.instanceClient = instanceClient;
         this.router = router;
         this.chatMessageService = chatMessageService;
@@ -94,6 +96,7 @@ public OpencodeInstanceEventConsumer(WebClient instanceClient, OpencodeEventRout
         this.port = port;
         this.userId = userId;
         this.streamingSink = streamingSink;
+        this.eventSink = eventSink;
         this.stats = stats;
     }
 
@@ -174,6 +177,15 @@ public OpencodeInstanceEventConsumer(WebClient instanceClient, OpencodeEventRout
             stats.onEvent(resolvedType);
 
             String sessionID = extractSessionId(properties);
+
+            // 事件心跳:供看门狗判定「在途但长时间无事件」的卡死(如未回答的权限请求)
+            if (eventSink != null) {
+                try {
+                    eventSink.accept(sessionID, resolvedType);
+                } catch (Exception ignore) {
+                    // 心跳失败不影响主流程
+                }
+            }
 
             // 生成状态标记:applyConfig 借此跳过正在生成的用户(不打断活跃对话)
             markStreaming(resolvedType, properties, sessionID);

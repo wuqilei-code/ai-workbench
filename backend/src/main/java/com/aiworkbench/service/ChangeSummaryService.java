@@ -21,7 +21,7 @@ import org.springframework.stereotype.Service;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -112,7 +112,7 @@ public class ChangeSummaryService {
         saveSummaryMessage(session.getId(), userId, summary, sha, parentSha, filesJson);
         String payload = objectMapper.createObjectNode()
                 .put("summary", summary)
-                .put("at", LocalDateTime.now().toString())
+                .put("at", Instant.now().toString())
                 .put("sha", sha)
                 .put("parentSha", parentSha != null ? parentSha : "")
                 .set("files", filesJson)

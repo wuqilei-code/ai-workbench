@@ -1,5 +1,5 @@
 import { http, unwrap } from './http'
-import type { ProviderVo } from '@/types'
+import type { ProviderVo, UsageStats } from '@/types'
 
 export const modelApi = {
   available: () => http.get<ProviderVo[]>('/models').then(unwrap),
@@ -14,4 +14,5 @@ export const adminApi = {
     http.post('/admin/models', data).then(unwrap),
   deleteModel: (id: number) => http.delete(`/admin/models/${id}`),
   apply: () => http.post('/admin/providers/apply'),
+  usageStats: (days = 14) => http.get<UsageStats>('/admin/stats/usage', { params: { days } }).then(unwrap),
 }

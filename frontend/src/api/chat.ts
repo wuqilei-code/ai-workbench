@@ -1,9 +1,11 @@
 import { http, unwrap } from './http'
-import type { SessionVo, MessageVo, CommandItem, AgentItem } from '@/types'
+import type { SessionVo, MessageVo, CommandItem, AgentItem, SkillInfo } from '@/types'
 
 export const chatApi = {
   listSessions: () => http.get<SessionVo[]>('/chat/sessions').then(unwrap),
   listArchivedSessions: () => http.get<SessionVo[]>('/chat/sessions/archived').then(unwrap),
+  searchSessions: (q: string) => http.get<SessionVo[]>('/chat/sessions/search', { params: { q } }).then(unwrap),
+  builtinSkills: () => http.get<SkillInfo[]>('/chat/skills/builtin').then(unwrap),
   createSession: (data: { title?: string; providerId?: string; modelId?: string; agent?: string }) =>
     http.post<SessionVo>('/chat/sessions', data).then(unwrap),
   listAgents: () => http.get<AgentItem[]>('/chat/sessions/agents').then(unwrap),
@@ -15,7 +17,7 @@ export const chatApi = {
   listMessages: (id: number, limit = 200) =>
     http.get<MessageVo[]>(`/chat/sessions/${id}/messages`, { params: { limit } }).then(unwrap),
   clearMessages: (id: number) => http.delete(`/chat/sessions/${id}/messages`),
-  exportSession: (id: number, format: 'md' | 'json' = 'md') =>
+  exportSession: (id: number, format: 'md' | 'json' | 'pdf' | 'docx' = 'md') =>
     http.get<Blob>(`/chat/sessions/${id}/export`, { params: { format }, responseType: 'blob' }),
   sendMessage: (id: number, data: { text: string; providerId?: string; modelId?: string }) =>
     http.post(`/chat/sessions/${id}/messages`, data),

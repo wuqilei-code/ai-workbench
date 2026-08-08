@@ -17,6 +17,11 @@ const routes = [
     name: 'admin-providers',
     component: () => import('@/views/admin/ProviderConfigView.vue'),
   },
+  {
+    path: '/admin/usage',
+    name: 'admin-usage',
+    component: () => import('@/views/admin/UsageStatsView.vue'),
+  },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
 

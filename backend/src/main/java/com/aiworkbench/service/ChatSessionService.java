@@ -82,6 +82,23 @@ public class ChatSessionService {
         return list.stream().map(this::toVo).toList();
     }
 
+    /**
+     * 会话搜索:标题或消息内容(含 parts)模糊匹配。归档与非归档会话一起返回,
+     * 结果按更新时间倒序(前端展示命中顺序)。limit 50 防慢查询。
+     */
+    public List<SessionVo> search(String q, Long userId) {
+        String like = "%" + q.trim() + "%";
+        List<ChatSession> list = chatSessionMapper.selectList(new LambdaQueryWrapper<ChatSession>()
+                .eq(ChatSession::getUserId, userId)
+                .and(w -> w.like(ChatSession::getTitle, like)
+                        .or()
+                        .apply("exists (select 1 from chat_message m where m.session_id = chat_session.id and (m.content like {0} or m.parts like {1}))",
+                                like, like))
+                .orderByDesc(ChatSession::getUpdatedAt)
+                .last("limit 50"));
+        return list.stream().map(this::toVo).toList();
+    }
+
     /** 已归档会话列表(按更新时间倒序) */
     public List<SessionVo> listArchived(Long userId) {
         List<ChatSession> list = chatSessionMapper.selectList(new LambdaQueryWrapper<ChatSession>()

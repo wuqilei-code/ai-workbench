@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useAuthStore } from '@/stores/auth'
 import { useDialog, useMessage } from 'naive-ui'
+import type { SessionVo } from '@/types'
 
 const router = useRouter()
 const chat = useChatStore()
@@ -17,6 +18,25 @@ const sessions = computed(() => viewArchived.value ? chat.archivedSessions : cha
 const agents = computed(() => chat.agents)
 const agentMenuOpen = ref(false)
 
+/** 会话搜索:输入即搜(标题/消息内容),命中含归档;非空时展示搜索结果视图 */
+const searchQuery = ref('')
+const searching = computed(() => chat.searching)
+const searchActive = computed(() => searchQuery.value.trim().length > 0)
+const displayed = computed<SessionVo[]>(() =>
+  searchActive.value ? chat.searchResults : sessions.value,
+)
+
+function onSearchInput(v: string) {
+  searchQuery.value = v
+  chat.searchSessions(v)
+}
+function clearSearch() {
+  searchQuery.value = ''
+  chat.searchSessions('')
+}
+async function onOpenSearchResult(s: { id: number }) {
+  openSession(s.id)
+}
 async function onViewArchived(v: boolean) {
   viewArchived.value = v
   if (v) await chat.loadArchivedSessions()
@@ -119,7 +139,7 @@ async function submitRename() {
   } catch (e: any) { msg.error(e.message) }
 }
 
-function onExport(s: { id: number; title: string }, format: 'md' | 'json') {
+function onExport(s: { id: number; title: string }, format: 'md' | 'json' | 'pdf' | 'docx') {
   chat.exportSession(s.id, format).catch((e: any) => msg.error(e.message))
 }
 
@@ -146,6 +166,8 @@ function menuOptions(s: { id: number; pinned?: number; title: string }) {
       { label: '重命名', key: 'rename' },
       { label: '导出 Markdown', key: 'export-md' },
       { label: '导出 JSON', key: 'export-json' },
+      { label: '导出 PDF', key: 'export-pdf' },
+      { label: '导出 Word', key: 'export-docx' },
       { type: 'divider' as const, key: 'd1' },
       { label: '删除', key: 'delete' },
     ]
@@ -155,6 +177,8 @@ function menuOptions(s: { id: number; pinned?: number; title: string }) {
     { label: '重命名', key: 'rename' },
     { label: '导出 Markdown', key: 'export-md' },
     { label: '导出 JSON', key: 'export-json' },
+    { label: '导出 PDF', key: 'export-pdf' },
+    { label: '导出 Word', key: 'export-docx' },
     { type: 'divider' as const, key: 'd1' },
     { label: '归档', key: 'archive' },
     { label: '清空记录', key: 'clear' },
@@ -168,6 +192,8 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
     case 'rename': onRename(s); break
     case 'export-md': onExport(s, 'md'); break
     case 'export-json': onExport(s, 'json'); break
+    case 'export-pdf': onExport(s, 'pdf'); break
+    case 'export-docx': onExport(s, 'docx'); break
     case 'archive': onArchive(s); break
     case 'restore': onRestore(s); break
     case 'clear': onClear(s); break
@@ -209,9 +235,21 @@ function logout() {
         @click="onViewArchived(true)"
       >归档{{ chat.archivedSessions.length ? ` (${chat.archivedSessions.length})` : '' }}</span>
     </div>
+    <div class="search-box">
+      <n-input
+        v-model:value="searchQuery"
+        size="small"
+        clearable
+        placeholder="搜索会话/消息…"
+        @update:value="onSearchInput"
+        @clear="clearSearch"
+      >
+        <template #prefix>🔍</template>
+      </n-input>
+    </div>
     <div class="session-list">
       <div
-        v-for="s in sessions"
+        v-for="s in displayed"
         :key="s.id"
         class="session-item"
         :class="{ active: s.id === chat.currentSessionId }"
@@ -219,6 +257,7 @@ function logout() {
       >
         <span v-if="!viewArchived && s.pinned" class="pin-mark" title="已置顶">📌</span>
         <span class="title" :title="s.agent ? `agent: ${s.agent}` : undefined">{{ s.title }}</span>
+        <n-tag v-if="searchActive && s.archived" size="tiny" :bordered="false" class="arch-tag">归档</n-tag>
         <n-tag v-if="s.agent" size="tiny" :bordered="false" class="agent-tag">{{ s.agent }}</n-tag>
         <n-dropdown
           :options="menuOptions(s)"
@@ -230,7 +269,12 @@ function logout() {
           <n-button quaternary circle size="tiny" @click.stop>⋯</n-button>
         </n-dropdown>
       </div>
-      <n-empty v-if="!sessions.length" :description="viewArchived ? '暂无归档会话' : '暂无会话'" style="margin-top: 40px" />
+      <n-spin v-if="searchActive && searching" size="small" style="margin: 24px auto; display: block" />
+      <n-empty
+        v-else-if="!displayed.length"
+        :description="searchActive ? '未找到匹配的会话' : (viewArchived ? '暂无归档会话' : '暂无会话')"
+        style="margin-top: 40px"
+      />
     </div>
     <div class="side-foot">
       <div class="user-info">
@@ -240,6 +284,7 @@ function logout() {
       </div>
       <div class="foot-actions">
         <n-button v-if="auth.isAdmin" size="small" quaternary @click="router.push('/admin/providers')">模型管理</n-button>
+        <n-button v-if="auth.isAdmin" size="small" quaternary @click="router.push('/admin/usage')">用量统计</n-button>
         <n-button size="small" quaternary @click="logout">退出</n-button>
       </div>
     </div>
@@ -284,6 +329,8 @@ function logout() {
 }
 .list-tabs .tab:hover { background: #26262a; color: #ddd; }
 .list-tabs .tab.active { background: #2f2f35; color: #fff; font-weight: 600; }
+.search-box { padding: 8px 12px; border-bottom: 1px solid #2a2a2e; }
+.arch-tag { flex-shrink: 0; margin-right: 4px; }
 .pin-mark { font-size: 11px; margin-right: 2px; flex-shrink: 0; }
 .session-item {
   display: flex; align-items: center; justify-content: space-between;

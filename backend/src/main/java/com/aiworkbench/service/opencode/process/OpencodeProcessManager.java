@@ -152,9 +152,10 @@ public class OpencodeProcessManager {
                         "opencode 健康检查超时: " + tailLog(logFile));
             }
 
-            // 6. 挂事件消费者(上报生成状态给本管理器,供 applyConfig 跳过 streaming 用户)
+            // 6. 挂事件消费者(上报生成状态给本管理器,供 applyConfig 跳过 streaming 用户;上报事件心跳供看门狗)
             consumer = new OpencodeInstanceEventConsumer(instanceClient, router, chatMessageService,
-                    snapshotService, changeSummaryService, objectMapper, port, userId, s -> markStreaming(userId, s), stats);
+                    snapshotService, changeSummaryService, objectMapper, port, userId,
+                    s -> markStreaming(userId, s), (sid, type) -> noteEvent(userId, sid, type), stats);
             consumer.start();
 
             UserProcess up = new UserProcess(userId, uid, gid, port, process, instanceClient, consumer);
@@ -216,6 +217,26 @@ public class OpencodeProcessManager {
         if (up != null) {
             up.setStreaming(streaming);
         }
+    }
+
+    /** 记录一次事件心跳(会话 + 类型)。由 SSE 消费者回调;看门狗据此判定「在途但长时间无事件」的卡死。 */
+    public void noteEvent(Long userId, String sessionId, String type) {
+        UserProcess up = registry.getIfPresent(userId);
+        if (up != null) {
+            up.noteEvent(sessionId, type);
+        }
+    }
+
+    /** 进程最近事件时间(无进程返回 null)。 */
+    public Instant lastEventAt(Long userId) {
+        UserProcess up = registry.getIfPresent(userId);
+        return up == null ? null : up.getLastEventAt();
+    }
+
+    /** 进程最近事件所在会话(无进程返回 null)。 */
+    public String lastEventSessionId(Long userId) {
+        UserProcess up = registry.getIfPresent(userId);
+        return up == null ? null : up.getLastEventSessionId();
     }
 
     // ============ 停止 / 重启 ============

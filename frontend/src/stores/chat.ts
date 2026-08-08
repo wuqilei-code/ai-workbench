@@ -56,6 +56,13 @@ export const useChatStore = defineStore('chat', () => {
   const streamingMessageId = ref<string | null>(null)
   const isStreaming = ref(false)
   const connected = ref(false)
+  /** 连接断开且正在自动重连(UI 提示用) */
+  const reconnecting = ref(false)
+  /** 累计断线重连次数;>0 时重连成功需做一次消息对账恢复(补回断线期间丢失的事件) */
+  const reconnectCount = ref(0)
+  /** 最近一次收到 SSE 事件的时间(心跳看门狗用,检测"僵尸连接") */
+  const lastEventAt = ref(Date.now())
+  let _heartbeatTimer: ReturnType<typeof setInterval> | null = null
 
   /** 静默看门狗:跟踪 AI 运行时长,让 UI 能显示"AI 正在执行操作(已运行 Xs)"提示。
    *  <p>
@@ -156,6 +163,30 @@ export const useChatStore = defineStore('chat', () => {
     } catch (e) {
       archivedSessions.value = []
     }
+  }
+
+  /** 会话搜索结果(标题或消息内容命中,含归档) */
+  const searchResults = ref<SessionVo[]>([])
+  const searching = ref(false)
+  let _searchTimer: ReturnType<typeof setTimeout> | null = null
+  function searchSessions(q: string) {
+    if (_searchTimer) clearTimeout(_searchTimer)
+    const query = q.trim()
+    if (!query) {
+      searchResults.value = []
+      searching.value = false
+      return
+    }
+    searching.value = true
+    _searchTimer = setTimeout(async () => {
+      try {
+        searchResults.value = await chatApi.searchSessions(query)
+      } catch (e) {
+        searchResults.value = []
+      } finally {
+        searching.value = false
+      }
+    }, 300)
   }
 
   async function loadAgents() {
@@ -271,8 +302,8 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  /** 导出会话(触发浏览器下载)。format: md | json */
-  async function exportSession(id: number, format: 'md' | 'json' = 'md') {
+  /** 导出会话(触发浏览器下载)。format: md | json | pdf | docx */
+  async function exportSession(id: number, format: 'md' | 'json' | 'pdf' | 'docx' = 'md') {
     const res: any = await chatApi.exportSession(id, format)
     const blob = res?.data instanceof Blob ? res.data : new Blob([res.data], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
@@ -289,21 +320,79 @@ export const useChatStore = defineStore('chat', () => {
 
   // ---------- 发消息 + SSE ----------
 
+  /** 重连成功后对账:从后端重拉消息,补回断线期间丢失的事件。
+   *  若本应在流式但对账后发现没有任何消息处于 streaming,且无未决交互
+   *  → 说明断线期间生成已结束(session.idle 丢失),收尾流式态。 */
+  async function reconcileAfterReconnect() {
+    if (!currentSessionId.value) return
+    try {
+      const fresh = (await chatApi.listMessages(currentSessionId.value)) as MessageVo[]
+      messages.value = fresh
+      hydrateSummaries()
+      hydratePendingState()
+      const anyStreaming = fresh.some((m) => m.status === 'streaming')
+      if (isStreaming.value && !anyStreaming && !hasPendingInteraction.value) {
+        finishStreaming()
+      }
+    } catch (e) {
+      console.warn('[chat] reconcile after reconnect failed', e)
+    }
+  }
+
   function subscribe() {
     if (!currentSessionId.value) return
     const auth = useAuthStore()
     connected.value = false
+    reconnecting.value = false
+    lastEventAt.value = Date.now()
     const handlers: SseHandlers = {
-      onOpen: () => { connected.value = true },
-      onMessage: (type, data) => handleEvent(type, data),
-      onError: () => { connected.value = false },
+      onOpen: () => {
+        connected.value = true
+        reconnecting.value = false
+        lastEventAt.value = Date.now()
+        // 断线重连成功后做一次对账,恢复丢失的事件状态
+        if (reconnectCount.value > 0) reconcileAfterReconnect()
+      },
+      onMessage: (type, data) => {
+        lastEventAt.value = Date.now()
+        handleEvent(type, data)
+      },
+      onError: () => {
+        connected.value = false
+        reconnecting.value = true
+        reconnectCount.value++
+      },
     }
     stream = subscribeSession(currentSessionId.value, auth.token, handlers)
+    startHeartbeat()
   }
 
   function closeStream() {
     if (stream) { stream.close(); stream = null }
     connected.value = false
+    stopHeartbeat()
+  }
+
+  /** 心跳看门狗:连接"健在"但流式中长时间无事件(>45s)→ 视为僵尸连接,强制重连。
+   *  工具长执行通常也有 part 事件;45s 无任何事件同时 isStreaming 基本可断定断线。 */
+  function startHeartbeat() {
+    stopHeartbeat()
+    _heartbeatTimer = setInterval(() => {
+      if (isStreaming.value && connected.value && Date.now() - lastEventAt.value > 45_000) {
+        console.warn('[chat] heartbeat: no SSE event for 45s while streaming, force reconnect')
+        reconnectCount.value++
+        forceReconnect()
+      }
+    }, 10_000)
+  }
+  function stopHeartbeat() {
+    if (_heartbeatTimer) { clearInterval(_heartbeatTimer); _heartbeatTimer = null }
+  }
+
+  /** 立即断开并重建 SSE 连接(手动重连按钮 / 心跳看门狗触发)。 */
+  function forceReconnect() {
+    closeStream()
+    subscribe()
   }
 
   async function sendMessage(text: string) {
@@ -556,7 +645,11 @@ export const useChatStore = defineStore('chat', () => {
       }
       case 'permission.replied':
       case 'permission.v2.replied': {
-        clearPendingPermission(data.tool?.messageID)
+        // 关键:按 requestId 清除,而不是按 tool.messageID。
+        // opencode 对一条工具命令会做**串行**权限检查(如 external_directory → bash),每个 ask 独立 requestId;
+        // 若按 toolMessageID 清除,第二个权限的 pendingPermission 会被第一个的 replied 事件误清,
+        // 用户永远看不到第二个请求 → agent 死等该权限 → 整轮卡死(历史事故)。
+        clearPendingPermissionById(data.id)
         // 同 question:允许/拒绝后 AI 都会继续生成,兜底恢复流式态。
         resumeStreaming()
         break
@@ -804,6 +897,30 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  /** 按 requestId 清除 pendingPermission(多个权限的 ask 各自独立,只清被回复的那个)。
+   *  见 permission.replied 处理说明:同一 tool call 的多个权限请求不得互相误清。 */
+  function clearPendingPermissionById(requestId: string | undefined) {
+    if (!requestId) {
+      clearPendingPermission(undefined)
+      return
+    }
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      const msg = messages.value[i]
+      if (msg.role === 'assistant' && msg.parts?.pendingPermission?.requestId === requestId) {
+        const parts: StepParts = { ...msg.parts, pendingPermission: { ...msg.parts.pendingPermission, _replied: true } }
+        messages.value[i] = { ...msg, parts }
+        const capturedIdx = i
+        setTimeout(() => {
+          const m = messages.value[capturedIdx]
+          if (m?.parts?.pendingPermission) {
+            messages.value[capturedIdx] = { ...m, parts: { ...m.parts, pendingPermission: null } }
+          }
+        }, 100)
+        return
+      }
+    }
+  }
+
   /** 从后端加载完 messages 后,为已有 pendingQuestion 初始化本地 _replies 字段 */
   function hydratePendingState() {
     for (let i = 0; i < messages.value.length; i++) {
@@ -953,11 +1070,14 @@ export const useChatStore = defineStore('chat', () => {
   return {
     sessions, archivedSessions, agents, currentSessionId, currentSession, messages, turns, flow, summaries, streamingText,
     streamingMessageId, isStreaming, streamingStuckSeconds, streamingElapsedSeconds, runningActivity,
-    hasPendingInteraction, connected, changedFilePaths,
+    hasPendingInteraction, connected, reconnecting, forceReconnect,
+    changedFilePaths,
+    searchResults, searching, searchSessions,
     availableModels, selectedProviderId, selectedModelId,
     manualCollapseOverride, setCollapse,
     loadModels, selectModel, loadSessions, loadArchivedSessions, loadAgents, createSession, switchAgent, selectSession,
     deleteSession, pinSession, archiveSession, unarchiveSession, renameSession, clearSession, exportSession,
     sendMessage, runCommand, abort, closeStream, forceReleaseStreaming, resumeStreaming,
+    reconcileAfterReconnect,
   }
 })

@@ -106,6 +106,19 @@ const simpleMessage = computed(() => {
   return { ...fa.message, content: stripDeliverableMarkers(raw) }
 })
 
+async function copyFinalAnswer() {
+  const fa = props.turn.finalAnswer
+  if (!fa) return
+  const text = (fa.message.content || '').trim()
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    msg.success('已复制')
+  } catch {
+    msg.error('复制失败')
+  }
+}
+
 /** 本 turn 的结果文件清单(仅 turn 定稿后展示)。
  *  流式期间(turnInProgress)返回空,避免半截标记 `[结果` 闪烁;正则要求整行完整才匹配是第二道保险。
  *  历史 turn 的 turnInProgress 为 false,自动渲染卡片(前提:AI 当时用了标记)。 */
@@ -495,6 +508,11 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
 
       <!-- 最终答案 -->
       <div v-if="turn.finalAnswer" class="content">
+        <button
+          class="copy-btn"
+          title="复制回答"
+          @click="copyFinalAnswer"
+        >📋</button>
         <span
           v-if="displayContent(turn.finalAnswer)"
           v-html="renderMarkdown(stripDeliverableMarkers(displayContent(turn.finalAnswer)))"
@@ -701,12 +719,21 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
   font-size: 12px; background: #2f2f35;
 }
 .bubble {
+  position: relative;
   max-width: 75%;
   min-width: 0;
   padding: 10px 14px; border-radius: 10px;
   background: #26262a; line-height: 1.6; word-break: break-word;
   overflow: hidden;
 }
+.content { position: relative; }
+.copy-btn {
+  position: absolute; top: -4px; right: -4px;
+  background: transparent; border: none; cursor: pointer; font-size: 13px;
+  padding: 2px 4px; border-radius: 4px; line-height: 1; opacity: 0; transition: opacity .15s; z-index: 2;
+}
+.content:hover .copy-btn { opacity: 1; }
+.copy-btn:hover { background: rgba(255,255,255,.12); }
 .content :deep(p) { margin: 6px 0; }
 .content :deep(pre.hljs) { background: #18181c; border-radius: 6px; padding: 10px; overflow-x: auto; }
 .content :deep(code) { font-family: ui-monospace, monospace; font-size: 13px; }
