@@ -10,6 +10,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -21,9 +24,10 @@ import java.util.concurrent.TimeUnit;
  * 每用户 opencode agent 容器的 Docker 生命周期管理(容器模式)。
  * <p>
  * 通过挂载进 app 容器的 /var/run/docker.sock 调用 docker CLI,为每个用户创建一个独立容器运行
- * {@code opencode serve}(容器内 4096,宿主机发布到 127.0.0.1:&lt;port&gt;)。容器与 app 容器共享
- * workspace/app-data 命名卷且挂载到相同绝对路径,故 opencode 会话路径(Home/XDG/x-opencode-directory)
- * 与进程模式完全一致,数据/会话可跨回收持久化。
+ * {@code opencode serve}(容器内 4096,经共享网络按容器名 DNS 直连)。每用户容器只 bind 挂载该用户自己的
+ * 工作区 {@code /workspace/users/<userId>} 与私有数据 {@code /data/users/<uid>}(宿主卷挂载点下的子目录),
+ * 其他用户目录与共享数据在容器内不可见;挂载点与 app 容器内路径一致,故 opencode 会话路径
+ * (Home/XDG/x-opencode-directory)与进程模式完全一致,数据/会话可跨回收持久化。
  * <p>
  * 生命周期:createAndStart(创建+启动)/ stopAndRemove(停止+删除,完整释放端口与内存)/
  * cleanupAllStale(应用启动时清理残留)/ processAlive(容器内 kill -0,供后台任务存活判定)。
@@ -38,7 +42,7 @@ public class AgentContainerManager {
     private static final Duration CMD_TIMEOUT = Duration.ofSeconds(30);
 
     private final OpencodeProperties props;
-    /** app 容器自身卷挂载解析结果(/workspace 与 /data 的 source→dest),首次解析后缓存 */
+    /** app 容器自身卷挂载解析结果(/workspace 与 /data 的宿主源路径→容器内 dest),首次解析后缓存 */
     private volatile Map<String, String> selfVolumes;
 
     public AgentContainerManager(OpencodeProperties props) {
@@ -60,6 +64,7 @@ public class AgentContainerManager {
         if (inspectOk(name)) {
             remove(name);
         }
+        ensureUserDirs(userId, uid, gid);
         List<String> args = new ArrayList<>(List.of(
                 "docker", "create",
                 "--name", name,
@@ -71,7 +76,7 @@ public class AgentContainerManager {
                 "--cpus", String.valueOf(props.getAgentCpus()),
                 "--memory", props.getAgentMemoryMb() + "m",
                 "--memory-swap", props.getAgentMemoryMb() + "m"));
-        for (Map.Entry<String, String> m : selfVolumes().entrySet()) {
+        for (Map.Entry<String, String> m : userMounts(userId, uid).entrySet()) {
             args.add("-v");
             args.add(m.getKey() + ":" + m.getValue());
         }
@@ -182,7 +187,7 @@ public class AgentContainerManager {
 
     // ============ 内部 ============
 
-    /** app 容器自身 /workspace 与 /data 卷挂载的 source→dest(source 为命名卷名或 bind 宿主路径)。 */
+    /** app 容器自身 /workspace 与 /data 卷挂载的宿主源路径(命名卷的挂载点或 bind 宿主路径)→容器内 dest。 */
     private Map<String, String> selfVolumes() {
         Map<String, String> cached = selfVolumes;
         if (cached != null) {
@@ -202,8 +207,8 @@ public class AgentContainerManager {
                     continue;
                 }
                 String dest = parts[0];
-                String src = parts[1].isBlank() ? parts[2] : parts[1];
-                if (src.isBlank()) {
+                String src = volumeSource(parts[1], parts[2]);
+                if (src == null || src.isBlank()) {
                     continue;
                 }
                 if (dest.equals("/workspace") || dest.equals("/data")) {
@@ -217,6 +222,71 @@ public class AgentContainerManager {
         }
         selfVolumes = map;
         return map;
+    }
+
+    /** 解析挂载的宿主源路径:优先 bind/命名卷的 Source 宿主绝对路径,否则经 docker volume inspect 取挂载点。 */
+    private String volumeSource(String name, String source) {
+        if (source != null && source.startsWith("/")) {
+            return source;
+        }
+        if (name == null || name.isBlank()) {
+            return null;
+        }
+        try {
+            Result r = run(List.of("docker", "volume", "inspect", "-f", "{{.Mountpoint}}", name));
+            String mp = r.ok() ? r.output().trim() : "";
+            return mp.isBlank() ? null : mp;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 每用户挂载:只把该用户自己的工作区与私有数据目录 bind 进容器,其他用户目录与共享数据在容器内不可见。 */
+    private Map<String, String> userMounts(Long userId, int uid) {
+        Map<String, String> self = selfVolumes();
+        String wsSrc = null;
+        String dataSrc = null;
+        for (Map.Entry<String, String> e : self.entrySet()) {
+            if ("/workspace".equals(e.getValue())) {
+                wsSrc = e.getKey();
+            } else if ("/data".equals(e.getValue())) {
+                dataSrc = e.getKey();
+            }
+        }
+        Map<String, String> m = new LinkedHashMap<>();
+        if (wsSrc != null) {
+            m.put(wsSrc + "/users/" + userId, "/workspace/users/" + userId);
+        }
+        if (dataSrc != null) {
+            m.put(dataSrc + "/users/" + uid, props.getPerUserDataRoot() + "/" + uid);
+        }
+        if (m.isEmpty()) {
+            throw new BusinessException(ResultCode.OPENCODE_UNAVAILABLE.getCode(),
+                    "无法解析 app 容器卷挂载(/workspace 与 /data),无法构建每用户挂载");
+        }
+        return m;
+    }
+
+    /** 确保每用户 bind 挂载源目录存在(容器 bind 要求 source 已存在);新建目录以 root 创建后移交该 uid/gid。 */
+    private void ensureUserDirs(Long userId, int uid, int gid) {
+        try {
+            Path wsProject = Paths.get(props.getWorkspaceRoot(), "users",
+                    String.valueOf(userId), "project");
+            Path dataUser = Paths.get(props.getPerUserDataRoot(), String.valueOf(uid));
+            if (!Files.isDirectory(wsProject)) {
+                Files.createDirectories(wsProject);
+                Files.setAttribute(wsProject, "unix:uid", uid);
+                Files.setAttribute(wsProject, "unix:gid", gid);
+            }
+            if (!Files.isDirectory(dataUser)) {
+                Files.createDirectories(dataUser);
+                Files.setAttribute(dataUser, "unix:uid", uid);
+                Files.setAttribute(dataUser, "unix:gid", gid);
+            }
+        } catch (IOException e) {
+            throw new BusinessException(ResultCode.OPENCODE_UNAVAILABLE.getCode(),
+                    "初始化用户目录失败: " + e.toString());
+        }
     }
 
     private boolean inspectOk(String name) {
