@@ -80,15 +80,17 @@ async function copyContent() {
 .msg { display: flex; gap: 10px; margin-bottom: 16px; }
 .msg.user { flex-direction: row-reverse; }
 .avatar {
-  width: 28px; height: 28px; border-radius: 6px; flex-shrink: 0;
+  width: 30px; height: 30px; border-radius: 10px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  font-size: 12px; background: #2f2f35;
+  font-size: 12px; font-weight: 600; background: var(--surface);
+  color: var(--text-3);
 }
-.msg.user .avatar { background: #3a5a8c; }
+.msg.user .avatar { background: var(--accent-soft); color: var(--accent-text); }
 .bubble {
   position: relative;
-  max-width: 75%; padding: 10px 14px; border-radius: 10px;
-  background: #26262a; line-height: 1.6; word-break: break-word;
+  max-width: 75%; padding: 12px 16px; border-radius: var(--radius);
+  background: var(--surface); line-height: 1.6; word-break: break-word;
+  border: 1px solid var(--border-soft);
 }
 .bubble-tools { position: absolute; top: 4px; right: 6px; opacity: 0; transition: opacity .15s; }
 .bubble:hover .bubble-tools { opacity: 1; }
@@ -96,26 +98,26 @@ async function copyContent() {
   background: transparent; border: none; cursor: pointer; font-size: 13px;
   padding: 2px 4px; border-radius: 4px; line-height: 1;
 }
-.copy-btn:hover { background: rgba(255,255,255,.12); }
-.msg.user .bubble { background: #2c4a7c; }
+.copy-btn:hover { background: var(--surface-hover); }
+.msg.user .bubble { background: var(--accent-soft); border-color: rgba(107, 138, 253, 0.25); }
 .content :deep(p) { margin: 6px 0; }
-.content :deep(pre.hljs) { background: #18181c; border-radius: 6px; padding: 10px; overflow-x: auto; }
+.content :deep(pre.hljs) { background: #16181d; border-radius: var(--radius-sm); padding: 10px; overflow-x: auto; }
 .content :deep(code) { font-family: ui-monospace, monospace; font-size: 13px; }
 .content :deep(pre code) { background: none; }
-.content :deep(code:not(pre code)) { background: #18181c; padding: 2px 5px; border-radius: 4px; }
-.status { font-size: 12px; color: #888; margin-bottom: 4px; }
-.status.err { color: #e06c75; }
-.cursor { animation: blink 1s steps(2) infinite; color: #56b6c2; }
+.content :deep(code:not(pre code)) { background: #16181d; padding: 2px 5px; border-radius: 4px; }
+.status { font-size: 12px; color: var(--text-3); margin-bottom: 4px; }
+.status.err { color: var(--err); }
+.cursor { animation: blink 1s steps(2) infinite; color: var(--accent); }
 @keyframes blink { 50% { opacity: 0; } }
 
 .att-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .att-link {
   display: inline-flex; align-items: center; gap: 3px;
   font-size: 12px; padding: 3px 9px; border-radius: 10px;
-  background: rgba(0, 0, 0, 0.25); color: #d8e6f8;
-  border: 1px solid rgba(255, 255, 255, 0.18); cursor: pointer;
+  background: rgba(0, 0, 0, 0.2); color: var(--accent-text);
+  border: 1px solid var(--border); cursor: pointer;
   text-decoration: none; max-width: 220px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
-.att-link:hover { background: rgba(0, 0, 0, 0.4); }
+.att-link:hover { background: rgba(0, 0, 0, 0.35); }
 </style>

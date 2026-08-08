@@ -152,6 +152,8 @@ export type PendingPermission = PendingPermissionV1 | PendingPermissionV2
 export interface StepParts {
   toolCalls?: ToolCall[]
   stepFinish?: { reason?: 'tool-calls' | 'stop' } | null
+  /** 模型思维链(reasoning part 的 text);模型不输出思维链则不存在 */
+  reasoning?: { text?: string } | null
   pendingQuestion?: PendingQuestion | null
   pendingPermission?: PendingPermission | null
 }
@@ -162,6 +164,8 @@ export interface Step {
   narration: string
   toolCalls: ToolCall[]
   finishReason?: string
+  /** 该步的思维链文本(来自 parts.reasoning.text) */
+  reasoning?: string
 }
 
 /** 一个用户任务 = 一条 user 消息 + 其后连续的 assistant 消息 */
@@ -199,6 +203,8 @@ export interface FileNode {
   directory: boolean
   size: number
   modified: number
+  /** 创建时间(ms);文件系统不支持 birthtime 时等于 modified */
+  created: number
 }
 
 /** 文件历史条目(对应后端 WorkspaceSnapshotService.FileHistoryEntry) */

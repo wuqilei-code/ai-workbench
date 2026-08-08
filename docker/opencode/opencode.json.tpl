@@ -1,5 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "autoCompact": 40000,
   "permission": {
     "bash": {
       "*": "allow",

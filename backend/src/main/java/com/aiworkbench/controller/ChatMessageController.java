@@ -141,6 +141,7 @@ public class ChatMessageController {
     public R<Void> runCommand(@PathVariable Long id, @Valid @RequestBody RunCommandRequest req) {
         Long userId = SecurityUtil.currentUserId();
         ChatSession s = chatSessionService.getOwned(id, userId);
+        chatMessageService.captureTurnBaseline(userId);
         opencodeClient.runCommand(userId, s.getOpencodeSessionId(), req.getCommand(), req.getArguments());
         return R.ok();
     }

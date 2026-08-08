@@ -75,6 +75,11 @@ public class OpencodeClient {
         processManager.getOrStart(userId);
     }
 
+    /** 该用户 agent 实例当前是否已就绪(不启动)。供冷启动时前端「agent 启动中」占位判定。 */
+    public boolean isReady(long userId) {
+        return processManager.isReady(userId);
+    }
+
     /** POST /session/{id}/prompt_async — 异步发消息,流式走 /event(由实例消费者投递)。 */
     public void promptAsync(long userId, String opencodeSessionId, PromptAsyncBody body) {
         promptAsyncAt(userId, opencodeSessionId, workspaceService.userDir(userId), body);

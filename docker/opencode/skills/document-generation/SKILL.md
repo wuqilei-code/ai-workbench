@@ -16,11 +16,11 @@ Generate Word / PowerPoint / Excel / PDF / CSV deliverables in the sandbox using
 
 - Preinstalled and importable directly: `python-docx`, `python-pptx`, `openpyxl`, `reportlab`, `PyPDF2`, `pdfplumber`, `markdown`, `numpy`, `pandas`, `matplotlib`, `requests`, `Pillow`, `lxml`.
 - `pip` / `ensurepip` are removed. Do **NOT** run `pip install`, `python3 -m pip`, `python3 -m ensurepip`, or download `get-pip.py`. If a needed library is missing, tell the user and ask the admin to add it to the image.
-- CJK fonts are installed via `fonts-noto-cjk`. Locate them dynamically before hardcoding a path:
-  ```bash
-  fc-list :lang=zh file family
+- CJK fonts are installed via a bundled TrueType `simhei.ttf` (black-serif, works with reportlab and matplotlib). Use it directly from the fixed path — no jar extraction needed:
   ```
-  Typical default: `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc` (family `Noto Sans CJK SC`). If `fc-list` finds something else, use that.
+  /usr/share/fonts/truetype/simhei.ttf
+  ```
+  (If you need to locate fonts dynamically, `fc-list :lang=zh file family` still works, but the noto CJK `.ttc` files are CFF-outline and **not** loadable by reportlab; prefer the bundled `simhei.ttf`.)
 - CLI utilities available for inspection/conversion: `unzip` (inspect docx/pptx/xlsx internals), `pdftotext` / `pdftoppm` (poppler-utils — extract PDF text or render PDF pages to images).
 
 ## CJK font handling per format
@@ -37,17 +37,14 @@ Generate Word / PowerPoint / Excel / PDF / CSV deliverables in the sandbox using
   ```
 - **pptx (python-pptx)**: set `run.font.name = "SimHei"` on every run that may contain Chinese.
 - **xlsx (openpyxl)**: no font step needed for Chinese to work; set column widths and number formats so tables are readable.
-- **pdf (reportlab)**: the sandbox's Noto CJK fonts are PostScript/CFF outlines, which `reportlab.pdfbase.ttfonts.TTFont` does **not** support (raises `postscript outlines are not supported`). Use the bundled TrueType **SimHei** extracted from the app jar instead:
+- **pdf (reportlab)**: the sandbox's Noto CJK fonts are PostScript/CFF outlines, which `reportlab.pdfbase.ttfonts.TTFont` does **not** support (raises `postscript outlines are not supported`). Use the bundled TrueType **SimHei** at the fixed path instead:
   ```python
-  import zipfile
   from reportlab.pdfbase import pdfmetrics
   from reportlab.pdfbase.ttfonts import TTFont
-  with zipfile.ZipFile("/app/app.jar") as z:
-      z.extract("BOOT-INF/classes/fonts/simhei.ttf", "/tmp")
-  pdfmetrics.registerFont(TTFont("SimHei", "/tmp/BOOT-INF/classes/fonts/simhei.ttf"))
+  pdfmetrics.registerFont(TTFont("SimHei", "/usr/share/fonts/truetype/simhei.ttf"))
   # then in styles: fontName="SimHei"
   ```
-  Fallback if the jar is unavailable: `pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))` — the viewer must supply that font.
+  Fallback if that font is unavailable: `pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))` — the viewer must supply that font.
 - **charts with Chinese labels (matplotlib)**: see the `data-analysis` skill; fonts are configured the same way via `matplotlib.font_manager`.
 
 ## Workflow

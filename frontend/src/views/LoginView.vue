@@ -55,7 +55,7 @@ async function onSubmit() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #18181c;
+  background: linear-gradient(160deg, #14161a, #1a1d24);
 }
 .auth-card { width: 380px; }
 </style>

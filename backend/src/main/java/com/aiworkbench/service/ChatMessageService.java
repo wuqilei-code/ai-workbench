@@ -8,6 +8,7 @@ import com.aiworkbench.entity.ChatMessage;
 import com.aiworkbench.entity.ChatSession;
 import com.aiworkbench.mapper.ChatMessageMapper;
 import com.aiworkbench.service.opencode.OpencodeClient;
+import com.aiworkbench.service.opencode.OpencodeEventRouter;
 import com.aiworkbench.service.opencode.dto.CreateSessionBody;
 import com.aiworkbench.service.opencode.dto.OpencodeSessionDto;
 import com.aiworkbench.service.opencode.dto.PromptAsyncBody;
@@ -45,7 +46,9 @@ public class ChatMessageService {
     private final ChatMessageMapper chatMessageMapper;
     private final ChatSessionService chatSessionService;
     private final OpencodeClient opencodeClient;
+    private final OpencodeEventRouter eventRouter;
     private final ObjectMapper objectMapper;
+    private final WorkspaceSnapshotService snapshotService;
 
     /**
      * 找该会话在 beforeEpochMs(含)之前最近的一条用户消息,作为后台任务的"触发消息"。
@@ -327,6 +330,11 @@ public class ChatMessageService {
     public void sendUserMessage(Long sessionId, Long userId, SendMessageRequest req) {
         ChatSession s = chatSessionService.getOwned(sessionId, userId);
 
+        // 基线快照:每轮对话开始前把工作区已存在的未提交变更(如用户手动删改文件)固化为
+        // 独立 commit,使本轮结束时的变更总结只覆盖本会话真实产生的改动,避免把无关变更
+        // 错误归因到当前会话(问题:会话 106 仅执行只读 ls,总结却出现"删除了模拟流水 Excel")。
+        captureTurnBaseline(userId);
+
         // 模型优先取请求,其次会话默认
         String providerId = req.getProviderId() != null ? req.getProviderId() : s.getProviderId();
         String modelId = req.getModelId() != null ? req.getModelId() : s.getModelId();
@@ -340,6 +348,16 @@ public class ChatMessageService {
                 .build();
 
         try {
+            // 冷启动占位:agent 实例尚未就绪时(空闲回收后/应用重启后首条消息),先经 SSE 通知前端
+            // 显示「agent 启动中」占位,待 promptAsync 内部 getOrStart 阻塞至就绪后,真实事件流自然接管。
+            if (!opencodeClient.isReady(userId)) {
+                try {
+                    eventRouter.dispatch(s.getOpencodeSessionId(), "session.starting",
+                            "{\"status\":\"starting\"}");
+                } catch (Exception dispatchErr) {
+                    log.debug("dispatch session.starting failed: {}", dispatchErr.toString());
+                }
+            }
             opencodeClient.promptAsync(userId, s.getOpencodeSessionId(), body);
         } catch (WebClientResponseException.NotFound e) {
             log.info("opencode session {} not found (404), re-binding for session {}",
@@ -364,6 +382,23 @@ public class ChatMessageService {
     public boolean abort(Long sessionId, Long userId) {
         ChatSession s = chatSessionService.getOwned(sessionId, userId);
         return opencodeClient.abort(userId, s.getOpencodeSessionId());
+    }
+
+    /**
+     * 每轮 AI 对话开始前的"基线快照":把工作区里对话开始前就已存在的未提交变更
+     * (如用户手动删改文件、上一轮遗留的改动)提交为一个独立 commit。
+     * <p>
+     * 这样本轮结束时的快照 commit 相对其父(即此基线)的 diff 只包含本会话真实产生的改动,
+     * 变更总结不会再错误地把用户手动操作/无关改动归因到当前会话。
+     * <p>
+     * 无变更时 git commit 静默失败(snapshot 返回 null),不产生空提交。
+     */
+    public void captureTurnBaseline(Long userId) {
+        try {
+            snapshotService.snapshot(userId, "AI 对话开始");
+        } catch (Exception e) {
+            log.debug("capture turn baseline failed (userId={}): {}", userId, e.toString());
+        }
     }
 
     /**
@@ -485,6 +520,37 @@ public class ChatMessageService {
         persistMessage(existing);
     }
 
+    /**
+     * 由 SSE 消费者对<b>节流后</b>的思维链文本落库(与 {@link #upsertStreamingText} 同理)。
+     * <p>
+     * 思维链(reasoning part)流式期间经 ctx 流式推送累计文本,若每条都重写 parts MEDIUMTEXT 列
+     * 开销过大,故消费者在内存中合并、超间隔写一次;完成时由 message.updated 强制 flush 收口。
+     *
+     * @param opencodeSessionId 事件中的 opencode 会话 id
+     * @param messageID         目标消息的 opencode 消息 id
+     * @param text              最新思维链文本
+     */
+    public void upsertStreamingReasoning(String opencodeSessionId, String messageID, String text) {
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        ChatSession session = chatSessionService.findByOpencodeSessionId(opencodeSessionId);
+        if (session == null) {
+            return;
+        }
+        ChatMessage existing = findOrCreateMessage(session, messageID);
+        ObjectNode partsNode = parsePartsObject(existing.getParts());
+        ObjectNode r = objectMapper.createObjectNode();
+        r.put("text", text);
+        partsNode.set("reasoning", r);
+        try {
+            existing.setParts(objectMapper.writeValueAsString(partsNode));
+        } catch (Exception e) {
+            log.warn("serialize parts failed (messageID={}): {}", messageID, e.toString());
+        }
+        persistMessage(existing);
+    }
+
     /** 按 (sessionId, opencodeMessageId) 查找消息;不存在则建 assistant 壳(message.updated 前的兜底)。 */
     private ChatMessage findOrCreateMessage(ChatSession session, String messageID) {
         ChatMessage existing = chatMessageMapper.selectOne(new LambdaQueryWrapper<ChatMessage>()
@@ -569,8 +635,14 @@ public class ChatMessageService {
                     if (state.has("input")) {
                         tc.set("input", state.get("input"));
                     }
-                    if (state.has("output")) {
+                    // 优先完整输出 state.output(工具完成时定稿);
+                    // 运行中 opencode 经 ctx.metadata 流式推送 state.metadata.output(过程输出,可能截断),
+                    // 一并持久化,使工具执行过程内容也能实时进入前端折叠框,而非只显示最终结果。
+                    if (state.has("output") && !state.get("output").isNull()) {
                         tc.set("output", state.get("output"));
+                    } else if (state.has("metadata") && state.get("metadata").has("output")
+                            && !state.get("metadata").get("output").isNull()) {
+                        tc.set("output", state.get("metadata").get("output"));
                     }
                 }
                 if (part.has("time")) {
@@ -602,6 +674,15 @@ public class ChatMessageService {
                     sf.put("reason", part.get("reason").asText());
                 }
                 partsNode.set("stepFinish", sf);
+            }
+            case "reasoning" -> {
+                // 思维链 part:opencode 以 part.text 承载(streaming 期间为累计文本,完成时定稿)。
+                // 通用支持:模型输出思维链则持久化;模型不输出该 part 则此分支不触发,无影响。
+                ObjectNode r = objectMapper.createObjectNode();
+                if (part.has("text")) {
+                    r.put("text", part.get("text").asText());
+                }
+                partsNode.set("reasoning", r);
             }
             default -> {
                 // 其他 part 类型不写入 parts(文本已在 setContent 处理)

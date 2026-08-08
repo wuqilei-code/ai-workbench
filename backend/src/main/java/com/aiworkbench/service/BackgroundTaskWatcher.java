@@ -42,6 +42,7 @@ public class BackgroundTaskWatcher {
     private final OpencodeProperties props;
     private final WorkspaceService workspaceService;
     private final ChatSessionService chatSessionService;
+    private final ChatMessageService chatMessageService;
     private final OpencodeClient opencodeClient;
     private final OpencodeProcessManager processManager;
     private final AgentContainerManager agentContainerManager;
@@ -137,6 +138,7 @@ public class BackgroundTaskWatcher {
                 + continueText;
 
         try {
+            chatMessageService.captureTurnBaseline(userId);
             opencodeClient.promptAsyncAt(userId, target.getOpencodeSessionId(),
                     workspaceService.userDir(userId),
                     PromptAsyncBody.builder()

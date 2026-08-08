@@ -290,6 +290,19 @@ public class OpencodeProcessManager {
         return registry.getIfPresent(userId);
     }
 
+    /** 该用户 agent 实例当前是否已就绪(不启动)。冷启动提示用:未注册或容器/进程已挂则视为未就绪。 */
+    public boolean isReady(Long userId) {
+        UserProcess up = registry.getIfPresent(userId);
+        if (up == null) {
+            return false;
+        }
+        if (props.isContainerMode()) {
+            return agentContainerManager.isRunning(userId);
+        }
+        Process p = up.getProcess();
+        return p != null && p.isAlive();
+    }
+
     /** 该用户进程当前是否正在生成(opencode 事件流上报;无活跃进程视为否)。applyConfig 据此跳过重启。 */
     public boolean isStreaming(Long userId) {
         UserProcess up = registry.getIfPresent(userId);

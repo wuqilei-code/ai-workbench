@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 import { useChatStore } from '@/stores/chat'
 import { renderMarkdown } from '@/utils/markdown'
-import { summarizeToolCall, extractFilePath, isFileProducingTool, extractDeliverables, stripDeliverableMarkers } from '@/utils/turns'
+import { isFileProducingTool, extractDeliverables, stripDeliverableMarkers } from '@/utils/turns'
 import { chatApi } from '@/api/chat'
 import { fileApi } from '@/api/files'
 import { shouldShowGenerationToast } from '@/utils/generationToast'
@@ -12,6 +12,8 @@ import type { Step, Turn, ToolCall, PendingQuestion, PendingPermission } from '@
 import ChatMessage from './ChatMessage.vue'
 import DeliverableBar from './DeliverableBar.vue'
 import FilePreview from './preview/FilePreview.vue'
+import ReasoningBlock from './ReasoningBlock.vue'
+import ToolCallItem from './ToolCallItem.vue'
 
 const props = defineProps<{
   turn: Turn
@@ -50,6 +52,7 @@ const showWorkingHint = computed(() =>
 )
 
 const pendingHint = computed(() => {
+  if (chat.agentStarting) return 'agent 启动中,请稍候…'
   const act = chat.runningActivity
   if (act?.kind === 'tool') {
     if (isFileProducingTool({ tool: act.tool } as ToolCall)) {
@@ -94,6 +97,7 @@ const simpleMode = computed(
     props.turn.steps.length === 0 &&
     !!props.turn.finalAnswer &&
     props.turn.finalAnswer.toolCalls.length === 0 &&
+    !props.turn.finalAnswer.reasoning &&
     !pendingQuestionHost.value &&
     !pendingPermissionHost.value,
 )
@@ -139,18 +143,6 @@ function handleExpand(names: string[] | null) {
 }
 
 // ---------- 工具 chip 状态 ----------
-
-function toolStatusClass(tc: ToolCall): string {
-  if (tc.status === 'completed') return 'ok'
-  if (tc.status === 'error') return 'err'
-  return 'run'
-}
-
-function toolStatusIcon(tc: ToolCall): string {
-  if (tc.status === 'completed') return '✓'
-  if (tc.status === 'error') return '✗'
-  return '…'
-}
 
 /** 下载工具产出的文件(chip 上的 📥 按钮) */
 async function downloadFile(path: string) {
@@ -450,57 +442,41 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
     <div class="bubble">
       <!-- 思考过程(可折叠) -->
       <NCollapse
-        v-if="turn.steps.length > 0 || (turn.finalAnswer && turn.finalAnswer.toolCalls.length)"
+        v-if="turn.steps.length > 0 || (turn.finalAnswer && (turn.finalAnswer.toolCalls.length || turn.finalAnswer.reasoning))"
         :expanded-names="expandedNames"
         :display-directive="'show'"
         @update:expanded-names="handleExpand"
       >
         <NCollapseItem name="thinking" :title="thinkingHeader">
           <div v-for="(step, i) in turn.steps" :key="step.message.id ?? i" class="step">
+            <ReasoningBlock :text="step.reasoning || ''" :is-streaming="step.message.opencodeMessageId === chat.streamingReasoningMsgId" />
             <div
               v-if="displayContent(step)"
               class="step-narration"
               v-html="stepHtml(step)"
             />
             <span v-if="isStepActive(step)" class="cursor">▋</span>
-            <div v-if="step.toolCalls.length" class="tool-chips">
-              <span
+            <div v-if="step.toolCalls.length" class="tool-calls">
+              <ToolCallItem
                 v-for="tc in step.toolCalls"
                 :key="tc.partId || tc.tool"
-                class="chip"
-                :class="toolStatusClass(tc)"
-              >
-                🔧 {{ tc.tool }} <span class="chip-arg">{{ summarizeToolCall(tc) }}</span>
-                <span class="chip-status">{{ toolStatusIcon(tc) }}</span>
-                <a
-                  v-if="tc.status === 'completed' && isFileProducingTool(tc) && extractFilePath(tc)"
-                  class="chip-download"
-                  title="下载该文件"
-                  @click.stop="downloadFile(extractFilePath(tc)!)"
-                >📥</a>
-              </span>
+                :tc="tc"
+                @download="downloadFile"
+              />
             </div>
           </div>
           <div
-            v-if="turn.finalAnswer && turn.finalAnswer.toolCalls.length"
+            v-if="turn.finalAnswer && (turn.finalAnswer.toolCalls.length || turn.finalAnswer.reasoning)"
             class="step"
           >
-            <div class="tool-chips">
-              <span
+            <ReasoningBlock :text="turn.finalAnswer.reasoning || ''" :is-streaming="turn.finalAnswer.message.opencodeMessageId === chat.streamingReasoningMsgId" />
+            <div class="tool-calls" v-if="turn.finalAnswer.toolCalls.length">
+              <ToolCallItem
                 v-for="tc in turn.finalAnswer.toolCalls"
                 :key="tc.partId || tc.tool"
-                class="chip"
-                :class="toolStatusClass(tc)"
-              >
-                🔧 {{ tc.tool }} <span class="chip-arg">{{ summarizeToolCall(tc) }}</span>
-                <span class="chip-status">{{ toolStatusIcon(tc) }}</span>
-                <a
-                  v-if="tc.status === 'completed' && isFileProducingTool(tc) && extractFilePath(tc)"
-                  class="chip-download"
-                  title="下载该文件"
-                  @click.stop="downloadFile(extractFilePath(tc)!)"
-                >📥</a>
-              </span>
+                :tc="tc"
+                @download="downloadFile"
+              />
             </div>
           </div>
         </NCollapseItem>
@@ -714,16 +690,18 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
 <style scoped>
 .msg { display: flex; gap: 10px; margin-bottom: 16px; }
 .avatar {
-  width: 28px; height: 28px; border-radius: 6px; flex-shrink: 0;
+  width: 30px; height: 30px; border-radius: 10px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  font-size: 12px; background: #2f2f35;
+  font-size: 12px; font-weight: 600; background: var(--surface);
+  color: var(--text-3);
 }
 .bubble {
   position: relative;
   max-width: 75%;
   min-width: 0;
-  padding: 10px 14px; border-radius: 10px;
-  background: #26262a; line-height: 1.6; word-break: break-word;
+  padding: 12px 16px; border-radius: var(--radius);
+  background: var(--surface); line-height: 1.6; word-break: break-word;
+  border: 1px solid var(--border-soft);
   overflow: hidden;
 }
 .content { position: relative; }
@@ -733,53 +711,37 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
   padding: 2px 4px; border-radius: 4px; line-height: 1; opacity: 0; transition: opacity .15s; z-index: 2;
 }
 .content:hover .copy-btn { opacity: 1; }
-.copy-btn:hover { background: rgba(255,255,255,.12); }
+.copy-btn:hover { background: var(--surface-hover); }
 .content :deep(p) { margin: 6px 0; }
-.content :deep(pre.hljs) { background: #18181c; border-radius: 6px; padding: 10px; overflow-x: auto; }
+.content :deep(pre.hljs) { background: #16181d; border-radius: var(--radius-sm); padding: 10px; overflow-x: auto; }
 .content :deep(code) { font-family: ui-monospace, monospace; font-size: 13px; }
 .content :deep(pre code) { background: none; }
-.content :deep(code:not(pre code)) { background: #18181c; padding: 2px 5px; border-radius: 4px; }
+.content :deep(code:not(pre code)) { background: #16181d; padding: 2px 5px; border-radius: 4px; }
 
 /* 思考区 */
-.step { padding: 4px 0; border-bottom: 1px dashed #333; }
+.step { padding: 4px 0; border-bottom: 1px dashed var(--border); }
 .step:last-child { border-bottom: none; }
 .step-narration {
-  font-size: 13px; color: #9a9aa0; opacity: .85;
+  font-size: 13px; color: var(--text-2); opacity: .85;
 }
 .step-narration :deep(p) { margin: 4px 0; }
-.step-narration :deep(pre.hljs) { background: #18181c; border-radius: 6px; padding: 8px; overflow-x: auto; }
+.step-narration :deep(pre.hljs) { background: #16181d; border-radius: var(--radius-sm); padding: 8px; overflow-x: auto; }
 .step-narration :deep(code) { font-family: ui-monospace, monospace; font-size: 12px; }
 
-.tool-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-.chip {
-  display: inline-flex; align-items: center; gap: 4px;
-  font-size: 12px; padding: 2px 8px; border-radius: 10px;
-  background: #18181c; color: #b0b0b6; border: 1px solid #2a2a2e;
-}
-.chip-arg { color: #56b6c2; }
-.chip .chip-status { font-weight: bold; }
-.chip-download {
-  margin-left: 2px; padding: 0 2px; cursor: pointer;
-  font-size: 13px; line-height: 1; text-decoration: none;
-  border-radius: 4px;
-}
-.chip-download:hover { background: #2a2a2e; }
-.chip.run .chip-status { color: #888; }
-.chip.ok .chip-status { color: #98c379; }
-.chip.err .chip-status { color: #e06c75; }
+.tool-calls { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 
-.cursor { animation: blink 1s steps(2) infinite; color: #56b6c2; }
+.cursor { animation: blink 1s steps(2) infinite; color: var(--accent); }
 @keyframes blink { 50% { opacity: 0; } }
 
-.pending { display: flex; align-items: center; gap: 8px; color: #888; font-size: 13px; padding: 4px 0; }
-.pending-elapsed { color: #9aa3b2; font-size: 12px; }
+.pending { display: flex; align-items: center; gap: 8px; color: var(--text-3); font-size: 13px; padding: 4px 0; }
+.pending-elapsed { color: var(--text-2); font-size: 12px; }
 
 /* ========== pending block (custom, replaces n-alert) ========== */
 .pending-block {
   margin-top: 12px;
-  border-radius: 8px;
-  border: 1px solid #4a3d1f;
-  background: #3a3320;
+  border-radius: var(--radius);
+  border: 1px solid rgba(232, 178, 107, 0.35);
+  background: rgba(232, 178, 107, 0.06);
   overflow: hidden;
   width: 100%;
   min-width: 0;
@@ -787,11 +749,11 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
 .pending-block-header {
   display: flex; align-items: center; gap: 8px;
   padding: 8px 12px;
-  background: #4a3d1f;
-  color: #e8c547;
+  background: rgba(232, 178, 107, 0.1);
+  color: var(--warn);
   font-size: 14px;
   font-weight: 600;
-  border-bottom: 1px solid #5a4d2f;
+  border-bottom: 1px solid rgba(232, 178, 107, 0.2);
 }
 .pending-block-body {
   padding: 12px;
@@ -801,10 +763,10 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
 .pending-icon { font-size: 16px; }
 .pending-title { font-weight: 600; }
 
-.question-block { border-color: #4a3d1f; }
-.question-block .pending-block-header { background: #4a3d1f; color: #e8c547; }
-.permission-block { border-color: #1f3d4a; }
-.permission-block .pending-block-header { background: #1f3d4a; color: #56b6c2; }
+.question-block { border-color: rgba(232, 178, 107, 0.35); }
+.question-block .pending-block-header { background: rgba(232, 178, 107, 0.1); color: var(--warn); }
+.permission-block { border-color: rgba(107, 138, 253, 0.35); }
+.permission-block .pending-block-header { background: rgba(107, 138, 253, 0.1); color: var(--accent-text); }
 
 .question-item {
   margin-bottom: 14px;
@@ -819,12 +781,12 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
   font-size: 14px;
   margin-bottom: 8px;
   line-height: 1.6;
-  color: #e0d8b8;
+  color: var(--text);
   word-break: break-word;
 }
 
 .question-type-tag {
-  color: #888;
+  color: var(--text-3);
   font-size: 12px;
   margin-left: 6px;
 }
@@ -837,7 +799,7 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
 }
 
 .opt-desc {
-  color: #999;
+  color: var(--text-2);
   font-size: 12px;
 }
 
@@ -850,7 +812,7 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
   font-size: 14px;
   margin-bottom: 8px;
   line-height: 1.6;
-  color: #b8e0e8;
+  color: var(--accent-text);
   word-break: break-word;
 }
 
@@ -858,7 +820,7 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
   margin: 6px 0 8px 20px;
   padding: 0;
   font-size: 13px;
-  color: #d0d0d6;
+  color: var(--text-2);
 }
 
 .perm-list li {

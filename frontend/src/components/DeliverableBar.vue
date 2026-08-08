@@ -63,9 +63,9 @@ function icon(name: string): string {
 <style scoped>
 .deliverable-bar {
   margin-top: 10px;
-  border: 1px solid #2a4a3a;
-  border-radius: 8px;
-  background: #1f2a25;
+  border: 1px solid rgba(88, 196, 155, 0.3);
+  border-radius: var(--radius-sm);
+  background: rgba(88, 196, 155, 0.05);
   overflow: hidden;
 }
 .deliverable-header {
@@ -74,25 +74,25 @@ function icon(name: string): string {
   justify-content: space-between;
   gap: 8px;
   padding: 6px 12px;
-  background: #2a4a3a;
-  color: #98d8a8;
+  background: rgba(88, 196, 155, 0.1);
+  color: var(--ok);
   font-size: 13px;
   font-weight: 600;
 }
 .download-all-btn {
   padding: 2px 10px;
-  border: 1px solid #3a6a4a;
-  border-radius: 4px;
-  background: #1f2a25;
-  color: #98d8a8;
+  border: 1px solid rgba(88, 196, 155, 0.4);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ok);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
   transition: background .12s, border-color .12s;
 }
 .download-all-btn:hover {
-  background: #2a4a3a;
-  border-color: #4a8a5a;
+  background: rgba(88, 196, 155, 0.12);
+  border-color: rgba(88, 196, 155, 0.6);
 }
 .download-all-btn:disabled {
   opacity: .5;
@@ -113,18 +113,18 @@ function icon(name: string): string {
   max-width: 280px;
   flex-shrink: 0;
   padding: 5px 10px;
-  border-radius: 6px;
-  background: #18181c;
-  color: #d8e6f8;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  color: var(--text);
   cursor: pointer;
   text-decoration: none;
   font-size: 13px;
-  border: 1px solid #2a2a2e;
+  border: 1px solid var(--border);
   transition: background .12s, border-color .12s;
 }
 .deliverable-item:hover {
-  background: #26262a;
-  border-color: #3a5a4a;
+  background: var(--surface-hover);
+  border-color: rgba(88, 196, 155, 0.5);
 }
 .deliverable-icon { font-size: 16px; flex-shrink: 0; }
 .deliverable-name {

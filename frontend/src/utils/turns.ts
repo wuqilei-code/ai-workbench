@@ -123,6 +123,7 @@ function toStep(msg: MessageVo): Step {
     narration: msg.content || '',
     toolCalls: parts?.toolCalls ?? [],
     finishReason: parts?.stepFinish?.reason,
+    reasoning: parts?.reasoning?.text || '',
   }
 }
 

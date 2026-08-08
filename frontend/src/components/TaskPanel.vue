@@ -180,11 +180,11 @@ onBeforeUnmount(stopPolling)
 .task-panel { display: flex; flex-direction: column; gap: 8px; }
 .panel-head {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 2px 0 8px; border-bottom: 1px solid #2a2a2e;
+  padding: 2px 0 8px; border-bottom: 1px solid var(--border-soft);
 }
-.panel-head .hint { font-size: 12px; color: #888; }
-.task-error { color: #e88080; font-size: 12px; padding: 8px 0; }
-.task-empty { color: #888; font-size: 12px; padding: 16px 0; text-align: center; }
+.panel-head .hint { font-size: 12px; color: var(--text-3); }
+.task-error { color: var(--err); font-size: 12px; padding: 8px 0; }
+.task-empty { color: var(--text-3); font-size: 12px; padding: 16px 0; text-align: center; }
 
 .task-list { display: flex; flex-direction: column; gap: 4px; }
 .task-grid {
@@ -193,16 +193,16 @@ onBeforeUnmount(stopPolling)
   gap: 8px; align-items: center;
 }
 .task-head {
-  padding: 4px 10px; font-size: 11px; color: #777;
-  border-bottom: 1px solid #2a2a2e;
+  padding: 4px 10px; font-size: 11px; color: var(--text-3);
+  border-bottom: 1px solid var(--border-soft);
 }
 .task-head .c-time { white-space: nowrap; }
 .task-item {
-  border: 1px solid #2a2a2e; border-radius: 6px; background: #202024; overflow: hidden;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); overflow: hidden;
 }
-.task-item.active { border-color: #3d4a66; }
+.task-item.active { border-color: var(--accent); }
 .task-main { padding: 7px 10px; cursor: pointer; }
-.task-main:hover { background: #26262a; }
+.task-main:hover { background: var(--surface-hover); }
 .c-status { display: flex; min-width: 0; }
 .status-tag {
   max-width: 100%;
@@ -210,31 +210,31 @@ onBeforeUnmount(stopPolling)
 }
 .c-task { min-width: 0; }
 .task-id {
-  font-size: 12px; font-weight: 600; color: #e8c547; font-family: monospace;
+  font-size: 12px; font-weight: 600; color: var(--warn); font-family: monospace;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .c-session { min-width: 0; }
 .session-link {
-  font-size: 12px; color: #7db0ff; cursor: pointer;
+  font-size: 12px; color: var(--accent-text); cursor: pointer;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block;
 }
-.session-link:hover { color: #a8ccff; text-decoration: underline; }
-.session-none { font-size: 12px; color: #777; }
+.session-link:hover { color: var(--accent-text); text-decoration: underline; }
+.session-none { font-size: 12px; color: var(--text-3); }
 .c-time { min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
-.t-time { font-size: 11px; color: #bbb; white-space: nowrap; }
-.t-dur { font-size: 10px; color: #888; white-space: nowrap; }
-.caret { color: #666; font-size: 11px; text-align: right; }
+.t-time { font-size: 11px; color: var(--text-2); white-space: nowrap; }
+.t-dur { font-size: 10px; color: var(--text-3); white-space: nowrap; }
+.caret { color: var(--text-3); font-size: 11px; text-align: right; }
 .mini-spin { margin-right: 4px; }
 
-.task-detail { border-top: 1px solid #2a2a2e; padding: 8px 10px; }
-.task-done { font-size: 12px; color: #bbb; margin-bottom: 6px; word-break: break-all; }
+.task-detail { border-top: 1px solid var(--border-soft); padding: 8px 10px; }
+.task-done { font-size: 12px; color: var(--text-2); margin-bottom: 6px; word-break: break-all; }
 .log-box {
-  background: #16161a; border: 1px solid #2a2a2e; border-radius: 4px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
   max-height: 260px; overflow-y: auto;
 }
-.log-loading { color: #888; font-size: 12px; padding: 8px; }
+.log-loading { color: var(--text-3); font-size: 12px; padding: 8px; }
 .log-text {
-  margin: 0; padding: 8px; font-size: 11px; line-height: 1.5; color: #9ecb9e;
+  margin: 0; padding: 8px; font-size: 11px; line-height: 1.5; color: var(--ok);
   font-family: Consolas, Menlo, monospace; white-space: pre-wrap; word-break: break-all;
 }
 .task-actions { display: flex; justify-content: flex-end; gap: 4px; padding-top: 6px; }

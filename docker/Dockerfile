@@ -30,40 +30,17 @@ ARG OPENCODE_DOWNLOAD_URL=
 # 默认从 sst/opencode 官方 release 下载;GitHub 不可达时,在 docker-compose.yml 用
 # OPENCODE_DOWNLOAD_URL 指向代理(如 ghfast.top)或内部镜像
 
+# app 是纯 Java 服务(网关 + nginx + docker CLI 管理 agent 容器),不执行 AI 生成的 python 脚本,
+# 故不装 python/文档处理依赖(那些只在 agent 镜像需要)。只装运行所需:nginx/supervisor/docker CLI/git/curl。
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
        nginx supervisor curl ca-certificates git procps bash \
-       python3 python3-pip python3-venv \
-       fonts-noto-cjk \
-       unzip poppler-utils \
+       unzip \
        docker.io \
+  && rm -rf /var/lib/apt/lists/* \
+  # 清理 docker CLI 附带的无关 bash-completion/文档,进一步瘦身
+  && rm -rf /usr/share/doc /usr/share/man /usr/share/locale /usr/share/i18n \
   && rm -rf /var/lib/apt/lists/*
-
-# Python 常用依赖:文档操作 / API / 数据处理(系统级安装,所有 uid 可读;AI 生成的脚本直接 import 即可)
-# pip 用 --break-system-packages:容器内装到系统 site-packages,per-user uid 运行时无需 venv 即可 import。
-# 默认用阿里云 PyPI 镜像加速构建;内网构建用 --build-arg PIP_INDEX_URL 指向内网 PyPI。
-ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
-RUN pip3 install --no-cache-dir --break-system-packages \
-      --index-url ${PIP_INDEX_URL} \
-      python-docx python-pptx openpyxl reportlab PyPDF2 pdfplumber markdown \
-      numpy pandas matplotlib \
-      requests httpx aiohttp \
-      flask fastapi uvicorn pydantic \
-      beautifulsoup4 lxml Pillow \
- && python3 -c "import docx, pptx, openpyxl, reportlab, PyPDF2, pdfplumber, markdown, numpy, pandas, matplotlib, requests, httpx, aiohttp, flask, fastapi, uvicorn, pydantic, bs4, lxml, PIL; print('python deps ok')"
-
-# 运行时禁止 AI 自行 pip install 下载依赖(方案 B:删 pip + ensurepip)。
-# 构建期已装好预装依赖(系统 site-packages),AI 运行时只需 import,无需 pip。
-# 1) 卸载 python3-pip 包 + 清理 pip 可执行文件与模块 → `pip install` / `python3 -m pip` 不可用
-# 2) 删 ensurepip 模块 → 防止 `python3 -m ensurepip` 重装 pip;且 `python3 -m venv` 创建的虚拟环境不再带 pip
-# 预装依赖不受影响(已落系统 site-packages),下方验证 import 仍可用。
-RUN apt-get purge -y python3-pip \
-  && apt-get autoremove -y \
-  && rm -rf /usr/lib/python3*/ensurepip \
-  && rm -f /usr/bin/pip /usr/bin/pip3 \
-  && rm -rf /usr/lib/python3/dist-packages/pip \
-  && python3 -c "import sys; print('python ok')" \
-  && python3 -c "import docx, pptx, openpyxl, pandas, requests; print('preinstalled deps still ok')"
 
 # 下载 opencode 二进制
 RUN set -eux; \
@@ -133,8 +110,13 @@ RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debia
   && apt-get install -y --no-install-recommends \
        curl ca-certificates git procps mawk bash \
        unzip poppler-utils \
-       fonts-noto-cjk \
+       openssh-client sshpass libnss-wrapper \
   && rm -rf /var/lib/apt/lists/*
+
+# 中文字体:Noto CJK 是 CFF/TTC 轮廓,reportlab 无法加载且体积大(89MB)。
+# 统一改用后端内置的 simhei.ttf(TrueType 黑体,9.7MB),reportlab 与 matplotlib 均可直接加载。
+# 技能文档(document-generation / data-analysis)从该固定路径注册字体,不再依赖 app.jar。
+COPY backend/src/main/resources/fonts/simhei.ttf /usr/share/fonts/truetype/simhei.ttf
 
 # Python 常用依赖(与 runtime 阶段同清单):文档操作 / 数据处理 / API / 图表
 RUN pip3 install --no-cache-dir --break-system-packages \

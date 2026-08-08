@@ -54,7 +54,7 @@ public class WorkspaceService {
         userProvisioningService.ensureProvisioned(userId);
     }
 
-    public record FileNode(String name, String path, boolean directory, long size, long modified) {}
+    public record FileNode(String name, String path, boolean directory, long size, long modified, long created) {}
 
     /** 列出用户目录下文件树(单层)。path 相对用户目录,如 "" 表示根。 */
     public List<FileNode> listFiles(Long userId, String relativePath) {
@@ -71,7 +71,8 @@ public class WorkspaceService {
                             relativize(userId, p),
                             Files.isDirectory(p),
                             Files.size(p),
-                            Files.getLastModifiedTime(p).toMillis()));
+                            Files.getLastModifiedTime(p).toMillis(),
+                            creationTime(p)));
                 } catch (IOException ignored) {}
             });
         } catch (IOException e) {
@@ -84,6 +85,20 @@ public class WorkspaceService {
             return a.name().compareTo(b.name());
         });
         return nodes;
+    }
+
+    /** 读取文件创建时间(ms);部分文件系统(如 overlayfs)不暴露 birthtime,回退到修改时间。 */
+    private long creationTime(Path p) {
+        try {
+            return Files.readAttributes(p, java.nio.file.attribute.BasicFileAttributes.class)
+                    .creationTime().toMillis();
+        } catch (IOException e) {
+            try {
+                return Files.getLastModifiedTime(p).toMillis();
+            } catch (IOException ignored) {
+                return 0L;
+            }
+        }
     }
 
     /** 递归搜索 root 下文件名含 query 的节点(跳过 .git/.opencode/node_modules 子树,限定结果数)。
@@ -130,7 +145,8 @@ public class WorkspaceService {
             if (name.toLowerCase().contains(q)) {
                 try {
                     results.add(new FileNode(name, relativize(userId, p), isDir,
-                            isDir ? 0 : Files.size(p), Files.getLastModifiedTime(p).toMillis()));
+                            isDir ? 0 : Files.size(p), Files.getLastModifiedTime(p).toMillis(),
+                            creationTime(p)));
                 } catch (IOException ignored) {}
             }
             if (isDir) walkSearch(p, q, userId, results, limit);

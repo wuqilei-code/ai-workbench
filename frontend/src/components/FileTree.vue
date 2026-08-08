@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import { fileApi } from '@/api/files'
 import { useMessage, useDialog } from 'naive-ui'
 import type { FileNode, FileHistoryEntry, FileDiffResult } from '@/types'
@@ -15,10 +15,13 @@ const props = withDefaults(defineProps<{
   skillsMode?: boolean
   /** 本会话内被 AI 改过的文件路径集合(工作区相对路径),用于高亮标记 */
   changedPaths?: string[]
+  /** 自动刷新间隔(ms);>0 时轮询当前目录,文件变化后工作区自动更新。默认 5s */
+  pollMs?: number
 }>(), {
   root: '',
   skillsMode: false,
   changedPaths: () => [],
+  pollMs: 5000,
 })
 
 const msg = useMessage()
@@ -33,6 +36,8 @@ const previewSize = ref<number | undefined>(undefined)
 const fileInput = ref<HTMLInputElement | null>(null)
 const uploadDir = ref('')
 const uploading = ref(false)
+/** 自动刷新定时器句柄(pollMs>0 时启用) */
+let pollTimer: ReturnType<typeof setInterval> | null = null
 
 // ---------- 版本历史 / diff / 回滚 ----------
 const histVisible = ref(false)
@@ -76,8 +81,8 @@ function clearEditor() {
   selectedFile.value = null
 }
 
-async function load(path = '') {
-  loading.value = true
+async function load(path = '', silent = false) {
+  if (!silent) loading.value = true
   try {
     const all = await fileApi.list(abs(path))
     // 隐藏 git/opencode 系统内部文件:技能有专用「技能」标签访问,
@@ -88,7 +93,7 @@ async function load(path = '') {
     )
     currentPath.value = path
   } catch (e: any) { msg.error(e.message) }
-  finally { loading.value = false }
+  finally { if (!silent) loading.value = false }
 }
 
 async function open(node: FileNode) {
@@ -223,6 +228,18 @@ function fmtTime(ts: number): string {
   const d = new Date(ts)
   const p = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+/** 创建日期:今天显示 时:分,今年显示 月-日,更早显示 年-月-日 */
+function fmtDate(ts: number): string {
+  if (!ts) return ''
+  const d = new Date(ts)
+  const now = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()
+  if (sameDay) return `${p(d.getHours())}:${p(d.getMinutes())}`
+  if (d.getFullYear() === now.getFullYear()) return `${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
 
 function shortSha(sha: string): string {
@@ -361,7 +378,23 @@ function isAiChanged(node: FileNode): boolean {
   return paths.includes(node.path) || paths.some((p) => p && p.startsWith(node.path + '/'))
 }
 
-onMounted(() => load(''))
+onMounted(() => {
+  load('')
+  // 自动刷新:文件变化后工作区自动更新。轮询静默刷新当前目录,保留用户导航位置与选中态;
+  // 搜索/上传/预览进行中跳过,避免干扰交互。
+  if (props.pollMs > 0) {
+    pollTimer = setInterval(() => {
+      if (searchQuery.value || searchResults.value !== null || uploading.value || previewVisible.value) return
+      load(currentPath.value, true)
+    }, props.pollMs)
+  }
+})
+onBeforeUnmount(() => {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+})
 </script>
 
 <template>
@@ -397,27 +430,31 @@ onMounted(() => load(''))
           <span v-if="isSearchMode" class="node-sub" :title="relFromAbs(n.path)">{{ relFromAbs(n.path) }}</span>
           <span v-if="!n.directory && !isSearchMode" class="node-size">{{ fmtSize(n.size) }}</span>
         </div>
+        <div class="node-date" v-if="!isSearchMode" :title="`创建于 ${fmtTime(n.created)}`">{{ fmtDate(n.created) }}</div>
         <div class="node-ops">
-          <n-button
+          <button
             v-if="!n.directory"
-            size="tiny"
-            quaternary
+            class="op-btn"
             title="版本历史/回滚"
             @click.stop="openHistory(n)"
-          >🕘</n-button>
-          <n-button
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>
+          </button>
+          <button
             v-if="!n.directory"
-            size="tiny"
-            quaternary
+            class="op-btn"
             title="下载"
             @click.stop="downloadNode(n)"
-          >📥</n-button>
-          <n-button
-            size="tiny"
-            quaternary
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </button>
+          <button
+            class="op-btn op-btn-danger"
             title="删除"
             @click.stop="deleteNode(n)"
-          >🗑️</n-button>
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          </button>
         </div>
       </div>
       <n-empty
@@ -507,69 +544,80 @@ onMounted(() => load(''))
 .actions { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
 .hidden-input { display: none; }
 .path {
-  font-size: 12px; color: #888; margin-bottom: 8px;
+  font-size: 12px; color: var(--text-3); margin-bottom: 8px;
   font-family: ui-monospace, monospace; word-break: break-all;
 }
 .hint {
-  font-size: 12px; color: #888; line-height: 1.5; margin-bottom: 8px;
-  background: #1f1f23; border: 1px solid #2a2a2e; border-radius: 6px; padding: 6px 8px;
+  font-size: 12px; color: var(--text-3); line-height: 1.5; margin-bottom: 8px;
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px 8px;
 }
-.hint code { color: #7ab8ff; font-family: ui-monospace, monospace; }
+.hint code { color: var(--accent-text); font-family: ui-monospace, monospace; }
 .node {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 4px; border-radius: 4px; gap: 4px;
+  padding: 4px 6px; border-radius: 8px; gap: 6px;
+  position: relative;
 }
-.node:hover { background: #26262a; }
+.node:hover { background: var(--surface-hover); }
 .node-main {
   display: flex; align-items: center; gap: 6px;
   cursor: pointer; flex: 1; min-width: 0; padding: 2px 4px;
 }
-.node-icon { flex-shrink: 0; }
+.node-icon { flex-shrink: 0; font-size: 14px; }
 .node-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ai-mark { color: #d4a72c; font-size: 11px; flex-shrink: 0; }
+.ai-mark { color: var(--warn); font-size: 11px; flex-shrink: 0; }
 .node-name.dir { font-weight: 600; }
-.node-size { color: #666; font-size: 11px; flex-shrink: 0; margin-left: auto; }
-.node-sub { color: #5a8fbf; font-size: 11px; font-family: ui-monospace, monospace; flex-shrink: 0; margin-left: auto; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-size { color: var(--text-3); font-size: 11px; flex-shrink: 0; margin-left: auto; }
+.node-date { color: var(--text-3); font-size: 11px; opacity: .7; flex-shrink: 0; white-space: nowrap; }
 .node-ops { display: flex; gap: 2px; flex-shrink: 0; }
+.op-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; padding: 0;
+  background: transparent; border: none; border-radius: 6px;
+  color: var(--text-3); cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.op-btn:hover { background: var(--accent-soft); color: var(--accent-text); }
+.op-btn-danger:hover { background: rgba(228, 122, 134, 0.14); color: var(--err); }
+.node-sub { color: var(--accent-text); font-size: 11px; font-family: ui-monospace, monospace; flex-shrink: 0; margin-left: auto; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .hist-body { display: flex; flex-direction: column; gap: 12px; height: 100%; min-height: 0; }
-.hist-list { overflow-y: auto; flex: 0 0 auto; max-height: 26%; border-bottom: 1px solid #2a2a2e; padding-bottom: 10px; }
+.hist-list { overflow-y: auto; flex: 0 0 auto; max-height: 26%; border-bottom: 1px solid var(--border-soft); padding-bottom: 10px; }
 .hist-diff { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .hist-diff-head { margin-bottom: 8px; flex: 0 0 auto; }
-.hist-diff-title { font-size: 12px; color: #7ab8ff; font-family: ui-monospace, monospace; }
+.hist-diff-title { font-size: 12px; color: var(--accent-text); font-family: ui-monospace, monospace; }
 .hist-diff-spin { flex: 1; min-height: 0; display: flex; }
 .hist-diff-spin :deep(.n-spin-content) { flex: 1; min-height: 0; display: flex; }
 .hist-item {
-  padding: 8px 10px; border: 1px solid #2a2a2e; border-radius: 6px;
-  margin-bottom: 6px; cursor: pointer; background: #1f1f23;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  margin-bottom: 6px; cursor: pointer; background: var(--bg-elev);
 }
-.hist-item:hover { border-color: #3a3a40; }
-.hist-item.isFrom { border-color: #63e2b7; background: #102e26; }
-.hist-item.isTo { border-color: #7ab8ff; background: #10273f; }
+.hist-item:hover { border-color: var(--border); }
+.hist-item.isFrom { border-color: rgba(88, 196, 155, 0.5); background: rgba(88, 196, 155, 0.08); }
+.hist-item.isTo { border-color: rgba(107, 138, 253, 0.5); background: rgba(107, 138, 253, 0.08); }
 .hist-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.hist-sha { color: #7ab8ff; font-family: ui-monospace, monospace; font-size: 12px; }
-.hist-time { color: #888; font-size: 11px; }
+.hist-sha { color: var(--accent-text); font-family: ui-monospace, monospace; font-size: 12px; }
+.hist-time { color: var(--text-3); font-size: 11px; }
 .hist-msg {
-  margin: 4px 0; color: #ddd; font-size: 12px;
+  margin: 4px 0; color: var(--text-2); font-size: 12px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .hist-ops { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .hist-tag { font-size: 11px; padding: 1px 6px; border-radius: 3px; }
-.hist-item.isFrom .hist-tag { background: #1f6f4a; color: #c8ffe0; }
-.hist-item.isTo .hist-tag { background: #1f4e7a; color: #cfe9ff; }
-.hist-tip { margin-top: 8px; font-size: 11px; color: #777; line-height: 1.5; }
-.hist-empty { color: #777; font-size: 12px; padding: 12px 4px; }
+.hist-item.isFrom .hist-tag { background: rgba(88, 196, 155, 0.2); color: var(--ok); }
+.hist-item.isTo .hist-tag { background: rgba(107, 138, 253, 0.2); color: var(--accent-text); }
+.hist-tip { margin-top: 8px; font-size: 11px; color: var(--text-3); line-height: 1.5; }
+.hist-empty { color: var(--text-3); font-size: 12px; padding: 12px 4px; }
 
 .diff-view { flex: 1; min-height: 0; overflow: auto; }
 .diff-pre { margin: 0; font-size: 12px; line-height: 1.55; font-family: ui-monospace, monospace; white-space: pre; overflow-x: auto; }
 .diff-pre code { display: block; padding: 8px 0; }
 .diff-line { display: block; padding: 0 8px; }
-.dl-add { background: #1f4a2e; color: #b6e7c5; }
-.dl-del { background: #4a2020; color: #e7b6b6; }
-.dl-hunk { background: #24304a; color: #9db8e0; }
-.dl-meta { color: #666; }
-.dl-ctx { color: #ccc; }
-.diff-note { color: #888; font-size: 12px; padding: 12px 4px; }
+.dl-add { background: rgba(88, 196, 155, 0.18); color: #b6e7d2; }
+.dl-del { background: rgba(228, 122, 134, 0.18); color: #e7b6bb; }
+.dl-hunk { background: rgba(107, 138, 253, 0.14); color: #a9bcff; }
+.dl-meta { color: var(--text-3); }
+.dl-ctx { color: var(--text-2); }
+.diff-note { color: var(--text-3); font-size: 12px; padding: 12px 4px; }
 
 @media (max-width: 720px) {
   .hist-list { max-height: 30%; }

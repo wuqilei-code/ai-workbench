@@ -55,6 +55,12 @@ export const useChatStore = defineStore('chat', () => {
   const streamingText = ref('')
   const streamingMessageId = ref<string | null>(null)
   const isStreaming = ref(false)
+  /** 记录思维链(reasoning)part 的 partID,用于 delta 事件分流:reasoning 增量不进正文 streamingText,而是累积到 parts.reasoning.text */
+  const reasoningPartIds = new Set<string>()
+  /** 当前正在流式输出思维链的 messageID(null=当前无活跃 reasoning);供 ReasoningBlock 判流式态,step 完成后自动收起 */
+  const streamingReasoningMsgId = ref<string | null>(null)
+  /** agent 实例冷启动中(后端 dispatch session.starting):首个真实事件到来即清除 */
+  const agentStarting = ref(false)
   const connected = ref(false)
   /** 连接断开且正在自动重连(UI 提示用) */
   const reconnecting = ref(false)
@@ -435,6 +441,7 @@ export const useChatStore = defineStore('chat', () => {
       })
     } catch (e: any) {
       isStreaming.value = false
+      agentStarting.value = false
       optimistic.status = 'error'
       throw e
     }
@@ -498,9 +505,22 @@ export const useChatStore = defineStore('chat', () => {
         connected.value = true
         break
 
+      // agent 实例冷启动中(后端在 sendUserMessage 检测到未就绪时 dispatch)
+      case 'session.starting':
+        agentStarting.value = true
+        break
+
       // 流式增量文本(token by token)
       case 'message.part.delta': {
+        agentStarting.value = false
         if (data.field === 'text' && data.delta) {
+          // 思维链增量:不进正文 streamingText,而是累积到对应消息的 parts.reasoning
+          if (data.partID && reasoningPartIds.has(data.partID)) {
+            isStreaming.value = true
+            touchStreamActivity()
+            if (data.messageID) appendReasoningDelta(data.messageID, data.partID, data.delta)
+            break
+          }
           isStreaming.value = true
           if (!streamStartAt.value) streamStartAt.value = Date.now()
           touchStreamActivity()
@@ -512,6 +532,7 @@ export const useChatStore = defineStore('chat', () => {
 
       // part 定稿:text 携带完整文本;tool/step-finish 携带工具调用与步骤结束标记
       case 'message.part.updated': {
+        agentStarting.value = false
         touchStreamActivity()
         const part = data.part || {}
         if (!part.messageID) break
@@ -524,12 +545,16 @@ export const useChatStore = defineStore('chat', () => {
           upsertToolCall(part.messageID, part)
         } else if (part.type === 'step-finish') {
           upsertStepFinish(part.messageID, part.reason)
+        } else if (part.type === 'reasoning') {
+          if (typeof part.id === 'string') reasoningPartIds.add(part.id)
+          upsertReasoning(part.messageID, part)
         }
         break
       }
 
       // 消息元信息(id/role/status),不含文本 → 只建壳/更新状态
       case 'message.updated': {
+        agentStarting.value = false
         touchStreamActivity()
         const info = data.info || {}
         upsertMessageMeta(info)
@@ -537,6 +562,7 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       case 'session.status':
+        agentStarting.value = false
         if (data.status?.type === 'idle') finishStreaming()
         else if (data.status?.type === 'busy') {
           isStreaming.value = true
@@ -550,6 +576,12 @@ export const useChatStore = defineStore('chat', () => {
 
       // AI 变更总结卡片(由后端在快照后异步生成推送)
       case 'change.summary':
+        // 按 sha 去重:后端可能因重复 idle/重连重放推送同一 summary,已存在相同 sha 则跳过。
+        // (刷新时 hydrateSummaries 用 DB 消息重建全量,天然无重复;此处防御性去重避免实时重复)
+        if (data.sha && summaries.value.some((s) => s.sha === data.sha)) {
+          console.debug('[chat] change.summary duplicate sha ignored:', data.sha)
+          break
+        }
         summaries.value.push({
           summary: data.summary || '',
           files: data.files || [],
@@ -735,12 +767,16 @@ export const useChatStore = defineStore('chat', () => {
   function upsertToolCall(messageID: string, part: any) {
     const idx = messages.value.findIndex((m) => m.opencodeMessageId === messageID)
     const state = part.state || {}
+    // 工具执行过程中 opencode 把流式过程输出放在 state.metadata.output(完整结果在 state.output);
+    // 两者都进 tc.output,使运行中的过程内容实时显示在折叠框里,完成后自动替换为最终结果。
+    const runningOutput =
+      typeof state.metadata?.output === 'string' && state.metadata.output ? state.metadata.output : undefined
     const tc: ToolCall = {
       partId: typeof part.id === 'string' ? part.id : undefined,
       tool: typeof part.tool === 'string' ? part.tool : 'tool',
       status: typeof state.status === 'string' ? state.status : 'running',
       input: state.input,
-      output: typeof state.output === 'string' ? state.output : undefined,
+      output: typeof state.output === 'string' && state.output ? state.output : runningOutput,
     }
     if (idx >= 0) {
       const msg = messages.value[idx]
@@ -778,6 +814,32 @@ export const useChatStore = defineStore('chat', () => {
     const msg = messages.value[idx]
     const parts: StepParts = msg.parts ? { ...msg.parts } : { toolCalls: [] }
     parts.stepFinish = { reason: reason as any }
+    messages.value[idx] = { ...msg, parts }
+    // 该 step 结束 → 其思维链也已完成,清活跃标记让 ReasoningBlock 自动收起
+    if (streamingReasoningMsgId.value === messageID) {
+      streamingReasoningMsgId.value = null
+    }
+  }
+
+  /** 思维链 part:写 parts.reasoning = {text}(streaming 期间为累计文本,完成时定稿) */
+  function upsertReasoning(messageID: string, part: any) {
+    const idx = messages.value.findIndex((m) => m.opencodeMessageId === messageID)
+    if (idx < 0) return
+    const msg = messages.value[idx]
+    const parts: StepParts = msg.parts ? { ...msg.parts } : { toolCalls: [] }
+    parts.reasoning = { text: typeof part.text === 'string' ? part.text : '' }
+    messages.value[idx] = { ...msg, parts }
+  }
+
+  /** 思维链流式增量:逐 token 累积到 parts.reasoning.text(通过 δ 推理→appending→滚动,非正文→隐藏) */
+  function appendReasoningDelta(messageID: string, partID: string, delta: string) {
+    streamingReasoningMsgId.value = messageID
+    const idx = messages.value.findIndex((m) => m.opencodeMessageId === messageID)
+    if (idx < 0) return
+    const msg = messages.value[idx]
+    const parts: StepParts = msg.parts ? { ...msg.parts } : { toolCalls: [] }
+    const prev = parts.reasoning?.text || ''
+    parts.reasoning = { text: prev + delta }
     messages.value[idx] = { ...msg, parts }
   }
 
@@ -1070,7 +1132,8 @@ export const useChatStore = defineStore('chat', () => {
   return {
     sessions, archivedSessions, agents, currentSessionId, currentSession, messages, turns, flow, summaries, streamingText,
     streamingMessageId, isStreaming, streamingStuckSeconds, streamingElapsedSeconds, runningActivity,
-    hasPendingInteraction, connected, reconnecting, forceReconnect,
+    streamingReasoningMsgId,
+    hasPendingInteraction, connected, reconnecting, forceReconnect, agentStarting,
     changedFilePaths,
     searchResults, searching, searchSessions,
     availableModels, selectedProviderId, selectedModelId,

@@ -79,6 +79,11 @@ public class OpencodeInstanceEventConsumer {
     /** messageID → 上次落库时间戳(毫秒) */
     private final ConcurrentHashMap<String, Long> lastTextPersistAt = new ConcurrentHashMap<>();
 
+    /** 思维链(reasoning part)节流缓冲:messageID → {sessionID, 最新思维链文本};与文本同理,避免每 token 重写 parts 列 */
+    private final ConcurrentHashMap<String, TextBuffer> pendingReasoning = new ConcurrentHashMap<>();
+    /** messageID → 上次思维链落库时间戳(毫秒) */
+    private final ConcurrentHashMap<String, Long> lastReasoningPersistAt = new ConcurrentHashMap<>();
+
     private record TextBuffer(String sessionID, String text) {}
 
 public OpencodeInstanceEventConsumer(WebClient instanceClient, OpencodeEventRouter router,
@@ -206,6 +211,9 @@ public OpencodeInstanceEventConsumer(WebClient instanceClient, OpencodeEventRout
                     if (part != null && "text".equals(part.path("type").asText("")) && part.has("messageID")) {
                         // 文本 part:节流落库(中间态进内存,超间隔写一次),而非每条重写整段 content
                         bufferText(sessionID, part.get("messageID").asText(), part.path("text").asText(""));
+                    } else if (part != null && "reasoning".equals(part.path("type").asText("")) && part.has("messageID")) {
+                        // 思维链 part:同样节流落库,写 parts.reasoning.text
+                        bufferReasoning(sessionID, part.get("messageID").asText(), part.path("text").asText(""));
                     } else {
                         chatMessageService.upsertPartFromEvent(sessionID, properties);
                     }
@@ -335,6 +343,33 @@ public OpencodeInstanceEventConsumer(WebClient instanceClient, OpencodeEventRout
         }
     }
 
+    // ============ 思维链落库节流(与文本同理) ============
+
+    private void bufferReasoning(String sessionID, String messageID, String text) {
+        if (text.isBlank()) {
+            return;
+        }
+        pendingReasoning.put(messageID, new TextBuffer(sessionID, text));
+        long now = System.currentTimeMillis();
+        Long last = lastReasoningPersistAt.getOrDefault(messageID, 0L);
+        if (now - last >= TEXT_PERSIST_MIN_INTERVAL_MS) {
+            flushReasoning(messageID);
+        }
+    }
+
+    private void flushReasoning(String messageID) {
+        TextBuffer buf = pendingReasoning.remove(messageID);
+        if (buf == null) {
+            return;
+        }
+        lastReasoningPersistAt.put(messageID, System.currentTimeMillis());
+        try {
+            chatMessageService.upsertStreamingReasoning(buf.sessionID, messageID, buf.text);
+        } catch (Exception e) {
+            log.warn("persist streamed reasoning failed (userId={} messageID={}): {}", userId, messageID, e.toString());
+        }
+    }
+
     /** message.updated 定稿:flush 该消息残留的节流文本 */
     private void flushTextForMessage(String sessionID, JsonNode properties) {
         JsonNode info = properties.has("info") ? properties.get("info") : properties;
@@ -345,6 +380,9 @@ public OpencodeInstanceEventConsumer(WebClient instanceClient, OpencodeEventRout
         if (pendingTexts.containsKey(messageID)) {
             flushText(messageID);
         }
+        if (pendingReasoning.containsKey(messageID)) {
+            flushReasoning(messageID);
+        }
     }
 
     private void flushAllPendingTexts() {
@@ -353,6 +391,13 @@ public OpencodeInstanceEventConsumer(WebClient instanceClient, OpencodeEventRout
                 flushText(messageID);
             } catch (Exception e) {
                 log.warn("flush pending text failed (userId={} messageID={}): {}", userId, messageID, e.toString());
+            }
+        }
+        for (String messageID : new java.util.HashSet<>(pendingReasoning.keySet())) {
+            try {
+                flushReasoning(messageID);
+            } catch (Exception e) {
+                log.warn("flush pending reasoning failed (userId={} messageID={}): {}", userId, messageID, e.toString());
             }
         }
     }

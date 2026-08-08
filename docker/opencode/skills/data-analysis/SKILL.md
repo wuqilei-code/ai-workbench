@@ -16,11 +16,7 @@ Analyze tabular data with the **preinstalled** `pandas` / `numpy` / `matplotlib`
 
 - Preinstalled and importable directly: `pandas`, `numpy`, `matplotlib`, `openpyxl`, `lxml`, `Pillow`, `scipy` is **not** installed — do not import it.
 - `pip` / `ensurepip` are removed. Do not attempt to install anything.
-- CJK fonts come from `fonts-noto-cjk`. Locate before hardcoding:
-  ```bash
-  fc-list :lang=zh file family
-  ```
-  Default path: `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc` (family `Noto Sans CJK SC`).
+- CJK fonts come from the bundled TrueType **SimHei** (`/usr/share/fonts/truetype/simhei.ttf`). Use it directly for plotting (noto CJK `.ttc` files are not registered).
 
 ## Reading data
 
@@ -36,12 +32,12 @@ Configure at the top of every plotting script, otherwise labels render as tofu b
 import matplotlib
 matplotlib.use("Agg")  # headless
 from matplotlib import font_manager
-font_manager.fontManager.addfont("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc")
-matplotlib.rcParams["font.sans-serif"] = ["Noto Sans CJK SC"]
+font_manager.fontManager.addfont("/usr/share/fonts/truetype/simhei.ttf")
+matplotlib.rcParams["font.sans-serif"] = ["SimHei"]
 matplotlib.rcParams["axes.unicode_minus"] = False  # minus sign renders correctly
 ```
 
-If `fc-list` shows a different CJK family/path, use that instead. Verify Chinese actually renders before delivering: render the figure, then check it is non-empty; when in doubt, re-open the PNG and inspect.
+Verify Chinese actually renders before delivering: render the figure, then check it is non-empty; when in doubt, re-open the PNG and inspect.
 
 ## Chart conventions
 

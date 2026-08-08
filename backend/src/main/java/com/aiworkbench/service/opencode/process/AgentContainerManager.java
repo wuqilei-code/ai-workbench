@@ -41,6 +41,12 @@ public class AgentContainerManager {
     private static final int SERVE_PORT = 4096;
     private static final Duration CMD_TIMEOUT = Duration.ofSeconds(30);
 
+    /** NSS wrapper 库路径(镜像已装 libnss-wrapper):拦截 getpwuid/getgrgid,让以 --user uid 运行
+     *  的 agent 进程能解析自身账户(否则 ssh/git 等 NSS 客户端报 "No user exists for uid xxx") */
+    private static final String NSS_WRAPPER_SO = "/usr/lib/x86_64-linux-gnu/libnss_wrapper.so";
+    /** 每用户 NSS 覆盖文件目录(位于 per-user data root 下,已 bind 挂载进 agent 容器,路径一致) */
+    private static final String NSS_DIR = "nss";
+
     private final OpencodeProperties props;
     /** app 容器自身卷挂载解析结果(/workspace 与 /data 的宿主源路径→容器内 dest),首次解析后缓存 */
     private volatile Map<String, String> selfVolumes;
@@ -65,6 +71,7 @@ public class AgentContainerManager {
             remove(name);
         }
         ensureUserDirs(userId, uid, gid);
+        writeNssOverride(userId, uid, gid);
         List<String> args = new ArrayList<>(List.of(
                 "docker", "create",
                 "--name", name,
@@ -84,6 +91,14 @@ public class AgentContainerManager {
             args.add("-e");
             args.add(e.getKey() + "=" + e.getValue());
         }
+        // NSS wrapper:让以 --user uid 运行的进程能解析自身账户(见 writeNssOverride 说明)。
+        // LD_PRELOAD 在创建时注入,容器内 ssh/git/python 等 NSS 客户端即正常。
+        args.add("-e");
+        args.add("LD_PRELOAD=" + NSS_WRAPPER_SO);
+        args.add("-e");
+        args.add("NSS_WRAPPER_PASSWD=" + nssFile(userId, uid, "passwd"));
+        args.add("-e");
+        args.add("NSS_WRAPPER_GROUP=" + nssFile(userId, uid, "group"));
         args.add("--entrypoint");
         args.add("opencode");
         args.add(props.getAgentImage());
@@ -295,6 +310,38 @@ public class AgentContainerManager {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    // ============ NSS wrapper:让 agent 容器内进程能解析自身 uid 账户 ============
+
+    /**
+     * 为当前用户生成 NSS wrapper 覆盖文件(passwd/group),使以 {@code --user uid} 运行的 agent 容器进程
+     * (ssh/git/python 等走 NSS getpwuid/getgrgid 的客户端)能解析自身账户。
+     * <p>
+     * 容器以非 root uid 运行,无法写入镜像 /etc/passwd(overlay 只读层);用 libnss-wrapper +
+     * LD_PRELOAD 让 NSS 改从本文件读取。文件位于 per-user data root 下(已 bind 挂载进 agent 容器,
+     * 容器内路径一致),目录 0755 + 文件 0644 保证非 root uid 可读。
+     */
+    private void writeNssOverride(Long userId, int uid, int gid) {
+        try {
+            Path nssDir = Paths.get(props.getPerUserDataRoot(), String.valueOf(uid), NSS_DIR);
+            Files.createDirectories(nssDir);
+            String acct = "aiwb-" + userId;
+            String home = Paths.get(props.getPerUserDataRoot(), String.valueOf(uid), "home").toString();
+            String passwd = acct + ":x:" + uid + ":" + gid + ":" + acct + ":" + home + ":/bin/sh\n";
+            String group = acct + ":x:" + gid + ":\n";
+            Files.writeString(nssDir.resolve("passwd"), passwd, StandardCharsets.UTF_8);
+            Files.writeString(nssDir.resolve("group"), group, StandardCharsets.UTF_8);
+            run(List.of("chmod", "0755", nssDir.toString()));
+            run(List.of("chmod", "0644", nssDir.resolve("passwd").toString(), nssDir.resolve("group").toString()));
+        } catch (IOException e) {
+            log.warn("write NSS override failed for user {} (uid={}): {}", userId, uid, e.toString());
+        }
+    }
+
+    /** agent 容器内 NSS 覆盖文件路径(per-user data root 已 bind 挂载,路径两端一致)。 */
+    private String nssFile(Long userId, int uid, String name) {
+        return Paths.get(props.getPerUserDataRoot(), String.valueOf(uid), NSS_DIR, name).toString();
     }
 
     private void remove(String name) {
