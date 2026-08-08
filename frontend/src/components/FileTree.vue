@@ -82,7 +82,10 @@ async function load(path = '') {
     const all = await fileApi.list(abs(path))
     // 隐藏 git/opencode 系统内部文件:技能有专用「技能」标签访问,
     // .git/.gitignore 是 git plumbing,用户不应在文件树手动触碰,避免与用户文件交叉。
-    nodes.value = all.filter((n) => n.name !== '.git' && n.name !== '.opencode' && n.name !== '.gitignore')
+    // tasks/ 是后台任务运行目录,由右侧抽屉「任务」标签专门管理,同样从文件树隐藏。
+    nodes.value = all.filter(
+      (n) => n.name !== '.git' && n.name !== '.opencode' && n.name !== '.gitignore' && n.name !== 'tasks',
+    )
     currentPath.value = path
   } catch (e: any) { msg.error(e.message) }
   finally { loading.value = false }

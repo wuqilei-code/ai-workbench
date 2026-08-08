@@ -57,7 +57,7 @@ Generate Word / PowerPoint / Excel / PDF / CSV deliverables in the sandbox using
 3. Write the generator script, run it, and verify the output file exists and is non-empty. Open/inspect it when cheap (e.g. `docx`/`pptx`/`xlsx` are zips; unzip and eyeball the XML if a rendering detail is suspect).
 4. Clean up: after the final file is generated and verified, delete intermediate generator scripts (per chat.md's "Intermediate script cleanup" rule — do not delete when the script itself is the deliverable).
 5. Declare deliverables with one `[结果文件] <relative-path>` line per file at the end of the reply (per chat.md's "Deliverable declaration" rule).
-6. When a reply produces **2 or more** deliverables, first create a `topic_date` subdirectory (e.g. `大模型发展报告_20260808`) and write everything into it so the bundled zip extracts as one folder.
+6. When a reply produces **2 or more** deliverables, first create a `deliverables/<topic>_<date>` subdirectory (e.g. `deliverables/大模型发展报告_20260808`) and write everything into it so the bundled zip extracts as one folder. Keep the workspace root free of loose files (see chat.md "Workspace layout").
 
 ## Rules
 

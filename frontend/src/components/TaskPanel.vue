@@ -1,0 +1,190 @@
+<script setup lang="ts">
+import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
+import { useMessage } from 'naive-ui'
+import { chatApi } from '@/api/chat'
+import type { TaskInfo } from '@/types'
+
+const msg = useMessage()
+const tasks = ref<TaskInfo[]>([])
+const loading = ref(false)
+const error = ref('')
+const expandedId = ref<string | null>(null)
+const detailLogs = ref<Record<string, string>>({})
+const detailLoading = ref<Record<string, boolean>>({})
+
+/** 当前是否还有运行/等待中的任务(决定轮询节奏) */
+const hasActive = computed(() => tasks.value.some((t) => t.status === 'running' || t.status === 'pending'))
+
+let timer: ReturnType<typeof setInterval> | null = null
+
+async function refresh() {
+  try {
+    error.value = ''
+    const list = await chatApi.listTasks()
+    tasks.value = list
+    // 若正在查看的任务还运行着,顺带刷新日志
+    if (expandedId.value) {
+      const t = list.find((x) => x.id === expandedId.value)
+      if (t && t.status === 'running') await loadLog(expandedId.value)
+    }
+  } catch (e: any) {
+    error.value = e?.message || '加载任务失败'
+  } finally {
+    loading.value = false
+  }
+}
+
+function startPolling() {
+  stopPolling()
+  // 有空闲任务时 5s 轮询,否则 15s 兜底(面板打开期间也保持低频率刷新)
+  timer = setInterval(refresh, hasActive.value ? 5000 : 15000)
+}
+
+function stopPolling() {
+  if (timer) {
+    clearInterval(timer)
+    timer = null
+  }
+}
+
+async function toggle(id: string) {
+  expandedId.value = expandedId.value === id ? null : id
+  if (expandedId.value) {
+    await loadLog(expandedId.value)
+  }
+}
+
+async function loadLog(id: string) {
+  if (detailLogs.value[id] !== undefined && tasks.value.find((t) => t.id === id)?.status !== 'running') return
+  detailLoading.value[id] = true
+  try {
+    detailLogs.value[id] = await chatApi.taskLog(id, 12000)
+  } catch (e: any) {
+    detailLogs.value[id] = '(读取日志失败: ' + (e?.message || 'unknown') + ')'
+  } finally {
+    delete detailLoading.value[id]
+  }
+}
+
+function formatTime(ms: number): string {
+  if (!ms) return '-'
+  const d = new Date(ms)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getMonth() + 1}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+function formatDuration(sec?: number): string {
+  if (sec == null) return '-'
+  if (sec < 60) return `${sec}s`
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`
+  return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`
+}
+
+function statusType(t: TaskInfo): 'default' | 'primary' | 'success' | 'warning' | 'error' {
+  switch (t.status) {
+    case 'running': return 'warning'
+    case 'failed': return 'error'
+    case 'delivered': return 'success'
+    case 'done': return 'success'
+    default: return 'default'
+  }
+}
+
+async function onCleanup(t: TaskInfo) {
+  try {
+    await chatApi.cleanupTask(t.id)
+    msg.success(`已清理任务「${t.id}」的运行文件`)
+    if (expandedId.value === t.id) expandedId.value = null
+    delete detailLogs.value[t.id]
+    await refresh()
+  } catch (e: any) {
+    msg.error(e?.message || '清理失败')
+  }
+}
+
+onMounted(() => {
+  loading.value = true
+  refresh()
+  startPolling()
+})
+onBeforeUnmount(stopPolling)
+</script>
+
+<template>
+  <div class="task-panel">
+    <div class="panel-head">
+      <span class="hint">tasks/ 后台任务 · {{ hasActive ? '运行中,自动刷新' : '已空闲' }}</span>
+      <n-button size="tiny" quaternary circle title="刷新" @click="refresh">↻</n-button>
+    </div>
+
+    <n-spin :show="loading" size="small" style="display: block; margin: 24px auto">
+      <div v-if="error" class="task-error">{{ error }}</div>
+      <div v-else-if="!tasks.length" class="task-empty">暂无后台任务</div>
+      <div v-else class="task-list">
+        <div v-for="t in tasks" :key="t.id" class="task-item" :class="{ active: expandedId === t.id }">
+          <div class="task-row" @click="toggle(t.id)">
+            <span class="task-id" :title="t.id">{{ t.id }}</span>
+            <n-tag size="tiny" :type="statusType(t)" :bordered="false">
+              <template v-if="t.status === 'running'" #icon><n-spin :size="10" class="mini-spin" /></template>
+              {{ t.statusText }}
+            </n-tag>
+            <span class="task-time" :title="t.delivered ? '已交付' : undefined">
+              {{ formatTime(t.startedAt) }}<template v-if="t.runningSeconds != null"> · {{ formatDuration(t.runningSeconds) }}</template>
+            </span>
+            <span class="caret">{{ expandedId === t.id ? '▾' : '▸' }}</span>
+          </div>
+          <div v-if="expandedId === t.id" class="task-detail">
+            <div v-if="t.doneContent" class="task-done">{{ t.doneContent }}</div>
+            <div class="log-box">
+              <div v-if="detailLoading[t.id]" class="log-loading">加载日志…</div>
+              <pre v-else-if="detailLogs[t.id] !== undefined" class="log-text">{{ detailLogs[t.id] || '(日志为空)' }}</pre>
+            </div>
+            <div class="task-actions">
+              <n-button size="tiny" quaternary @click="loadLog(t.id)">刷新日志</n-button>
+              <n-button size="tiny" quaternary type="error" @click="onCleanup(t)">清理</n-button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </n-spin>
+  </div>
+</template>
+
+<style scoped>
+.task-panel { display: flex; flex-direction: column; gap: 8px; }
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 2px 0 8px; border-bottom: 1px solid #2a2a2e;
+}
+.panel-head .hint { font-size: 12px; color: #888; }
+.task-error { color: #e88080; font-size: 12px; padding: 8px 0; }
+.task-empty { color: #888; font-size: 12px; padding: 16px 0; text-align: center; }
+.task-list { display: flex; flex-direction: column; gap: 6px; }
+.task-item {
+  border: 1px solid #2a2a2e; border-radius: 6px; background: #202024; overflow: hidden;
+}
+.task-item.active { border-color: #3d4a66; }
+.task-row {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px; cursor: pointer;
+}
+.task-row:hover { background: #26262a; }
+.task-id {
+  font-size: 12px; font-weight: 600; color: #e8c547; font-family: monospace;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px;
+}
+.task-time { margin-left: auto; font-size: 11px; color: #888; white-space: nowrap; }
+.caret { color: #666; font-size: 11px; }
+.mini-spin { margin-right: 4px; }
+.task-detail { border-top: 1px solid #2a2a2e; padding: 8px 10px; }
+.task-done { font-size: 12px; color: #bbb; margin-bottom: 6px; word-break: break-all; }
+.log-box {
+  background: #16161a; border: 1px solid #2a2a2e; border-radius: 4px;
+  max-height: 260px; overflow-y: auto;
+}
+.log-loading { color: #888; font-size: 12px; padding: 8px; }
+.log-text {
+  margin: 0; padding: 8px; font-size: 11px; line-height: 1.5; color: #9ecb9e;
+  font-family: Consolas, Menlo, monospace; white-space: pre-wrap; word-break: break-all;
+}
+.task-actions { display: flex; justify-content: flex-end; gap: 4px; padding-top: 6px; }
+</style>

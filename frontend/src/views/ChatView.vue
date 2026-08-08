@@ -8,6 +8,7 @@ import AssistantTurn from '@/components/AssistantTurn.vue'
 import ChatInput from '@/components/ChatInput.vue'
 import ModelSelector from '@/components/ModelSelector.vue'
 import FileTree from '@/components/FileTree.vue'
+import TaskPanel from '@/components/TaskPanel.vue'
 import ChangeSummaryCard from '@/components/ChangeSummaryCard.vue'
 import { chatApi } from '@/api/chat'
 import type { MessageVo, SkillInfo } from '@/types'
@@ -311,25 +312,28 @@ const showThinkingFallback = computed(
           <n-tab-pane name="files" tab="文件">
             <FileTree :changed-paths="Array.from(chat.changedFilePaths)" />
           </n-tab-pane>
-          <n-tab-pane name="skills" tab="技能">
-            <n-collapse :default-expanded-names="[]" :bordered="false" class="builtin-collapse">
-              <n-collapse-item name="builtin" title="内置技能">
-                <template #header-extra>
-                  <span class="builtin-note">{{ builtinLoading ? '加载中…' : builtinSkills.length + ' 个 · 随系统内置,只读' }}</span>
-                </template>
-                <div v-if="builtinLoading" class="builtin-empty">加载中…</div>
-                <div v-else-if="builtinSkills.length" class="builtin-list">
-                  <div v-for="s in builtinSkills" :key="s.name" class="builtin-item">
-                    <span class="builtin-name">{{ s.name }}</span>
-                    <span class="builtin-desc">{{ s.description }}</span>
+            <n-tab-pane name="skills" tab="技能">
+              <n-collapse :default-expanded-names="[]" :bordered="false" class="builtin-collapse">
+                <n-collapse-item name="builtin" title="内置技能">
+                  <template #header-extra>
+                    <span class="builtin-note">{{ builtinLoading ? '加载中…' : builtinSkills.length + ' 个 · 随系统内置,只读' }}</span>
+                  </template>
+                  <div v-if="builtinLoading" class="builtin-empty">加载中…</div>
+                  <div v-else-if="builtinSkills.length" class="builtin-list">
+                    <div v-for="s in builtinSkills" :key="s.name" class="builtin-item">
+                      <span class="builtin-name">{{ s.name }}</span>
+                      <span class="builtin-desc">{{ s.description }}</span>
+                    </div>
                   </div>
-                </div>
-                <div v-else class="builtin-empty">暂无内置技能</div>
-              </n-collapse-item>
-            </n-collapse>
-            <n-divider style="margin: 10px 0" />
-            <FileTree root=".opencode/skills" skills-mode :changed-paths="Array.from(chat.changedFilePaths)" />
-          </n-tab-pane>
+                  <div v-else class="builtin-empty">暂无内置技能</div>
+                </n-collapse-item>
+              </n-collapse>
+              <n-divider style="margin: 10px 0" />
+              <FileTree root=".opencode/skills" skills-mode :changed-paths="Array.from(chat.changedFilePaths)" />
+            </n-tab-pane>
+            <n-tab-pane name="tasks" tab="任务">
+              <TaskPanel />
+            </n-tab-pane>
         </n-tabs>
       </n-drawer-content>
     </n-drawer>

@@ -71,6 +71,19 @@ export interface SkillInfo {
   description: string
 }
 
+/** 后台任务状态项(「任务」面板展示) */
+export interface TaskInfo {
+  id: string
+  status: 'pending' | 'running' | 'done' | 'failed' | 'delivered'
+  statusText: string
+  doneContent?: string
+  delivered: boolean
+  startedAt: number
+  finishedAt?: number
+  runningSeconds?: number
+  logTail: string
+}
+
 /** 工具调用(part 级,同一 partId 的 pending→running→completed 共用) */
 export interface ToolCall {
   partId?: string

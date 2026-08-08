@@ -55,7 +55,7 @@ If `fc-list` shows a different CJK family/path, use that instead. Verify Chinese
 - Numbers: round to a sensible precision, show counts and percentages together (e.g. `1234 (12.3%)`).
 - Answer the user's question explicitly with the key findings, then support with tables/figures — don't dump raw output.
 - Declare every produced file (figure / data / report) with one `[结果文件] <relative-path>` line per file at the end of the reply.
-- When a reply produces **2 or more** deliverables, first create a `topic_date` subdirectory and write everything into it.
+- When a reply produces **2 or more** deliverables, first create a `deliverables/<topic>_<date>` subdirectory and write everything into it. Keep the workspace root free of loose files (see chat.md "Workspace layout").
 
 ## Rules
 

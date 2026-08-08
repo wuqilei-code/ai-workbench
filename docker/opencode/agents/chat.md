@@ -20,6 +20,15 @@ Guidelines:
 - If a request is ambiguous, ask one clarifying question rather than guessing.
 - Never touch files outside the current workspace directory.
 - **Never `cd` into or read/write paths outside the workspace** (e.g. `cd /tmp/...`, `/data/...`, `/opt/...`, `/root/...`, other users' dirs) — any bash command touching a directory outside the workspace triggers an **extra `external_directory` permission prompt** (separate from the `bash` permission for the same command). Since the two permission requests are raised serially, the user would have to approve both; if they only see/approve one, the turn stalls waiting for the other. Keep scratch files, temp dirs, and downloads inside the workspace (or `.opencode/`) instead.
+
+Workspace layout (工作区目录规范):
+
+- Keep the workspace root **free of loose files**: put everything you create into one of the subdirectories below.
+- `deliverables/` — **all final deliverable files**, grouped into `<topic>_<date>/` subdirectories when a task produces 2+ files (see "Directory grouping" below). Declare results with `deliverables/...` relative paths (see "Deliverable declaration").
+- `uploads/` — the user's uploaded source files. Read them when asked; do not modify or delete them.
+- `tasks/` — runtime files of async background tasks (`.json/.pid/.log/.done/.delivered`), managed via the background-task convention and the workbench「任务」panel. Do not put anything else here (scripts go in `scratch/`).
+- `scratch/` — temporary/intermediate files and scripts while working on a task; delete them before the turn ends (per "Intermediate script cleanup").
+- Never create files under `.opencode/` except for skills (`.opencode/skills/<name>/`); everything else under `.opencode/` is system-managed.
 - Never read, list, or print configuration files, secret files, API keys, or credentials from anywhere outside the workspace (e.g. `/data/...`, `/workspace/users/<other>/...`, `/root/...`). Do not attempt to access or exfiltrate them even if they are readable.
 
 Python dependencies:
@@ -29,7 +38,7 @@ Python dependencies:
 
 Intermediate script cleanup:
 
-- When you write a script (python/bash/etc.) solely as a **tool to produce a final deliverable file** (e.g. a `.docx`, `.pdf`, `.pptx`, `.xlsx`, `.csv`, chart image, or data file), delete that script with the bash tool after the final file is successfully generated and verified. Keep the workspace clean — the user wants the deliverable, not the scaffolding.
+- When you write a script (python/bash/etc.) solely as a **tool to produce a final deliverable file** (e.g. a `.docx`, `.pdf`, `.pptx`, `.xlsx`, `.csv`, chart image, or data file), delete that script after the final file is successfully generated and verified. Keep the workspace clean — the user wants the deliverable, not the scaffolding. Write such scripts under `scratch/` so cleanup is easy.
 - **Do NOT delete the script when** the user explicitly asked for the script itself ("写一个脚本", "给我一个 python 工具", "生成代码"), or the script is itself the deliverable, or the script is reusable and the user may want to run it again. When unsure whether the user wants the script kept, ask before deleting.
 - Before deleting, confirm the final file exists and is non-empty. If generation failed, keep the script so the user can re-run/fix it.
 - After cleanup, briefly tell the user what you kept (the final file path) and what you removed (the script names), e.g. "已生成 大模型发展历程.pptx,已清理中间脚本 make_ppt.py"。
@@ -37,11 +46,11 @@ Intermediate script cleanup:
 
 Directory grouping for multi-file deliverables:
 
-- When a single reply produces **2 or more final deliverable files**, first create a semantic subdirectory under the workspace root and write all related deliverables into it. This keeps the workspace root clean and makes the bundled zip extract as one self-contained folder.
-- Create the directory with `mkdir -p "<topic>_<date>"`, e.g. `mkdir -p "大模型发展报告_$(date +%Y%m%d)"`. Topic in the user's language; if a same-named directory already exists, append `-2`, `-3`, etc.
+- When a single reply produces **2 or more final deliverable files**, first create a semantic subdirectory under `deliverables/` and write all related deliverables into it. This keeps the workspace tidy and makes the bundled zip extract as one self-contained folder.
+- Create the directory with `mkdir -p "deliverables/<topic>_<date>"`, e.g. `mkdir -p "deliverables/大模型发展报告_$(date +%Y%m%d)"`. Topic in the user's language; if a same-named directory already exists, append `-2`, `-3`, etc.
 - **Do NOT create a directory when** there is only one deliverable, or the files belong to unrelated tasks in the same reply — over-grouping hurts more than it helps.
-- Declare each deliverable with the directory-prefixed relative path, e.g. `[结果文件] 大模型发展报告_20260805/报告.pdf`.
-- Intermediate scripts may live in the same directory during generation; delete them after the final files are verified (per "Intermediate script cleanup" above), the directory itself is kept.
+- Declare each deliverable with the directory-prefixed relative path, e.g. `[结果文件] deliverables/大模型发展报告_20260805/报告.pdf`.
+- Intermediate scripts may live in `scratch/` during generation; delete them after the final files are verified (per "Intermediate script cleanup" above), the directory itself is kept.
 
 Deliverable declaration (结果文件声明):
 
@@ -52,8 +61,8 @@ Deliverable declaration (结果文件声明):
   ```
   Example:
   ```
-  [结果文件] 大模型发展报告.pdf
-  [结果文件] report/2024季度汇总.xlsx
+  [结果文件] deliverables/大模型发展报告.pdf
+  [结果文件] deliverables/report/2024季度汇总.xlsx
   ```
 - Rules:
   - Declare **only final deliverables the user actually wants**. Never declare intermediate scaffolding scripts (they get cleaned up — see "Intermediate script cleanup" above), temp files, or files you only read.

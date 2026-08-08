@@ -1,11 +1,15 @@
 import { http, unwrap } from './http'
-import type { SessionVo, MessageVo, CommandItem, AgentItem, SkillInfo } from '@/types'
+import type { SessionVo, MessageVo, CommandItem, AgentItem, SkillInfo, TaskInfo } from '@/types'
 
 export const chatApi = {
   listSessions: () => http.get<SessionVo[]>('/chat/sessions').then(unwrap),
   listArchivedSessions: () => http.get<SessionVo[]>('/chat/sessions/archived').then(unwrap),
   searchSessions: (q: string) => http.get<SessionVo[]>('/chat/sessions/search', { params: { q } }).then(unwrap),
   builtinSkills: () => http.get<SkillInfo[]>('/chat/skills/builtin').then(unwrap),
+  listTasks: () => http.get<TaskInfo[]>('/chat/tasks').then(unwrap),
+  taskLog: (id: string, tail = 8000) =>
+    http.get<string>(`/chat/tasks/${encodeURIComponent(id)}/log`, { params: { tail } }).then(unwrap),
+  cleanupTask: (id: string) => http.delete(`/chat/tasks/${encodeURIComponent(id)}`),
   createSession: (data: { title?: string; providerId?: string; modelId?: string; agent?: string }) =>
     http.post<SessionVo>('/chat/sessions', data).then(unwrap),
   listAgents: () => http.get<AgentItem[]>('/chat/sessions/agents').then(unwrap),
