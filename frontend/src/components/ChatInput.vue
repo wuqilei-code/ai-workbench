@@ -102,6 +102,34 @@ interface Attachment { name: string; path: string }
 const attachments = ref<Attachment[]>([])
 const uploading = ref(false)
 
+/** 数据文件扩展名:检测到这些文件时展示数据问答引导 */
+const DATA_EXT = ['.csv', '.xlsx', '.xls', '.json', '.tsv', '.txt']
+const dataFiles = computed(() =>
+  attachments.value.filter((a) => {
+    const lower = a.name.toLowerCase()
+    return DATA_EXT.some((e) => lower.endsWith(e))
+  }),
+)
+const dataSamples = computed(() => {
+  if (!dataFiles.value.length) return []
+  const first = dataFiles.value[0].name
+  return [
+    `分析 ${first} 的数据结构,告诉我有哪些字段`,
+    `对 ${first} 做整体数据概览(行数/字段/常见值分布)`,
+    `从 ${first} 中找出最值得关注的规律或异常`,
+    `基于 ${first} 生成一份数据分析报告`,
+  ]
+})
+/** 点击示例:把示例问题填入输入框(附件仍在,发送时会带文件路径) */
+function applySample(sample: string) {
+  text.value = sample
+  nextTick(() => {
+    onInput()
+    inputRef.value?.focus()
+    inputRef.value?.setSelectionRange(text.value.length, text.value.length)
+  })
+}
+
 /** hasPending:AI 真的在等用户输入(question/permission),用于占位文案与发送拦截 */
 const hasPending = computed(() => chat.hasPendingInteraction)
 
@@ -334,6 +362,19 @@ async function startNewChat() {
       </span>
     </div>
 
+    <!-- 数据问答引导卡片:上传数据文件(CSV/Excel/JSON)后出现,示例提问一键填入 -->
+    <div v-if="dataFiles.length" class="data-guide">
+      <div class="dg-title">📊 已识别 {{ dataFiles.length }} 个数据文件,可以这样问:</div>
+      <div class="dg-samples">
+        <span
+          v-for="s in dataSamples"
+          :key="s"
+          class="dg-sample"
+          @click="applySample(s)"
+        >{{ s }}</span>
+      </div>
+    </div>
+
     <input ref="fileInputRef" type="file" multiple class="hidden-input" @change="onFileChange" />
 
     <!-- 输入框:无边框,全宽 -->
@@ -483,6 +524,24 @@ async function startNewChat() {
 .att-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .att-remove { cursor: pointer; opacity: .7; padding: 0 2px; }
 .att-remove:hover { opacity: 1; color: var(--err); }
+
+/* 数据问答引导卡片 */
+.data-guide {
+  background: var(--accent-soft);
+  border: 1px solid rgba(107, 138, 253, 0.3);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
+.dg-title { font-size: 12px; font-weight: 600; color: var(--accent-text); margin-bottom: 6px; }
+.dg-samples { display: flex; flex-wrap: wrap; gap: 6px; }
+.dg-sample {
+  font-size: 12px; color: var(--text-2);
+  background: var(--surface); border: 1px solid var(--border-soft);
+  border-radius: 12px; padding: 3px 10px; cursor: pointer;
+  transition: border-color .15s, color .15s;
+}
+.dg-sample:hover { border-color: var(--accent-text); color: var(--accent-text); }
 
 /* 输入框:柔和、无生硬边框 */
 .textarea {
