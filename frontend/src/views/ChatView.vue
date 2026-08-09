@@ -11,12 +11,14 @@ import TaskPanel from '@/components/TaskPanel.vue'
 import ChangeSummaryCard from '@/components/ChangeSummaryCard.vue'
 import { chatApi } from '@/api/chat'
 import type { MessageVo, SkillInfo } from '@/types'
+import type { VirtualListInst } from 'naive-ui'
+import type { FlowItem, SummaryItem, Turn } from '@/utils/turns'
 
 const route = useRoute()
 const router = useRouter()
 const chat = useChatStore()
 const msg = useMessage()
-const scrollRef = ref<HTMLDivElement | null>(null)
+const virtualListRef = ref<VirtualListInst | null>(null)
 const showFiles = ref(true)
 
 // ---------- 技能面板(内置全局技能只读列表)----------
@@ -74,16 +76,25 @@ function closeFind() {
   findQuery.value = ''
   findIndex.value = 0
 }
+
+/** 滚动虚拟列表到指定 turn 并短暂高亮(虚拟列表只渲染可视项,须按 key 定位)。 */
+function locateTurn(turnId: string) {
+  const vl = virtualListRef.value
+  if (!vl) return
+  const idx = virtualItems.value.findIndex(
+    (it) => it.kind === 'turn' && it.turn.id === turnId,
+  )
+  if (idx >= 0) vl.scrollTo({ index: idx, position: 'top' })
+  flashedTurnId.value = turnId
+  if (_flashTimer) clearTimeout(_flashTimer)
+  _flashTimer = setTimeout(() => { flashedTurnId.value = null }, 1600)
+}
+
 function navigateFind(dir: number) {
   const total = findMatches.value.length
   if (!total) return
   findIndex.value = (findIndex.value + dir + total) % total
-  const m = findMatches.value[findIndex.value]
-  const el = document.getElementById('find-turn-' + m.turnId)
-  el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  flashedTurnId.value = m.turnId
-  if (_flashTimer) clearTimeout(_flashTimer)
-  _flashTimer = setTimeout(() => { flashedTurnId.value = null }, 1600)
+  locateTurn(findMatches.value[findIndex.value].turnId)
 }
 
 // ---------- 全局快捷键 ----------
@@ -122,11 +133,7 @@ async function onOpenSession(target: { sessionId: number; messageId?: number }) 
 async function flashToMessage(messageId?: number) {
   if (!messageId) return
   const flash = (turnId: string) => {
-    const el = document.getElementById('find-turn-' + turnId)
-    el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    flashedTurnId.value = turnId
-    if (_flashTimer) clearTimeout(_flashTimer)
-    _flashTimer = setTimeout(() => { flashedTurnId.value = null }, 1600)
+    locateTurn(turnId)
   }
   for (let i = 0; i < 40; i++) {
     const turn = chat.turns.find((t) => t.userMessage?.id === messageId)
@@ -150,8 +157,11 @@ onBeforeUnmount(() => {
 
 function scrollToBottom() {
   nextTick(() => {
-    const el = scrollRef.value
-    if (el) el.scrollTop = el.scrollHeight
+    const vl = virtualListRef.value
+    if (!vl) return
+    const n = virtualItems.value.length
+    if (!n) return
+    vl.scrollTo({ index: n - 1, position: 'bottom' })
   })
 }
 watch(() => chat.messages.length, scrollToBottom)
@@ -190,6 +200,36 @@ const showThinkingFallback = computed(
     !activeTurnExists.value &&
     !lastTurnHasContent.value,
 )
+
+// ---------- 虚拟列表 ----------
+
+/** 虚拟列表每项的 key:turn 用 turn.id,summary 用 sha/at/长度(与原 v-for key 一致) */
+type VirtualListItem =
+  | { key: string; kind: 'turn'; turn: Turn }
+  | { key: string; kind: 'summary'; summary: SummaryItem }
+  | { key: string; kind: 'streaming'; text: string }
+  | { key: string; kind: 'thinking' }
+
+const virtualItems = computed<VirtualListItem[]>(() => {
+  const items: VirtualListItem[] = chat.flow.map((it) => {
+    if (it.kind === 'turn') return { key: 't-' + it.turn.id, kind: 'turn', turn: it.turn }
+    const s = it.summary
+    return {
+      key: 's-' + (s.sha || '') + '-' + (s.at || '') + '-' + s.summary.length,
+      kind: 'summary',
+      summary: s,
+    }
+  })
+  if (showStreamingBubble.value) {
+    items.push({ key: '__streaming__', kind: 'streaming', text: chat.streamingText })
+  } else if (showThinkingFallback.value) {
+    items.push({ key: '__thinking__', kind: 'thinking' })
+  }
+  return items
+})
+
+/** 虚拟列表预估值(px);itemResizable 开启后由 ResizeObserver 实测每项高度修正 */
+const itemSize = 120
 </script>
 
 <template>
@@ -236,30 +276,38 @@ const showThinkingFallback = computed(
 
     <div class="chat-main">
       <div class="chat-col">
-        <div class="chat-body" ref="scrollRef">
+        <div class="chat-body">
           <template v-if="chat.currentSessionId">
-            <div
-              v-for="item in chat.flow"
-              :key="item.kind === 'turn' ? 't-' + item.turn.id : 's-' + (item.summary.sha || '') + '-' + item.summary.at + '-' + item.summary.summary.length"
-              class="flow-item"
-              :id="item.kind === 'turn' ? 'find-turn-' + item.turn.id : undefined"
-              :class="{ 'find-flash': item.kind === 'turn' && flashedTurnId === item.turn.id }"
+            <n-virtual-list
+              ref="virtualListRef"
+              class="chat-virtual"
+              :items="virtualItems"
+              :item-size="itemSize"
+              item-resizable
+              key-field="key"
+              :items-style="{ padding: '24px 20px' }"
             >
-              <template v-if="item.kind === 'turn'">
-                <ChatMessage v-if="item.turn.userMessage" :message="item.turn.userMessage" />
-                <AssistantTurn v-if="item.turn.finalAnswer || item.turn.steps.length" :turn="item.turn" :session-id="chat.currentSessionId" />
+              <template #default="{ item }">
+                <div
+                  v-if="item.kind === 'turn'"
+                  class="flow-item"
+                  :id="'find-turn-' + item.turn.id"
+                  :class="{ 'find-flash': flashedTurnId === item.turn.id }"
+                >
+                  <ChatMessage v-if="item.turn.userMessage" :message="item.turn.userMessage" />
+                  <AssistantTurn v-if="item.turn.finalAnswer || item.turn.steps.length" :turn="item.turn" :session-id="chat.currentSessionId" />
+                </div>
+                <ChangeSummaryCard v-else-if="item.kind === 'summary'" :summary="item.summary" />
+                <ChatMessage
+                  v-else-if="item.kind === 'streaming'"
+                  :message="{ id: -1, role: 'assistant', content: item.text, status: 'streaming' }"
+                  :streaming="true"
+                />
+                <div v-else-if="item.kind === 'thinking'" class="thinking">
+                  <n-spin size="small" /> AI 思考中…
+                </div>
               </template>
-              <ChangeSummaryCard v-else :summary="item.summary" />
-            </div>
-            <!-- 流式兜底:token 已到但 meta 尚未并入 turn -->
-            <ChatMessage
-              v-if="showStreamingBubble"
-              :message="{ id: -1, role: 'assistant', content: chat.streamingText, status: 'streaming' }"
-              :streaming="true"
-            />
-            <div v-if="showThinkingFallback" class="thinking">
-              <n-spin size="small" /> AI 思考中…
-            </div>
+            </n-virtual-list>
           </template>
           <n-empty v-else description="选择左侧会话或点击「新会话」开始" style="margin-top: 80px" />
         </div>
@@ -329,7 +377,8 @@ const showThinkingFallback = computed(
 /* 左右两栏:左=对话区(自适应),右=工作区(固定宽,可收起) */
 .chat-main { flex: 1; display: flex; min-height: 0; }
 .chat-col { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.chat-body { flex: 1; overflow-y: auto; padding: 24px 20px; }
+.chat-body { flex: 1; overflow: hidden; min-height: 0; position: relative; }
+.chat-virtual { height: 100%; }
 .thinking { display: flex; align-items: center; gap: 8px; color: var(--text-3); padding: 8px 0; }
 
 /* 工作区面板 */
