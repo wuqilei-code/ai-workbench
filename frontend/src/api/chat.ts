@@ -1,5 +1,5 @@
 import { http, unwrap } from './http'
-import type { SessionVo, MessageVo, CommandItem, AgentItem, SkillInfo, TaskInfo } from '@/types'
+import type { SessionVo, MessageVo, CommandItem, AgentItem, SkillInfo, TaskInfo, TemplateVo } from '@/types'
 
 export const chatApi = {
   listSessions: () => http.get<SessionVo[]>('/chat/sessions').then(unwrap),
@@ -36,4 +36,10 @@ export const chatApi = {
     http.get<CommandItem[]>(`/chat/sessions/${sessionId}/commands`).then(unwrap),
   runCommand: (sessionId: number, data: { command: string; arguments?: string }) =>
     http.post(`/chat/sessions/${sessionId}/commands`, data),
+  listTemplates: () => http.get<TemplateVo[]>('/chat/templates').then(unwrap),
+  createTemplate: (data: { title: string; category: string; content: string }) =>
+    http.post<TemplateVo>('/chat/templates', data).then(unwrap),
+  updateTemplate: (id: number, data: { title: string; category: string; content: string }) =>
+    http.put<TemplateVo>(`/chat/templates/${id}`, data).then(unwrap),
+  deleteTemplate: (id: number) => http.delete(`/chat/templates/${id}`),
 }

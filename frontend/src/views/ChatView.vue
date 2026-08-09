@@ -6,6 +6,8 @@ import { useMessage } from 'naive-ui'
 import ChatMessage from '@/components/ChatMessage.vue'
 import AssistantTurn from '@/components/AssistantTurn.vue'
 import ChatInput from '@/components/ChatInput.vue'
+import WelcomeBoard from '@/components/WelcomeBoard.vue'
+import TemplateLibrary from '@/components/TemplateLibrary.vue'
 import FileTree from '@/components/FileTree.vue'
 import TaskPanel from '@/components/TaskPanel.vue'
 import ChangeSummaryCard from '@/components/ChangeSummaryCard.vue'
@@ -20,6 +22,19 @@ const chat = useChatStore()
 const msg = useMessage()
 const virtualListRef = ref<VirtualListInst | null>(null)
 const showFiles = ref(true)
+const chatInputRef = ref<InstanceType<typeof ChatInput> | null>(null)
+const templateLibShow = ref(false)
+
+/** 空会话判断:会话已建但尚无任何消息(turn 为空)。 */
+const isNewSession = computed(() => chat.currentSessionId != null && chat.turns.length === 0)
+
+/** 欢迎板/模板库点击:把模板填入输入框供用户补充后发送。 */
+function onScenarioSelect(prompt: string) {
+  chatInputRef.value?.fill(prompt)
+}
+function onTemplateUse(prompt: string) {
+  chatInputRef.value?.fill(prompt)
+}
 
 // ---------- 技能面板(内置全局技能只读列表)----------
 
@@ -257,6 +272,7 @@ const itemSize = 120
       </div>
       <div class="head-right">
         <n-button size="small" quaternary title="会话内查找 (Ctrl+F)" @click="openFind">查找</n-button>
+        <n-button size="small" quaternary title="提示词模板库" @click="templateLibShow = true">模板库</n-button>
         <n-button size="small" quaternary @click="showFiles = !showFiles">工作区</n-button>
       </div>
     </div>
@@ -291,7 +307,7 @@ const itemSize = 120
     <div class="chat-main">
       <div class="chat-col">
         <div class="chat-body">
-          <template v-if="chat.currentSessionId">
+          <template v-if="chat.currentSessionId && !isNewSession">
             <n-virtual-list
               ref="virtualListRef"
               class="chat-virtual"
@@ -324,10 +340,11 @@ const itemSize = 120
               </template>
             </n-virtual-list>
           </template>
+          <WelcomeBoard v-else-if="chat.currentSessionId" @select="onScenarioSelect" />
           <n-empty v-else description="选择左侧会话或点击「新会话」开始" style="margin-top: 80px" />
         </div>
 
-        <ChatInput v-if="chat.currentSessionId" />
+        <ChatInput v-if="chat.currentSessionId" ref="chatInputRef" />
       </div>
 
       <!-- 工作区:常驻右侧面板,可向右收起 -->
@@ -376,6 +393,11 @@ const itemSize = 120
       </div>
     </div>
   </div>
+
+  <TemplateLibrary
+    v-model:show="templateLibShow"
+    @use="onTemplateUse"
+  />
 </template>
 
 <style scoped>

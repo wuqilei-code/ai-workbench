@@ -107,3 +107,34 @@ CREATE TABLE IF NOT EXISTS audit_log (
     KEY idx_audit_user (user_id, created_at),
     KEY idx_audit_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 提示词模板库:user_id NULL 表示系统内置(全员只读),否则为个人自建模板
+CREATE TABLE IF NOT EXISTS prompt_template (
+    id          BIGINT       NOT NULL AUTO_INCREMENT,
+    user_id     BIGINT       NULL,
+    title       VARCHAR(128) NOT NULL,
+    category    VARCHAR(32)  NOT NULL DEFAULT 'other',
+    content     TEXT         NOT NULL,
+    sort_order  INT          NOT NULL DEFAULT 0,
+    created_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (id),
+    KEY idx_pt_user (user_id),
+    KEY idx_pt_category (category)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 内置模板种子(幂等:重复主键冲突被 continue-on-error 忽略)
+INSERT IGNORE INTO prompt_template (id, user_id, title, category, content, sort_order) VALUES
+  (1, NULL, '写周报', '办公', '请帮我把我的工作内容整理成一份周报,包含:本周完成、下周计划、风险与求助三部分。下面是这周我做的事情:\n\n', 10),
+  (2, NULL, '会议纪要', '办公', '请把下面这段讨论整理成会议纪要,包含:会议主题、参会人、讨论要点、结论、待办事项(注明负责人与截止时间)。\n\n', 20),
+  (3, NULL, '写邮件', '办公', '请帮我写一封邮件。我会告诉你收件人、目的和要点,请用专业得体的语气组织成完整邮件,主题清晰、正文分段、结尾礼貌。\n\n', 30),
+  (4, NULL, '总结文档', '办公', '请总结我上传的文档:①核心要点 ②关键数据/结论 ③需要我关注的行动项。保留原始信息,不要编造内容。\n\n', 40),
+  (5, NULL, '数据分析', '办公', '我会给你一份数据文件,请帮我分析并输出:①关键指标 ②主要趋势与结论 ③值得关注的风险点。分析要条理清晰,便于汇报。\n\n', 50),
+  (6, NULL, '调试代码', '开发', '我有一段代码出了问题,请帮我:先定位报错根因,再给出修复方案,最后给出修改后的完整代码。下面是我的代码和报错:\n\n', 60),
+  (7, NULL, '解读报错', '开发', '下面是我的报错信息,请解读:①发生了什么 ②可能的原因 ③具体的修复步骤。回答请通俗易懂,分步说明。\n\n', 70),
+  (8, NULL, '代码审查', '开发', '请审查下面这段代码:指出潜在 bug、性能问题、可读性问题,并给出改进建议和修改后的代码。\n\n', 80),
+  (9, NULL, 'SQL 优化', '开发', '请优化下面这条 SQL:分析执行计划中的潜在问题(如全表扫描、索引缺失、隐式转换),给出优化后的 SQL 和建索引建议。\n\n', 90),
+  (10, NULL, '需求拆解', '开发', '请把下面这个需求拆解成可执行的开发任务:包括模块划分、接口设计要点、表结构建议、测试要点。\n\n', 100),
+  (11, NULL, '头脑风暴', '其他', '请围绕我下面提出的问题做头脑风暴:给出多个有创意的方案,并从可行性、成本、效果三个维度做简要点评,最后给一个推荐。\n\n', 110),
+  (12, NULL, '翻译润色', '其他', '请把下面的文字翻译成[目标语言],注意保持语气自然、专业。如有更好的表达请同时给出润色建议。\n\n', 120);
+

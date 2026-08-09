@@ -83,6 +83,16 @@ export interface SkillInfo {
   description: string
 }
 
+/** 提示词模板项:内置只读,个人自建可编辑 */
+export interface TemplateVo {
+  id: number
+  title: string
+  category: string
+  content: string
+  builtin: boolean
+  updatedAt: string
+}
+
 /** 后台任务状态项(「任务」面板展示) */
 export interface TaskInfo {
   id: string

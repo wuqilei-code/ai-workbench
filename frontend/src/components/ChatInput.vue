@@ -14,6 +14,19 @@ const text = ref('')
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 
+/** 供欢迎页/模板库等外部注入:把提示词填入输入框并聚焦(不自动发送,便于用户补充)。 */
+function fill(prompt: string) {
+  if (!prompt) return
+  text.value = prompt
+  nextTick(() => {
+    onInput()
+    inputRef.value?.focus()
+    inputRef.value?.setSelectionRange(text.value.length, text.value.length)
+  })
+}
+
+defineExpose({ fill })
+
 /** ---- slash 命令菜单 ---- */
 const commands = ref<CommandItem[]>([])
 let commandsLoadedFor = -1
