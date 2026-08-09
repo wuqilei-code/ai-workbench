@@ -162,6 +162,7 @@ async function onClear(s: { id: number; title: string }) {
 function menuOptions(s: { id: number; pinned?: number; title: string }) {
   if (viewArchived.value) {
     return [
+      { label: '总结会话', key: 'summarize' },
       { label: '恢复', key: 'restore' },
       { label: '重命名', key: 'rename' },
       { label: '导出 Markdown', key: 'export-md' },
@@ -173,6 +174,7 @@ function menuOptions(s: { id: number; pinned?: number; title: string }) {
     ]
   }
   return [
+    { label: '总结会话', key: 'summarize' },
     { label: s.pinned ? '取消置顶' : '置顶', key: 'pin' },
     { label: '重命名', key: 'rename' },
     { label: '导出 Markdown', key: 'export-md' },
@@ -186,8 +188,19 @@ function menuOptions(s: { id: number; pinned?: number; title: string }) {
   ]
 }
 
+async function onSummarize(s: { id: number; title: string }) {
+  try {
+    msg.info('正在整理会话内容并生成总结,请稍候…')
+    const s2 = await chat.summarizeSession(s.id, s.title)
+    router.push(`/session/${s2.id}`)
+  } catch (e: any) {
+    msg.error(e?.message || '总结失败')
+  }
+}
+
 function onMenuSelect(key: string, s: { id: number; pinned?: number; title: string }) {
   switch (key) {
+    case 'summarize': onSummarize(s); break
     case 'pin': onPin(s as { id: number; pinned: number }); break
     case 'rename': onRename(s); break
     case 'export-md': onExport(s, 'md'); break

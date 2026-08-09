@@ -324,6 +324,36 @@ export const useChatStore = defineStore('chat', () => {
     URL.revokeObjectURL(url)
   }
 
+  /** 总结指定会话:拉取消息→拼摘要提示词→新开一个会话并把总结请求发过去。
+   *  结果展示在新会话里,不污染原会话。 */
+  async function summarizeSession(id: number, title: string): Promise<SessionVo> {
+    const msgs = await chatApi.listMessages(id, 500)
+    const lines: string[] = []
+    for (const m of msgs) {
+      if (m.role !== 'user' && m.role !== 'assistant') continue
+      const who = m.role === 'user' ? '用户' : 'AI'
+      const content = (m.content || '').trim()
+      if (!content) continue
+      lines.push(`${who}:${content}`)
+    }
+    if (!lines.length) throw new Error('该会话暂无内容可总结')
+    const transcript = lines.join('\n').slice(-60000)
+    const prompt = [
+      '请总结以下这段对话,输出三部分:',
+      '1. 对话主题:本次对话围绕什么问题展开',
+      '2. 关键结论:达成的结论、产出的结果或决定',
+      '3. 待办/建议:尚待跟进的事项或后续建议',
+      '',
+      '--- 对话内容 ---',
+      transcript,
+      '',
+      '请用 Markdown 分节输出,简洁清晰。',
+    ].join('\n')
+    const s = await createSession(`总结 · ${title.slice(0, 40)}`)
+    await sendMessage(prompt)
+    return s
+  }
+
   // ---------- 发消息 + SSE ----------
 
   /** 重连成功后对账:从后端重拉消息,补回断线期间丢失的事件。
@@ -1140,6 +1170,7 @@ export const useChatStore = defineStore('chat', () => {
     manualCollapseOverride, setCollapse,
     loadModels, selectModel, loadSessions, loadArchivedSessions, loadAgents, createSession, switchAgent, selectSession,
     deleteSession, pinSession, archiveSession, unarchiveSession, renameSession, clearSession, exportSession,
+    summarizeSession,
     sendMessage, runCommand, abort, closeStream, forceReleaseStreaming, resumeStreaming,
     reconcileAfterReconnect,
   }
