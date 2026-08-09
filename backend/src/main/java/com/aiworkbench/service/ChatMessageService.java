@@ -381,7 +381,16 @@ public class ChatMessageService {
     /** 终止当前生成 */
     public boolean abort(Long sessionId, Long userId) {
         ChatSession s = chatSessionService.getOwned(sessionId, userId);
-        return opencodeClient.abort(userId, s.getOpencodeSessionId());
+        boolean ok = opencodeClient.abort(userId, s.getOpencodeSessionId());
+        // 用户点击「停止」:opencode 对正在生成的消息补发定稿事件,但卡死消息不会;
+        // 主动把残留 streaming 标记为 aborted,避免 DB/重载后永久转圈。
+        if (ok) {
+            int rows = markStreamingAborted(sessionId);
+            if (rows > 0) {
+                log.info("abort: marked {} stuck streaming message(s) aborted, sessionId={}", rows, sessionId);
+            }
+        }
+        return ok;
     }
 
     /**
@@ -995,6 +1004,55 @@ public class ChatMessageService {
         if (questions == null || !questions.isArray() || questions.isEmpty()) return false;
         JsonNode first = questions.get(0);
         return first.has("header") || (first.has("options") && first.get("options").isArray());
+    }
+
+    /**
+     * 该会话最近的 assistant 消息是否存在<b>在途未完成</b>的 toolCall(status=running)。
+     * <p>
+     * 看门狗判定"工具卡死"用:与 hasUnresolvedPending 不同,这里不需要 pendingPermission——
+     * 典型场景是 bash 工具因后台子进程持有管道而永不返回(如 Flask dev server 的 reloader 子进程),
+     * agent loop 空转、无任何事件,消息永久 streaming,用户后续消息全部无响应。
+     */
+    public boolean hasRunningTool(Long sessionId) {
+        List<ChatMessage> list = chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
+                .eq(ChatMessage::getSessionId, sessionId)
+                .eq(ChatMessage::getRole, "assistant")
+                .orderByDesc(ChatMessage::getId)
+                .last("limit 5"));
+        for (ChatMessage m : list) {
+            if (m.getParts() == null || m.getParts().isBlank()) {
+                continue;
+            }
+            try {
+                JsonNode parts = objectMapper.readTree(m.getParts());
+                JsonNode toolCalls = parts.has("toolCalls") ? parts.get("toolCalls") : null;
+                if (toolCalls != null && toolCalls.isArray()) {
+                    for (JsonNode tc : toolCalls) {
+                        String status = tc.has("status") ? tc.get("status").asText("") : "";
+                        if ("running".equals(status)) {
+                            return true;
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+                // 单条 parts 解析失败不影响判定
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 把会话中所有 status=streaming 的 assistant 消息标记为 aborted。
+     * <p>
+     * abort 成功后调用:工具卡死/用户停止时 opencode 不会对该消息补发定稿事件,
+     * 若不标记,DB 里会残留永久 streaming 的行,重载会话时 UI 状态异常。
+     */
+    public int markStreamingAborted(Long sessionId) {
+        return chatMessageMapper.update(null, new LambdaUpdateWrapper<ChatMessage>()
+                .eq(ChatMessage::getSessionId, sessionId)
+                .eq(ChatMessage::getRole, "assistant")
+                .eq(ChatMessage::getStatus, "streaming")
+                .set(ChatMessage::getStatus, "aborted"));
     }
 
     /** 该会话当前是否存在未回答的 pendingPermission(parts 含 pendingPermission 的最新 assistant 消息)。看门狗判定卡死用。 */
