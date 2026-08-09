@@ -187,55 +187,14 @@ onMounted(load)
   padding: 14px 16px; background: var(--bg-elev);
   border: 1px solid var(--border-soft); border-radius: var(--radius);
 }
-.admin-head h2 { margin: 0; font-size: 16px; }
+.admin-head h2 { margin: 0; font-size: 16px; color: var(--text); }
 .spacer { flex: 1; }
 .reset-tip { margin-bottom: 12px; font-size: 13px; color: var(--text-2); }
 
-/* 卡片改白色底:与深色页面背景形成高对比;卡片内文字/表格配套适配为深色 */
+/* 卡片表面:略亮于页面背景,保持深色主题统一 */
 .admin-view :deep(.n-card) {
-  background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
   border-radius: var(--radius);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
-}
-.admin-view :deep(.n-card__header) {
-  --n-title-text-color: #1f2329;
-}
-.admin-view :deep(.n-card__header),
-.admin-view :deep(.n-card__title),
-.admin-view :deep(.n-card__content) {
-  color: #1f2329;
-}
-.admin-view :deep(.n-table) {
-  color: #1f2329;
-}
-.admin-view :deep(.n-table .n-data-table-th),
-.admin-view :deep(.n-table .n-data-table-td),
-.admin-view :deep(.n-table thead th),
-.admin-view :deep(.n-table tbody td) {
-  color: #2a2e35;
-  background: #ffffff;
-}
-.admin-view :deep(.n-table thead th) {
-  background: #f5f6f8;
-}
-.admin-view :deep(.n-table tbody tr:hover) {
-  background: #f3f5f9;
-}
-/* 白卡片上的切换控件默认深色主题边框,保持足够对比 */
-.admin-view :deep(.n-switch__track) {
-  background-color: rgba(0, 0, 0, 0.35);
-}
-/* 卡片内按钮文字改深色(naive-ui quaternary 按钮默认浅色字,白底上看不清) */
-.admin-view :deep(.n-card .n-button) {
-  --n-text-color: #2a2e35;
-  --n-text-color-hover: #1f2329;
-  --n-text-color-pressed: #1f2329;
-  --n-text-color-focus: #2a2e35;
-}
-.admin-view :deep(.n-card .n-button--error-type) {
-  --n-text-color: #c0392b;
-  --n-text-color-hover: #a93226;
-  --n-text-color-pressed: #a93226;
 }
 </style>

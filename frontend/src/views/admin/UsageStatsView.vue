@@ -121,54 +121,20 @@ onMounted(load)
   padding: 14px 16px; background: var(--bg-elev);
   border: 1px solid var(--border-soft); border-radius: var(--radius);
 }
-.admin-head h2 { margin: 0; font-size: 16px; }
+.admin-head h2 { margin: 0; font-size: 16px; color: var(--text); }
 .spacer { flex: 1; }
 
 .overview { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 16px; }
 @media (max-width: 900px) { .overview { grid-template-columns: repeat(3, 1fr); } }
-.overview .big { font-size: 28px; font-weight: 700; text-align: center; padding: 4px 0 8px; color: #1f2329; }
+.overview .big { font-size: 28px; font-weight: 700; text-align: center; padding: 4px 0 8px; }
 
 .block { margin-bottom: 16px; }
 
-/* 卡片改白色底:与深色页面背景形成高对比;卡片内文字/表格配套适配为深色 */
+/* 卡片表面:略亮于页面背景,保持深色主题统一 */
 .admin-view :deep(.n-card) {
-  background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
   border-radius: var(--radius);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
-}
-.admin-view :deep(.n-card__header),
-.admin-view :deep(.n-card__title),
-.admin-view :deep(.n-card__content) {
-  color: #1f2329;
-}
-.admin-view :deep(.n-card:not(.n-modal)) .overview .big {
-  color: #1f2329;
-}
-/* 卡片内表格浅色化:白底深字,去默认深色主题 */
-.admin-view :deep(.n-table) {
-  color: #1f2329;
-}
-.admin-view :deep(.n-table .n-data-table-th),
-.admin-view :deep(.n-table .n-data-table-td),
-.admin-view :deep(.n-table thead th),
-.admin-view :deep(.n-table tbody td) {
-  color: #2a2e35;
-  background: #ffffff;
-}
-.admin-view :deep(.n-table thead th) {
-  background: #f5f6f8;
-}
-.admin-view :deep(.n-table tbody tr:hover) {
-  background: #f3f5f9;
-}
-/* bar 轨道在白色卡片上需浅底 */
-.admin-view :deep(.bar-track) {
-  background: #eceef1;
-}
-/* 卡片头部标题深色(naive-ui 用 var(--n-title-text-color)) */
-.admin-view :deep(.n-card__header) {
-  --n-title-text-color: #1f2329;
 }
 
 .bars { display: flex; align-items: flex-end; gap: 8px; height: 200px; padding: 8px 4px 0; }
@@ -176,11 +142,11 @@ onMounted(load)
   flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0;
   height: 100%;
 }
-.bar-val { font-size: 11px; color: #5a616b; line-height: 1; }
+.bar-val { font-size: 11px; color: var(--text-2); line-height: 1; }
 .bar-track {
   flex: 1; width: 100%; max-width: 36px;
   display: flex; align-items: flex-end;
-  background: #eceef1; border-radius: 6px; overflow: hidden;
+  background: var(--bg); border-radius: 6px; overflow: hidden;
   position: relative; min-height: 0;
 }
 .bar-fill {
@@ -188,5 +154,5 @@ onMounted(load)
   background: linear-gradient(180deg, var(--accent), #8b7bfd);
   border-radius: 6px 6px 0 0; transition: height .3s ease;
 }
-.bar-label { font-size: 10px; color: #6a7180; white-space: nowrap; line-height: 1; }
+.bar-label { font-size: 10px; color: var(--text-3); white-space: nowrap; line-height: 1; }
 </style>

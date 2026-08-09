@@ -156,64 +156,15 @@ onMounted(load)
   padding: 14px 16px; background: var(--bg-elev);
   border: 1px solid var(--border-soft); border-radius: var(--radius);
 }
-.admin-head h2 { margin: 0; font-size: 16px; }
+.admin-head h2 { margin: 0; font-size: 16px; color: var(--text); }
 .spacer { flex: 1; }
 .provider-card { margin-bottom: 16px; }
 .meta { display: flex; gap: 20px; font-size: 12px; color: var(--text-2); margin-bottom: 12px; flex-wrap: wrap; }
 
-/* 卡片改白色底:与深色页面背景形成高对比;卡片内文字/表格配套适配为深色 */
+/* 卡片表面:略亮于页面背景,保持深色主题统一 */
 .admin-view :deep(.n-card) {
-  background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
   border-radius: var(--radius);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
-}
-.admin-view :deep(.n-card__header) {
-  --n-title-text-color: #1f2329;
-}
-.admin-view :deep(.n-card__header),
-.admin-view :deep(.n-card__title),
-.admin-view :deep(.n-card__content) {
-  color: #1f2329;
-}
-.admin-view :deep(.n-card .meta) {
-  color: #4a505a;
-}
-.admin-view :deep(.n-table) {
-  color: #1f2329;
-}
-.admin-view :deep(.n-table .n-data-table-th),
-.admin-view :deep(.n-table .n-data-table-td),
-.admin-view :deep(.n-table thead th),
-.admin-view :deep(.n-table tbody td) {
-  color: #2a2e35;
-  background: #ffffff;
-}
-.admin-view :deep(.n-table thead th) {
-  background: #f5f6f8;
-}
-.admin-view :deep(.n-table tbody tr:hover) {
-  background: #f3f5f9;
-}
-.admin-view :deep(.n-switch__track) {
-  background-color: rgba(0, 0, 0, 0.35);
-}
-.admin-view :deep(.n-card .n-button) {
-  --n-text-color: #2a2e35;
-  --n-text-color-hover: #1f2329;
-  --n-text-color-pressed: #1f2329;
-  --n-text-color-focus: #2a2e35;
-}
-.admin-view :deep(.n-card .n-button--error-type) {
-  --n-text-color: #c0392b;
-  --n-text-color-hover: #a93226;
-  --n-text-color-pressed: #a93226;
-}
-/* 白卡片内的空态与代码文字改深色 */
-.admin-view :deep(.n-card .n-empty__description) {
-  color: #5a616b;
-}
-.admin-view :deep(.n-card code) {
-  color: #1f2329;
 }
 </style>
