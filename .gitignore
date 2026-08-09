@@ -1,6 +1,7 @@
 # Java / Maven
 backend/target/
 backend/.mvn/wrapper/maven-wrapper.jar
+.m2-fresh/
 *.class
 *.jar
 !.mvn/wrapper/maven-wrapper.jar
