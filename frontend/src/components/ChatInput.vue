@@ -27,6 +27,13 @@ function fill(prompt: string) {
 
 defineExpose({ fill })
 
+/** 监听 chat.pendingFill:建议追问等场景把提示词填入输入框(消费一次后清空) */
+watch(chat.pendingFill, (v) => {
+  if (!v) return
+  fill(v)
+  chat.pendingFill.value = ''
+})
+
 /** ---- slash 命令菜单 ---- */
 const commands = ref<CommandItem[]>([])
 let commandsLoadedFor = -1

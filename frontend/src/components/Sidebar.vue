@@ -3,12 +3,14 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useAuthStore } from '@/stores/auth'
+import { useThemeStore } from '@/stores/theme'
 import { useDialog, useMessage } from 'naive-ui'
 import type { SessionVo } from '@/types'
 
 const router = useRouter()
 const chat = useChatStore()
 const auth = useAuthStore()
+const theme = useThemeStore()
 const dialog = useDialog()
 const msg = useMessage()
 
@@ -296,6 +298,7 @@ function logout() {
         <n-tag v-if="auth.isAdmin" size="tiny" type="warning">admin</n-tag>
       </div>
       <div class="foot-actions">
+        <n-button size="small" quaternary :title="theme.mode === 'dark' ? '切换到浅色主题' : '切换到深色主题'" @click="theme.toggle()">{{ theme.mode === 'dark' ? '☀️' : '🌙' }}</n-button>
         <n-button v-if="auth.isAdmin" size="small" quaternary @click="router.push('/admin/users')">用户管理</n-button>
         <n-button v-if="auth.isAdmin" size="small" quaternary @click="router.push('/admin/providers')">模型管理</n-button>
         <n-button v-if="auth.isAdmin" size="small" quaternary @click="router.push('/admin/usage')">用量统计</n-button>

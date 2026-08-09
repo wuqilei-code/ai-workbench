@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, ref, nextTick } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import Sidebar from '@/components/Sidebar.vue'
+import Onboarding from '@/components/Onboarding.vue'
 
 const chat = useChatStore()
+const onboardingRef = ref<InstanceType<typeof Onboarding> | null>(null)
 
 onMounted(async () => {
   await Promise.all([chat.loadModels(), chat.loadSessions(), chat.loadArchivedSessions()])
+  nextTick(() => onboardingRef.value?.tryShowOnboarding())
 })
 </script>
 
@@ -19,4 +22,5 @@ onMounted(async () => {
       </n-layout-content>
     </n-layout>
   </n-layout>
+  <Onboarding ref="onboardingRef" />
 </template>

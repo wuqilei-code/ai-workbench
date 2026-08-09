@@ -139,15 +139,15 @@ function restoreTo(sha = props.summary.sha) {
 .summary-card {
   margin: 4px 0 16px;
   border: 1px solid var(--border);
-  border-left: 3px solid #8b7bfd;
+  border-left: 3px solid var(--accent);
   border-radius: var(--radius);
-  background: rgba(139, 123, 253, 0.06);
+  background: var(--accent-soft);
   padding: 12px 16px;
   max-width: 75%;
 }
 .summary-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
 .summary-head .icon { font-size: 14px; }
-.summary-head .title { font-size: 13px; font-weight: 600; color: #b3a8ff; }
+.summary-head .title { font-size: 13px; font-weight: 600; color: var(--accent-text); }
 .summary-head .count { font-size: 12px; color: var(--text-3); }
 .summary-text { font-size: 14px; line-height: 1.6; color: var(--text); word-break: break-word; }
 .summary-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
@@ -157,9 +157,9 @@ function restoreTo(sha = props.summary.sha) {
   max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   cursor: pointer; transition: border-color .15s;
 }
-.file-chip:hover { border-color: #8b7bfd; color: var(--text); }
-.file-chip.open { border-color: #8b7bfd; color: var(--text); background: rgba(139, 123, 253, 0.08); }
-.file-chip .st { color: #8b7bfd; font-weight: 600; margin-right: 4px; }
+.file-chip:hover { border-color: var(--accent); color: var(--text); }
+.file-chip.open { border-color: var(--accent); color: var(--text); background: var(--accent-soft); }
+.file-chip .st { color: var(--accent-text); font-weight: 600; margin-right: 4px; }
 .chip-arrow { margin-left: 4px; font-size: 10px; opacity: .7; }
 .inline-diff { margin-top: 10px; border-top: 1px dashed var(--border); padding-top: 10px; }
 .diff-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }

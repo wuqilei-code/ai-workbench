@@ -142,6 +142,57 @@ function toggleFaStar() {
   msg.success(added ? '已收藏' : '已取消收藏')
 }
 
+// ---------- 建议追问(回答定稿后展示可点击的继续提问) ----------/** 基于用户原始问题 + 回答内容,启发式生成 2-3 个继续提问的示例。 */
+const followUpQuestions = computed<string[]>(() => {
+  if (turnInProgress.value) return []
+  const fa = props.turn.finalAnswer
+  if (!fa || !(fa.message.content || '').trim()) return []
+  const userQ = props.turn.userMessage?.content || ''
+  const q = userQ.trim()
+  const asksWhy = /为什么|为何|原因/.test(q)
+  const asksHow = /怎么|如何|怎么做|步骤/.test(q)
+  const asksWhat = /是什么|区别|对比|哪个/.test(q)
+  const out: string[] = []
+  if (asksWhy) out.push('那背后的原理是什么,能用大白话解释吗?')
+  else if (asksHow) out.push('可以给一个完整的操作步骤/示例吗?')
+  if (asksWhat) out.push('那它们对比起来有哪些关键区别?')
+  out.push('能不能举个具体的例子?')
+  out.push('帮我用更简单的说法总结一下要点')
+  return out.slice(0, 3)
+})
+
+function askFollowUp(text: string) {
+  chat.fillInput(text)
+}
+
+// ---------- 重新生成回答 ----------
+
+/** 重新生成:用本 turn 的用户问题再次触发 AI 回答(追加新一轮)。 */
+async function regenerateAnswer() {
+  const userText = props.turn.userMessage?.content
+  if (!userText || !chat.currentSessionId) {
+    msg.warning('缺少可重新生成的问题')
+    return
+  }
+  if (chat.isStreaming) {
+    msg.info('AI 正在处理中,请稍后再试')
+    return
+  }
+  try {
+    await chat.sendMessage(userText)
+  } catch (e: any) {
+    msg.error(e?.message || '重新生成失败')
+  }
+}
+
+const canRegenerate = computed(
+  () =>
+    !!props.turn.userMessage &&
+    !!props.turn.finalAnswer &&
+    !turnInProgress.value &&
+    chat.currentSessionId != null,
+)
+
 /** 本 turn 的结果文件清单(仅 turn 定稿后展示)。
  *  流式期间(turnInProgress)返回空,避免半截标记 `[结果` 闪烁;正则要求整行完整才匹配是第二道保险。
  *  历史 turn 的 turnInProgress 为 false,自动渲染卡片(前提:AI 当时用了标记)。 */
@@ -521,11 +572,26 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
           title="导出为 Markdown 文件"
           @click="exportFinalAnswerAsMarkdown"
         >⬇️</button>
+        <button
+          v-if="canRegenerate"
+          class="copy-btn regen-btn"
+          title="重新生成回答"
+          @click="regenerateAnswer"
+        >🔄</button>
         <span
           v-if="displayContent(turn.finalAnswer)"
           v-html="renderMarkdown(stripDeliverableMarkers(displayContent(turn.finalAnswer)))"
         />
         <span v-if="isStepActive(turn.finalAnswer)" class="cursor">▋</span>
+      </div>
+      <div v-if="followUpQuestions.length" class="followups">
+        <span class="fu-label">继续问:</span>
+        <span
+          v-for="(fu, i) in followUpQuestions"
+          :key="i"
+          class="fu-chip"
+          @click="askFollowUp(fu)"
+        >{{ fu }}</span>
       </div>
       <div v-else-if="showWorkingHint" class="pending">
         <n-spin size="small" />
@@ -721,6 +787,15 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
 
 <style scoped>
 .msg { display: flex; gap: 10px; margin-bottom: 16px; }
+.followups { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.fu-label { font-size: 12px; color: var(--text-3); }
+.fu-chip {
+  font-size: 12px; color: var(--text-2);
+  background: var(--surface); border: 1px solid var(--border-soft);
+  border-radius: 12px; padding: 3px 10px; cursor: pointer;
+  transition: border-color .15s, color .15s;
+}
+.fu-chip:hover { border-color: var(--accent-text); color: var(--accent-text); }
 .avatar {
   width: 30px; height: 30px; border-radius: 10px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
@@ -745,6 +820,7 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
 .content:hover .copy-btn { opacity: 1; }
 .copy-btn:hover { background: var(--surface-hover); }
 .copy-btn.star-btn.on { color: #f0b429; }
+.copy-btn.regen-btn:hover { color: var(--accent-text); }
 .content :deep(p) { margin: 6px 0; }
 .content :deep(pre.hljs) { background: #16181d; border-radius: var(--radius-sm); padding: 10px; overflow-x: auto; }
 .content :deep(code) { font-family: ui-monospace, monospace; font-size: 13px; }

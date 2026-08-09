@@ -50,8 +50,15 @@ export const useChatStore = defineStore('chat', () => {
   const agents = ref<AgentItem[]>([])
   const currentSessionId = ref<number | null>(null)
   const messages = ref<MessageVo[]>([])
-  /** AI 变更总结卡片(role=summary 的消息与 SSE 事件聚合) */
+  /** 最近一次 AI 变更总结(role=summary 的消息与 SSE 事件聚合) */
   const summaries = ref<ChangeSummary[]>([])
+
+  /** 建议追问/外部注入的待填提示词:ChatInput 监听后填入输入框(仅消费一次) */
+  const pendingFill = ref('')
+
+  function fillInput(prompt: string) {
+    pendingFill.value = prompt
+  }
   const streamingText = ref('')
   const streamingMessageId = ref<string | null>(null)
   const isStreaming = ref(false)
@@ -1167,6 +1174,7 @@ export const useChatStore = defineStore('chat', () => {
     changedFilePaths,
     searchResults, searching, searchSessions,
     availableModels, selectedProviderId, selectedModelId,
+    pendingFill, fillInput,
     manualCollapseOverride, setCollapse,
     loadModels, selectModel, loadSessions, loadArchivedSessions, loadAgents, createSession, switchAgent, selectSession,
     deleteSession, pinSession, archiveSession, unarchiveSession, renameSession, clearSession, exportSession,
