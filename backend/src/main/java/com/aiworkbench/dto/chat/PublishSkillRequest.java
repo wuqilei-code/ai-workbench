@@ -29,4 +29,7 @@ public class PublishSkillRequest {
     @NotBlank
     @Size(max = 60000)
     private String content;
+
+    /** 附加文件(SKILL.md 之外的脚本/数据等);可选 */
+    private java.util.List<SkillFileVo> files;
 }

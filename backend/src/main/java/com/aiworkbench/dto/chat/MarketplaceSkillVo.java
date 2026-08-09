@@ -20,6 +20,8 @@ public class MarketplaceSkillVo {
     private String icon;
     /** SKILL.md 全文(详情用;列表可省略) */
     private String content;
+    /** 附加文件(SKILL.md 之外的脚本/数据等;仅详情返回) */
+    private java.util.List<SkillFileVo> files;
     private int installs;    /** 当前用户是否已安装 */
     private boolean installed;
     /** 当前用户是否自己的作品 */

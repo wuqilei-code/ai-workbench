@@ -4,7 +4,7 @@ import { useMessage } from 'naive-ui'
 import { chatApi } from '@/api/chat'
 import { fileApi } from '@/api/files'
 import { SKILL_CATEGORIES, skillCategoryInfo } from '@/types'
-import type { MarketplaceSkillVo, FileNode } from '@/types'
+import type { MarketplaceSkillVo, FileNode, SkillFileVo } from '@/types'
 
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{
@@ -54,6 +54,12 @@ function onShow() {
   if (props.show) load()
 }
 
+/** 列表卡片显示技能结构摘要:如 "SKILL.md + 2 文件" */
+function fileSummary(s: MarketplaceSkillVo): string {
+  if (!s.files || !s.files.length) return '仅 SKILL.md'
+  return `SKILL.md + ${s.files.length} 附加文件`
+}
+
 // ---------- 发布 ----------
 const ICON_PRESETS = ['🤖', '⚙️', '📊', '📄', '✍️', '🗂️', '💻', '🧩', '📚', '🎨', '🔬', '🚀', '🛠️', '📝', '🗣️', '🧠']
 const publishVisible = ref(false)
@@ -62,11 +68,12 @@ const pubDesc = ref('')
 const pubCategory = ref('other')
 const pubIcon = ref('🤖')
 const pubContent = ref('')
+const pubFiles = ref<SkillFileVo[]>([])
 const pubSaving = ref(false)
 const importSkills = ref<FileNode[]>([])
 const importLoading = ref(false)
 
-/** 导入自己工作区已存在的技能(读取 .opencode/skills/<name>/SKILL.md 预填) */
+/** 导入自己工作区已存在的技能目录(递归读取全部文件,预填表单) */
 async function loadImportable() {
   importLoading.value = true
   try {
@@ -78,9 +85,33 @@ async function loadImportable() {
     importLoading.value = false
   }
 }
+
+/** 递归收集一个工作区目录下的文件(path 相对技能根),目录/二进制跳过。 */
+async function collectFiles(dir: string): Promise<SkillFileVo[]> {
+  const out: SkillFileVo[] = []
+  const walk = async (rel: string) => {
+    const nodes = await fileApi.list(rel)
+    for (const n of nodes) {
+      if (n.directory) {
+        await walk(n.path)
+      } else {
+        try {
+          const content = await fileApi.content(n.path)
+          out.push({ path: n.path.replace(dir + '/', ''), content })
+        } catch {
+          /* 二进制/读取失败跳过 */
+        }
+      }
+    }
+  }
+  await walk(dir)
+  return out
+}
+
 async function importSkill(name: string) {
   try {
-    const md = await fileApi.content(`.opencode/skills/${name}/SKILL.md`)
+    const root = `.opencode/skills/${name}`
+    const md = await fileApi.content(`${root}/SKILL.md`)
     pubName.value = name
     pubContent.value = md
     // 从 frontmatter 提取 description / category / icon
@@ -94,10 +125,19 @@ async function importSkill(name: string) {
       const icon = pick('icon')
       if (icon) pubIcon.value = icon
     }
-    msg.success(`已导入技能「${name}」`)
+    // 递归读取附加文件(SKILL.md 之外的全部)
+    pubFiles.value = await collectFiles(root)
+    msg.success(`已导入技能「${name}」,共 ${pubFiles.value.length} 个附加文件`)
   } catch (e: any) {
     msg.error(e?.message || '导入失败')
   }
+}
+
+function addFile() {
+  pubFiles.value.push({ path: '', content: '' })
+}
+function removeFile(i: number) {
+  pubFiles.value.splice(i, 1)
 }
 
 function openPublish() {
@@ -106,10 +146,12 @@ function openPublish() {
   pubCategory.value = 'other'
   pubIcon.value = '🤖'
   pubContent.value = ''
+  pubFiles.value = []
   publishVisible.value = true
   loadImportable()
 }
 
+const validFiles = computed(() => pubFiles.value.filter((f) => f.path?.trim() && f.content != null))
 const publishDisabled = computed(
   () => !pubName.value.trim() || !pubDesc.value.trim() || !pubContent.value.trim(),
 )
@@ -127,6 +169,7 @@ async function submitPublish() {
       category: pubCategory.value,
       icon: pubIcon.value.trim() || undefined,
       content: pubContent.value,
+      files: validFiles.value.map((f) => ({ path: f.path.trim().replace(/\\/g, '/').replace(/^\/+/, ''), content: f.content })),
     })
     msg.success('已发布到技能广场')
     publishVisible.value = false
@@ -143,10 +186,12 @@ const detailVisible = ref(false)
 const detail = ref<MarketplaceSkillVo | null>(null)
 const detailLoading = ref(false)
 const installing = ref(false)
+const activeFile = ref<string>('SKILL.md')
 
 async function openDetail(s: MarketplaceSkillVo) {
   detail.value = null
   detailVisible.value = true
+  activeFile.value = 'SKILL.md'
   detailLoading.value = true
   try {
     detail.value = await chatApi.marketplaceSkillDetail(s.id)
@@ -155,6 +200,22 @@ async function openDetail(s: MarketplaceSkillVo) {
   } finally {
     detailLoading.value = false
   }
+}
+
+/** 详情当前查看文件的内容(SKILL.md 或某个附加文件) */
+const activeContent = computed(() => {
+  if (!detail.value) return ''
+  if (activeFile.value === 'SKILL.md') return detail.value.content || ''
+  const f = detail.value.files?.find((x) => x.path === activeFile.value)
+  return f ? f.content : ''
+})
+function getFileIcon(path: string): string {
+  const ext = path.split('.').pop()?.toLowerCase()
+  if (['py', 'js', 'ts', 'sh', 'java', 'go', 'rs'].includes(ext || '')) return '🐍'
+  if (['csv', 'xlsx', 'xls', 'json', 'xml'].includes(ext || '')) return '🗃️'
+  if (['md', 'txt'].includes(ext || '')) return '📄'
+  if (['png', 'jpg', 'svg', 'webp'].includes(ext || '')) return '🖼️'
+  return '📎'
 }
 
 async function install() {
@@ -214,7 +275,7 @@ onMounted(() => {
     :show="show"
     preset="card"
     title="技能广场"
-    style="width: 980px; max-width: 96vw"
+    style="width: 1080px; max-width: 96vw"
     :bordered="false"
     @update:show="(v: boolean) => emit('update:show', v)"
     @after-enter="onShow"
@@ -223,7 +284,7 @@ onMounted(() => {
       <n-input v-model:value="keyword" size="small" clearable placeholder="搜索技能名或描述…" style="max-width: 240px">
         <template #prefix>🔍</template>
       </n-input>
-      <span class="mp-note">把好用的技能分享给团队,也能一键安装别人的技能到工作区</span>
+      <span class="mp-note">技能 = SKILL.md(指令)+ 可选脚本/数据/参考文件;发布后他人一键安装到工作区</span>
       <n-button size="small" type="primary" @click="openPublish">+ 发布技能</n-button>
     </div>
 
@@ -256,6 +317,7 @@ onMounted(() => {
             <div class="mp-card-desc">{{ s.description }}</div>
             <div class="mp-card-meta">
               <span class="mp-cat">{{ skillCategoryInfo(s.category).emoji }} {{ skillCategoryInfo(s.category).label }}</span>
+              <span class="mp-files">📎{{ fileSummary(s) }}</span>
               <span class="mp-installs">↓ {{ s.installs }}</span>
               <span class="mp-author">by {{ s.authorName || '匿名' }}</span>
             </div>
@@ -273,11 +335,11 @@ onMounted(() => {
       v-model:show="publishVisible"
       preset="card"
       title="发布技能到广场"
-      style="width: 680px; max-width: 94vw"
+      style="width: 760px; max-width: 96vw"
       :bordered="false"
     >
       <div v-if="importSkills.length || importLoading" class="mp-import">
-        <span class="mp-import-label">从工作区导入:</span>
+        <span class="mp-import-label">从工作区导入(含脚本/参考文件):</span>
         <span
           v-for="s in importSkills"
           :key="s.path"
@@ -287,7 +349,7 @@ onMounted(() => {
         <span v-if="importLoading" class="mp-import-loading">加载中…</span>
       </div>
       <div class="pub-form">
-        <n-input v-model:value="pubName" maxlength="64" size="small" placeholder="技能名(小写字母/数字,连字符分隔,如 data-analyzer)" />
+        <n-input v-model:value="pubName" maxlength="64" size="small" placeholder="技能名(小写字母/数字,连字符分隔,如 data-cleaner)" />
         <n-input v-model:value="pubDesc" maxlength="1024" size="small" placeholder="一句话描述(他人据此判断用途)" />
         <div class="pub-row">
           <n-select
@@ -311,13 +373,28 @@ onMounted(() => {
         <n-input
           v-model:value="pubContent"
           type="textarea"
-          :rows="8"
+          :rows="6"
           maxlength="60000"
           show-count
           size="small"
           placeholder="SKILL.md 全文(需包含 ---frontmatter--- 的 name 与 description)"
         />
       </div>
+
+      <div class="files-head">
+        <span class="files-title">附加文件(可选)</span>
+        <span class="files-note">脚本/模板/参考数据等。安装了别人的技能把整目录写到你工作区。</span>
+        <n-button size="tiny" quaternary type="primary" @click="addFile">+ 添加文件</n-button>
+      </div>
+      <div v-if="pubFiles.length" class="files-list">
+        <div v-for="(f, i) in pubFiles" :key="i" class="file-row">
+          <n-input v-model:value="f.path" size="small" placeholder="相对路径,如 scripts/clean.py" style="flex: 0 0 260px" />
+          <n-button size="tiny" type="error" quaternary @click="removeFile(i)">删除</n-button>
+          <n-input v-model:value="f.content" type="textarea" :rows="4" size="small" placeholder="文件内容" />
+        </div>
+      </div>
+      <div v-if="!pubFiles.length" class="files-empty">未添加附加文件(该技能将只有 SKILL.md)。</div>
+
       <template #footer>
         <div style="display: flex; justify-content: flex-end; gap: 8px">
           <n-button @click="publishVisible = false">取消</n-button>
@@ -331,7 +408,7 @@ onMounted(() => {
       v-model:show="detailVisible"
       preset="card"
       :title="detail?.name ? `技能 · ${detail.name}` : '技能详情'"
-      style="width: 720px; max-width: 94vw"
+      style="width: 860px; max-width: 96vw"
       :bordered="false"
     >
       <n-spin :show="detailLoading">
@@ -351,9 +428,30 @@ onMounted(() => {
             </div>
           </div>
           <div class="dt-desc">{{ detail.description }}</div>
-          <pre class="dt-content">{{ detail.content }}</pre>
+
+          <div class="dt-structure">
+            <n-tabs
+              v-model:value="activeFile"
+              size="small"
+              type="line"
+              class="dt-tabs"
+            >
+              <n-tab-pane name="SKILL.md" tab="SKILL.md">
+                <pre class="dt-content">{{ activeContent }}</pre>
+              </n-tab-pane>
+              <n-tab-pane
+                v-for="f in (detail.files || [])"
+                :key="f.path"
+                :name="f.path"
+                :tab="getFileIcon(f.path) + ' ' + f.path"
+              >
+                <pre class="dt-content">{{ f.content }}</pre>
+              </n-tab-pane>
+            </n-tabs>
+          </div>
         </template>
       </n-spin>
+
       <template #footer>
         <div style="display: flex; justify-content: flex-end; gap: 8px">
           <n-button @click="detailVisible = false">关闭</n-button>
@@ -385,8 +483,8 @@ onMounted(() => {
 
 /* 卡片网格 */
 .mp-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 12px; max-height: 56vh; overflow-y: auto; padding: 2px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px; max-height: 52vh; overflow-y: auto; padding: 2px;
 }
 .mp-card {
   display: flex; gap: 12px; align-items: flex-start;
@@ -407,11 +505,13 @@ onMounted(() => {
   font-size: 12px; color: var(--text-2); line-height: 1.5;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.mp-card-meta { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 11px; color: var(--text-3); }
+.mp-card-meta { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 11px; color: var(--text-3); flex-wrap: wrap; }
 .mp-cat { color: var(--accent-text); }
+.mp-installs { white-space: nowrap; }
 .mp-author { margin-left: auto; }
 .mp-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
 
+/* 发布表单 */
 .mp-import { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--accent-soft); }
 .mp-import-label { font-size: 12px; color: var(--accent-text); }
 .mp-import-chip { font-size: 12px; color: var(--text-2); background: var(--surface); border: 1px solid var(--border-soft); border-radius: 10px; padding: 2px 8px; cursor: pointer; }
@@ -429,6 +529,21 @@ onMounted(() => {
 .icon-choice:hover { border-color: var(--accent-text); }
 .icon-choice.active { background: var(--accent-soft); border-color: var(--accent-text); }
 
+/* 附加文件编辑 */
+.files-head { display: flex; align-items: center; gap: 8px; margin: 14px 0 8px; }
+.files-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.files-note { font-size: 11px; color: var(--text-3); flex: 1; min-width: 0; }
+.files-list { display: flex; flex-direction: column; gap: 8px; max-height: 34vh; overflow-y: auto; padding-right: 2px; }
+.file-row {
+  display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap;
+  padding: 8px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--surface);
+}
+.file-row .n-input { flex: 1 1 100%; }
+.file-row > .n-input { flex: 0 0 260px; }
+.file-row .file-row-path { flex: 0 0 260px; }
+.files-empty { font-size: 12px; color: var(--text-3); padding: 6px 0; }
+
+/* 详情 */
 .dt-head { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
 .dt-icon {
   width: 60px; height: 60px; flex-shrink: 0; border-radius: 14px;
@@ -441,9 +556,11 @@ onMounted(() => {
 .dt-sub { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .dt-installs { font-size: 12px; color: var(--text-3); }
 .dt-desc { font-size: 13px; color: var(--text-2); margin-bottom: 10px; line-height: 1.6; }
+.dt-structure { border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--surface); }
+.dt-tabs { padding: 0 10px; }
 .dt-content {
-  background: var(--bg-elev); border: 1px solid var(--border-soft); border-radius: var(--radius-sm);
-  padding: 12px; font-size: 12px; line-height: 1.6; max-height: 40vh; overflow: auto;
-  white-space: pre-wrap; word-break: break-word; color: var(--text-2);
+  background: var(--bg-elev); border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  padding: 12px; font-size: 12px; line-height: 1.6; max-height: 38vh; overflow: auto;
+  white-space: pre-wrap; word-break: break-word; color: var(--text-2); margin: 0;
 }
 </style>

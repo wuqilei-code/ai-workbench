@@ -39,6 +39,9 @@ public class SkillMarketplace {
     /** SKILL.md 全文 */
     private String content;
 
+    /** 附加文件清单(JSON 数组:[{path,content}],SKILL.md 之外的脚本/数据/参考) */
+    private String files;
+
     /** 被安装次数 */
     private Integer installs;
 

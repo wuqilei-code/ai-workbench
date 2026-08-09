@@ -83,6 +83,12 @@ export interface SkillInfo {
   description: string
 }
 
+/** 技能附加文件(SKILL.md 之外的脚本/数据/参考) */
+export interface SkillFileVo {
+  path: string
+  content: string
+}
+
 /** 技能广场条目 */
 export interface MarketplaceSkillVo {
   id: number
@@ -92,6 +98,7 @@ export interface MarketplaceSkillVo {
   category: string
   icon: string
   content?: string
+  files?: SkillFileVo[]
   installs: number
   installed: boolean
   mine: boolean

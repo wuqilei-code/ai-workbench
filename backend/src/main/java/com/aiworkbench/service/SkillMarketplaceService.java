@@ -4,6 +4,7 @@ import com.aiworkbench.common.BusinessException;
 import com.aiworkbench.common.ResultCode;
 import com.aiworkbench.dto.chat.MarketplaceSkillVo;
 import com.aiworkbench.dto.chat.PublishSkillRequest;
+import com.aiworkbench.dto.chat.SkillFileVo;
 import com.aiworkbench.entity.SkillInstall;
 import com.aiworkbench.entity.SkillMarketplace;
 import com.aiworkbench.entity.User;
@@ -11,6 +12,8 @@ import com.aiworkbench.mapper.SkillInstallMapper;
 import com.aiworkbench.mapper.SkillMarketplaceMapper;
 import com.aiworkbench.mapper.UserMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -24,8 +27,11 @@ import java.util.Map;
 /**
  * 技能广场:用户发布自建技能 → 广场,其他用户浏览/安装到自己的工作区。
  * <p>
- * 安装 = 把 SKILL.md 写入目标用户工作区 <code>.opencode/skills/&lt;name&gt;/SKILL.md</code>,
+ * 安装 = 把 SKILL.md(及其附加文件)写入目标用户工作区 <code>.opencode/skills/&lt;name&gt;/</code>,
  * 记录 skill_install 并递增 installs。同一用户对同一技能名不可重复安装(安装后可删除本地再装)。
+ * <p>
+ * 技能不止 SKILL.md:还可以携带附加文件(files,JSON 字符串列),如
+ * scripts/*.py、data/*.csv|json、references/*.md 等,安装时一并写入,让技能成为真正可运行的包。
  */
 @Slf4j
 @Service
@@ -38,6 +44,7 @@ public class SkillMarketplaceService {
     private final SkillInstallMapper installMapper;
     private final WorkspaceService workspaceService;
     private final UserMapper userMapper;
+    private final ObjectMapper objectMapper;
 
     /** 广场列表:按安装数倒序;附当前用户的 installed / mine 标记。 */
     public List<MarketplaceSkillVo> list(Long userId) {
@@ -67,7 +74,7 @@ public class SkillMarketplaceService {
         return toVo(s, installed, s.getUserId().equals(userId), true);
     }
 
-    /** 发布:在线填写 SKILL.md。同名技能已存在则拒绝。 */
+    /** 发布:在线填写 SKILL.md + 可选附加文件。同名技能已存在则拒绝。 */
     @Transactional
     public MarketplaceSkillVo publish(Long userId, PublishSkillRequest req) {
         Long dup = marketplaceMapper.selectCount(
@@ -84,12 +91,13 @@ public class SkillMarketplaceService {
         s.setCategory(req.getCategory() == null || req.getCategory().isBlank() ? "other" : req.getCategory());
         s.setIcon(req.getIcon() == null ? "" : req.getIcon());
         s.setContent(req.getContent());
+        s.setFiles(serializeFiles(req.getFiles()));
         s.setInstalls(0);
         marketplaceMapper.insert(s);
         return toVo(s, false, true, true);
     }
 
-    /** 安装:把 SKILL.md 写入当前用户工作区 .opencode/skills/<name>/SKILL.md。 */
+    /** 安装:把 SKILL.md + 附加文件写入当前用户工作区 .opencode/skills/<name>/。 */
     @Transactional
     public void install(Long userId, Long id) {
         SkillMarketplace s = marketplaceMapper.selectById(id);
@@ -103,8 +111,19 @@ public class SkillMarketplaceService {
             throw new BusinessException(ResultCode.CONFLICT.getCode(),
                     "已安装过技能「" + name + "」(如需重装,请先在技能页删除本地副本)");
         }
-        String path = SKILLS_ROOT + "/" + name + "/SKILL.md";
-        workspaceService.writeFile(userId, path, withIconFrontmatter(s.getContent(), s.getIcon()));
+        String dir = SKILLS_ROOT + "/" + name;
+        int written = 0;
+        workspaceService.writeFile(userId, dir + "/SKILL.md", withIconFrontmatter(s.getContent(), s.getIcon()));
+        written++;
+        List<SkillFileVo> files = deserializeFiles(s.getFiles());
+        for (SkillFileVo f : files) {
+            if (f == null || f.getPath() == null || f.getPath().isBlank()) continue;
+            String rel = f.getPath().replace('\\', '/').replaceAll("^/+", "");
+            if (rel.contains("..") || rel.startsWith("/") || rel.isEmpty()) continue;
+            workspaceService.writeFile(userId, dir + "/" + rel,
+                    f.getContent() == null ? "" : f.getContent());
+            written++;
+        }
 
         SkillInstall it = new SkillInstall();
         it.setUserId(userId);
@@ -116,7 +135,7 @@ public class SkillMarketplaceService {
         upd.setId(id);
         upd.setInstalls((s.getInstalls() == null ? 0 : s.getInstalls()) + 1);
         marketplaceMapper.updateById(upd);
-        log.info("[skill-marketplace] user {} installed skill {} (id={})", userId, name, id);
+        log.info("[skill-marketplace] user {} installed skill {} (id={}, files={})", userId, name, id, written);
     }
 
     /** 删除自己发布的技能(他人安装的记录保留,但不再可安装)。 */
@@ -129,6 +148,7 @@ public class SkillMarketplaceService {
         }
         marketplaceMapper.deleteById(id);
     }
+
     private MarketplaceSkillVo toVo(SkillMarketplace s, boolean installed, boolean mine, boolean withContent) {
         return MarketplaceSkillVo.builder()
                 .id(s.getId())
@@ -138,11 +158,33 @@ public class SkillMarketplaceService {
                 .category(s.getCategory() == null ? "other" : s.getCategory())
                 .icon(s.getIcon() == null ? "" : s.getIcon())
                 .content(withContent ? s.getContent() : null)
+                .files(withContent ? deserializeFiles(s.getFiles()) : null)
                 .installs(s.getInstalls() == null ? 0 : s.getInstalls())
                 .installed(installed)
                 .mine(mine)
                 .updatedAt(s.getUpdatedAt())
                 .build();
+    }
+
+    private String serializeFiles(List<SkillFileVo> files) {
+        if (files == null || files.isEmpty()) return "[]";
+        try {
+            return objectMapper.writeValueAsString(files);
+        } catch (Exception e) {
+            log.warn("serialize skill files failed: {}", e.toString());
+            return "[]";
+        }
+    }
+
+    private List<SkillFileVo> deserializeFiles(String filesJson) {
+        if (filesJson == null || filesJson.isBlank()) return new ArrayList<>();
+        try {
+            List<SkillFileVo> list = objectMapper.readValue(filesJson, new TypeReference<List<SkillFileVo>>() {});
+            return list == null ? new ArrayList<>() : list;
+        } catch (Exception e) {
+            log.warn("deserialize skill files failed: {}", e.toString());
+            return new ArrayList<>();
+        }
     }
 
     /**
