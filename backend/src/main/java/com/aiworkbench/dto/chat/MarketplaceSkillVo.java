@@ -1,0 +1,24 @@
+package com.aiworkbench.dto.chat;
+
+import lombok.Builder;
+import lombok.Data;
+
+import java.time.LocalDateTime;
+
+/** 技能广场条目:列表/详情统一返回。 */
+@Data
+@Builder
+public class MarketplaceSkillVo {
+    private Long id;
+    /** 发布者用户名 */
+    private String authorName;
+    private String name;
+    private String description;
+    /** SKILL.md 全文(详情用;列表可省略) */
+    private String content;
+    private int installs;    /** 当前用户是否已安装 */
+    private boolean installed;
+    /** 当前用户是否自己的作品 */
+    private boolean mine;
+    private LocalDateTime updatedAt;
+}

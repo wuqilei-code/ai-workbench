@@ -12,6 +12,7 @@ import TemplateLibrary from '@/components/TemplateLibrary.vue'
 import DocumentGenerator from '@/components/DocumentGenerator.vue'
 import ErrorDiagnose from '@/components/ErrorDiagnose.vue'
 import FavoritesPanel from '@/components/FavoritesPanel.vue'
+import SkillMarketplace from '@/components/SkillMarketplace.vue'
 import FileTree from '@/components/FileTree.vue'
 import TaskPanel from '@/components/TaskPanel.vue'
 import ChangeSummaryCard from '@/components/ChangeSummaryCard.vue'
@@ -31,6 +32,12 @@ const chatInputRef = ref<InstanceType<typeof ChatInput> | null>(null)
 const templateLibShow = ref(false)
 const docGenShow = ref(false)
 const errorDiagnoseShow = ref(false)
+const marketplaceShow = ref(false)
+const skillTreeKey = ref(0)
+/** 安装技能后刷新技能目录树 */
+function onSkillInstalled() {
+  skillTreeKey.value++
+}
 
 /** 空会话判断:会话已建但尚无任何消息(turn 为空)。 */
 const isNewSession = computed(() => chat.currentSessionId != null && chat.turns.length === 0)
@@ -400,6 +407,10 @@ const itemSize = 120
                 <FileTree :changed-paths="Array.from(chat.changedFilePaths)" />
               </n-tab-pane>
                 <n-tab-pane name="skills" tab="技能">
+                  <div class="skills-head">
+                    <span class="skills-title">工作区技能</span>
+                    <n-button size="tiny" quaternary @click="marketplaceShow = true">技能广场</n-button>
+                  </div>
                   <n-collapse :default-expanded-names="[]" :bordered="false" class="builtin-collapse">
                     <n-collapse-item name="builtin" title="内置技能">
                       <template #header-extra>
@@ -416,7 +427,7 @@ const itemSize = 120
                     </n-collapse-item>
                   </n-collapse>
                   <n-divider style="margin: 10px 0" />
-                  <FileTree root=".opencode/skills" skills-mode :changed-paths="Array.from(chat.changedFilePaths)" />
+                  <FileTree :key="skillTreeKey" root=".opencode/skills" skills-mode :changed-paths="Array.from(chat.changedFilePaths)" />
                 </n-tab-pane>
                 <n-tab-pane name="tasks" tab="任务">
                   <TaskPanel @open-session="onOpenSession" />
@@ -446,6 +457,10 @@ const itemSize = 120
   <ErrorDiagnose
     v-model:show="errorDiagnoseShow"
     @generate="onErrorGenerate"
+  />
+  <SkillMarketplace
+    v-model:show="marketplaceShow"
+    @installed="onSkillInstalled"
   />
 </template>
 
@@ -525,6 +540,8 @@ const itemSize = 120
 
 /* 内置技能列表(技能 tab 顶部,默认折叠、只读) */
 .builtin-collapse { margin-bottom: 2px; }
+.skills-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.skills-title { font-size: 12px; color: var(--text-3); }
 .builtin-note { font-size: 11px; color: var(--text-3); margin-left: 8px; }
 .builtin-empty { color: var(--text-3); font-size: 12px; padding: 8px 0; }
 .builtin-list { display: flex; flex-direction: column; gap: 6px; }

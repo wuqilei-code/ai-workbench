@@ -138,3 +138,32 @@ INSERT IGNORE INTO prompt_template (id, user_id, title, category, content, sort_
   (11, NULL, '头脑风暴', '其他', '请围绕我下面提出的问题做头脑风暴:给出多个有创意的方案,并从可行性、成本、效果三个维度做简要点评,最后给一个推荐。\n\n', 110),
   (12, NULL, '翻译润色', '其他', '请把下面的文字翻译成[目标语言],注意保持语气自然、专业。如有更好的表达请同时给出润色建议。\n\n', 120);
 
+-- 技能广场:用户发布技能到广场供他人安装
+CREATE TABLE IF NOT EXISTS skill_marketplace (
+    id            BIGINT       NOT NULL AUTO_INCREMENT,
+    user_id       BIGINT       NOT NULL COMMENT '发布者',
+    author_name   VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '发布者用户名(冗余)',
+    name          VARCHAR(64)  NOT NULL COMMENT '技能名(小写kebab-case,与 SKILL.md name 一致)',
+    description   VARCHAR(1024) NOT NULL DEFAULT '' COMMENT '一句话描述',
+    content       MEDIUMTEXT   NOT NULL COMMENT 'SKILL.md 全文',
+    installs      INT          NOT NULL DEFAULT 0 COMMENT '被安装次数',
+    created_at    DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at    DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_sm_name (name),
+    KEY idx_sm_user (user_id),
+    KEY idx_sm_installs (installs)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 技能安装记录:同一用户不可重复安装同名技能(唯一约束)
+CREATE TABLE IF NOT EXISTS skill_install (
+    id          BIGINT      NOT NULL AUTO_INCREMENT,
+    user_id     BIGINT      NOT NULL,
+    skill_id    BIGINT      NOT NULL COMMENT '对应 skill_marketplace.id',
+    skill_name  VARCHAR(64) NOT NULL COMMENT '冗余,便于查重',
+    installed_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_si_user_skill (user_id, skill_name),
+    KEY idx_si_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+

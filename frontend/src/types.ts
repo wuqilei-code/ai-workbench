@@ -83,6 +83,19 @@ export interface SkillInfo {
   description: string
 }
 
+/** 技能广场条目 */
+export interface MarketplaceSkillVo {
+  id: number
+  authorName: string
+  name: string
+  description: string
+  content?: string
+  installs: number
+  installed: boolean
+  mine: boolean
+  updatedAt: string
+}
+
 /** 提示词模板项:内置只读,个人自建可编辑 */
 export interface TemplateVo {
   id: number
