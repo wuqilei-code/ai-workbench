@@ -3,13 +3,41 @@ import { computed } from 'vue'
 import { useMessage } from 'naive-ui'
 import { renderMarkdown } from '@/utils/markdown'
 import { downloadMarkdown } from '@/utils/exportMarkdown'
+import { useFavoritesStore } from '@/stores/favorites'
 import { fileApi } from '@/api/files'
 import type { MessageVo } from '@/types'
 
-const props = defineProps<{ message: MessageVo; streaming?: boolean }>()
+const props = defineProps<{
+  message: MessageVo
+  streaming?: boolean
+  /** 所在会话 DB id(收藏跳转用;缺省时隐藏收藏按钮) */
+  sessionId?: number | null
+  /** 所在 turn id(定位用) */
+  turnId?: string
+}>()
 const msg = useMessage()
+const fav = useFavoritesStore()
 
 const isUser = computed(() => props.message.role === 'user')
+
+const starable = computed(() => !props.streaming && props.sessionId != null && !!props.message.id && props.message.id > 0)
+
+const isStarred = computed(() =>
+  starable.value ? fav.isFavorite(props.sessionId!, props.message.id) : false,
+)
+
+function toggleStar() {
+  if (!starable.value) return
+  const added = fav.toggle({
+    sessionId: props.sessionId!,
+    messageId: props.message.id,
+    role: isUser.value ? 'user' : 'assistant',
+    content: (props.message.content || '').slice(0, 500),
+    turnId: props.turnId || '',
+    sessionTitle: '',
+  })
+  msg.success(added ? '已收藏' : '已取消收藏')
+}
 
 /** 用户消息中可能含 [附件] path 标记(ChatInput 上传文件时拼接)。
  *  把这些行抽出来渲染成可下载的 chip,其余文本照常 markdown 渲染。 */
@@ -64,6 +92,7 @@ function exportAsMarkdown() {
     <div class="avatar">{{ isUser ? '我' : 'AI' }}</div>
     <div class="bubble">
       <div class="bubble-tools">
+        <button v-if="starable" class="copy-btn star-btn" :class="{ on: isStarred }" :title="isStarred ? '取消收藏' : '收藏该消息'" @click="toggleStar">{{ isStarred ? '★' : '☆' }}</button>
         <button class="copy-btn" title="复制内容" @click="copyContent">📋</button>
         <button v-if="!isUser" class="copy-btn export-btn" title="导出为 Markdown 文件" @click="exportAsMarkdown">⬇️</button>
       </div>
@@ -107,6 +136,7 @@ function exportAsMarkdown() {
   padding: 2px 4px; border-radius: 4px; line-height: 1;
 }
 .copy-btn:hover { background: var(--surface-hover); }
+.star-btn.on { color: #f0b429; }
 .msg.user .bubble { background: var(--accent-soft); border-color: rgba(107, 138, 253, 0.25); }
 .content :deep(p) { margin: 6px 0; }
 .content :deep(pre.hljs) { background: #16181d; border-radius: var(--radius-sm); padding: 10px; overflow-x: auto; }

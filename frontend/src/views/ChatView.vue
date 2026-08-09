@@ -2,6 +2,7 @@
 import { ref, watch, nextTick, onMounted, onBeforeUnmount, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
+import { useFavoritesStore } from '@/stores/favorites'
 import { useMessage } from 'naive-ui'
 import ChatMessage from '@/components/ChatMessage.vue'
 import AssistantTurn from '@/components/AssistantTurn.vue'
@@ -10,6 +11,7 @@ import WelcomeBoard from '@/components/WelcomeBoard.vue'
 import TemplateLibrary from '@/components/TemplateLibrary.vue'
 import DocumentGenerator from '@/components/DocumentGenerator.vue'
 import ErrorDiagnose from '@/components/ErrorDiagnose.vue'
+import FavoritesPanel from '@/components/FavoritesPanel.vue'
 import FileTree from '@/components/FileTree.vue'
 import TaskPanel from '@/components/TaskPanel.vue'
 import ChangeSummaryCard from '@/components/ChangeSummaryCard.vue'
@@ -21,6 +23,7 @@ import type { FlowItem, SummaryItem, Turn } from '@/utils/turns'
 const route = useRoute()
 const router = useRouter()
 const chat = useChatStore()
+const fav = useFavoritesStore()
 const msg = useMessage()
 const virtualListRef = ref<VirtualListInst | null>(null)
 const showFiles = ref(true)
@@ -156,6 +159,24 @@ async function onOpenSession(target: { sessionId: number; messageId?: number }) 
   await flashToMessage(target.messageId)
 }
 
+/** 收藏面板点击:切会话并定位到收藏项所在 turn(异步轮询等待消息加载)。 */
+async function onOpenFavorite(target: { sessionId: number; turnId?: string }) {
+  showFiles.value = false
+  if (sessionId.value !== target.sessionId) {
+    await router.push({ name: 'session', params: { id: target.sessionId } })
+  }
+  const flash = (turnId: string) => locateTurn(turnId)
+  if (!target.turnId) return
+  for (let i = 0; i < 40; i++) {
+    const turn = chat.turns.find((t) => t.id === target.turnId)
+    if (turn) {
+      flash(turn.id)
+      return
+    }
+    await new Promise((r) => setTimeout(r, 200))
+  }
+}
+
 /** 定位到指定用户消息所在 turn 并闪亮(消息加载是异步的,轮询等待)。 */
 async function flashToMessage(messageId?: number) {
   if (!messageId) return
@@ -176,6 +197,9 @@ onMounted(() => {
   ensureSession()
   window.addEventListener('keydown', onKeydown)
 })
+watch(() => chat.sessions, (list) => {
+  if (list.length) fav.refreshSessionTitles(list)
+}, { deep: true })
 watch(sessionId, () => {
   stickToBottom.value = true
   ensureSession()
@@ -339,7 +363,7 @@ const itemSize = 120
                   :id="'find-turn-' + item.turn.id"
                   :class="{ 'find-flash': flashedTurnId === item.turn.id }"
                 >
-                  <ChatMessage v-if="item.turn.userMessage" :message="item.turn.userMessage" />
+                  <ChatMessage v-if="item.turn.userMessage" :message="item.turn.userMessage" :session-id="chat.currentSessionId" :turn-id="item.turn.id" />
                   <AssistantTurn v-if="item.turn.finalAnswer || item.turn.steps.length" :turn="item.turn" :session-id="chat.currentSessionId" />
                 </div>
                 <ChangeSummaryCard v-else-if="item.kind === 'summary'" :summary="item.summary" />
@@ -396,6 +420,9 @@ const itemSize = 120
                 </n-tab-pane>
                 <n-tab-pane name="tasks" tab="任务">
                   <TaskPanel @open-session="onOpenSession" />
+                </n-tab-pane>
+                <n-tab-pane name="favorites" tab="收藏">
+                  <FavoritesPanel @open-session="onOpenFavorite" />
                 </n-tab-pane>
             </n-tabs>
           </div>

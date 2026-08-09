@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 import { useChatStore } from '@/stores/chat'
+import { useFavoritesStore } from '@/stores/favorites'
 import { renderMarkdown } from '@/utils/markdown'
 import { isFileProducingTool, extractDeliverables, stripDeliverableMarkers } from '@/utils/turns'
 import { chatApi } from '@/api/chat'
@@ -23,6 +24,7 @@ const props = defineProps<{
 
 const chat = useChatStore()
 const msg = useMessage()
+const fav = useFavoritesStore()
 
 // ---------- 流式 / 活跃判定 ----------
 
@@ -131,6 +133,29 @@ function exportFinalAnswerAsMarkdown() {
   const text = stripDeliverableMarkers(fa.message.content || '').trim()
   if (!text) return
   downloadMarkdown(text, props.sessionId ?? undefined)
+}
+
+// ---------- 收藏最终答案 ----------
+
+const faMessageId = computed(() => props.turn.finalAnswer?.message.id ?? 0)
+
+const faStarred = computed(() =>
+  props.sessionId != null && faMessageId.value > 0
+    ? fav.isFavorite(props.sessionId, faMessageId.value)
+    : false,
+)
+
+function toggleFaStar() {
+  if (props.sessionId == null || faMessageId.value <= 0) return
+  const added = fav.toggle({
+    sessionId: props.sessionId,
+    messageId: faMessageId.value,
+    role: 'assistant',
+    content: stripDeliverableMarkers(props.turn.finalAnswer?.message.content || '').slice(0, 500),
+    turnId: props.turn.id,
+    sessionTitle: '',
+  })
+  msg.success(added ? '已收藏' : '已取消收藏')
 }
 
 /** 本 turn 的结果文件清单(仅 turn 定稿后展示)。
@@ -436,6 +461,8 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
     <ChatMessage
       :message="simpleMessage"
       :streaming="isStepActive(turn.finalAnswer)"
+      :session-id="props.sessionId"
+      :turn-id="props.turn.id"
     />
     <DeliverableBar
       v-if="deliverables.length"
@@ -494,6 +521,12 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
 
       <!-- 最终答案 -->
       <div v-if="turn.finalAnswer" class="content">
+        <button
+          class="copy-btn star-btn"
+          :class="{ on: faStarred }"
+          :title="faStarred ? '取消收藏' : '收藏该回答'"
+          @click="toggleFaStar"
+        >{{ faStarred ? '★' : '☆' }}</button>
         <button
           class="copy-btn"
           title="复制回答"
@@ -727,6 +760,7 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
 }
 .content:hover .copy-btn { opacity: 1; }
 .copy-btn:hover { background: var(--surface-hover); }
+.copy-btn.star-btn.on { color: #f0b429; }
 .content :deep(p) { margin: 6px 0; }
 .content :deep(pre.hljs) { background: #16181d; border-radius: var(--radius-sm); padding: 10px; overflow-x: auto; }
 .content :deep(code) { font-family: ui-monospace, monospace; font-size: 13px; }
