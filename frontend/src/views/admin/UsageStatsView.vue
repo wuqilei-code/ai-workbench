@@ -130,6 +130,13 @@ onMounted(load)
 
 .block { margin-bottom: 16px; }
 
+/* 卡片与页面背景区分:略亮的表面色 + 可见边框 */
+.admin-view :deep(.n-card) {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
 .bars { display: flex; align-items: flex-end; gap: 8px; height: 200px; padding: 8px 4px 0; }
 .bar-col {
   flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0;
