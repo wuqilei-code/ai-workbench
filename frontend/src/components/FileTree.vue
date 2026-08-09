@@ -54,6 +54,64 @@ const restoring = ref(false)
 /** 技能名校验正则(与 opencode 一致:小写字母数字 + 单连字符分隔,1-64 字符) */
 const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/
 
+// ---------- 技能元信息(skillsMode):读每个技能目录 SKILL.md 的 frontmatter,展示图标 + 友好名称 ----------
+/** 技能目录名 → { icon, title };title 为「Note Summarizer」式可读名,icon 取 frontmatter 或按名哈希兜底 */
+const skillMetas = ref<Record<string, { icon: string; title: string }>>({})
+const SKILL_FALLBACK_ICONS = ['🤖', '🧩', '📊', '📄', '✍️', '🗂️', '💻', '🔬', '🎨', '🚀', '🛠️', '📝']
+
+/** kebab-case → Title Case(如 note-summarizer → Note Summarizer) */
+function skillTitle(name: string): string {
+  return name
+    .split('-')
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ')
+}
+
+/** 从 SKILL.md frontmatter 提取 icon(可选项);无则按名字哈希在兜底池中取一个稳定 emoji */
+function parseSkillFrontmatter(md: string): { icon?: string } {
+  const m = md.match(/^---\s*\n([\s\S]*?)\n---/)
+  if (m) {
+    const icon = m[1].match(/^icon\s*:\s*(.+)$/m)?.[1]?.trim()
+    if (icon) return { icon }
+  }
+  return {}
+}
+
+/** 按技能名哈希在兜底图标池中取稳定 emoji */
+function fallbackIcon(name: string): string {
+  let h = 0
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0
+  return SKILL_FALLBACK_ICONS[h % SKILL_FALLBACK_ICONS.length]
+}
+
+/** 刷新技能元信息:仅在最顶层(root 目录)读取每个技能目录的 SKILL.md,并缓存目录集合避免轮询重复请求 */
+let skillMetaCacheKey = ''
+async function loadSkillMetas() {
+  const dirs = nodes.value.filter((n) => n.directory).map((n) => n.name).sort().join(',')
+  if (dirs === skillMetaCacheKey) return
+  skillMetaCacheKey = dirs
+  const next: Record<string, { icon: string; title: string }> = {}
+  const jobs = nodes.value
+    .filter((n) => n.directory)
+    .map(async (n) => {
+      try {
+        const md = await fileApi.content(abs(n.name) + '/SKILL.md')
+        next[n.name] = { icon: parseSkillFrontmatter(md).icon || fallbackIcon(n.name), title: skillTitle(n.name) }
+      } catch {
+        next[n.name] = { icon: fallbackIcon(n.name), title: skillTitle(n.name) }
+      }
+    })
+  await Promise.all(jobs)
+  skillMetas.value = next
+}
+
+/** 技能模式下目录节点的展示信息(仅顶层技能目录有效) */
+function skillDisplay(node: FileNode): { icon: string; title: string } | null {
+  if (!props.skillsMode || !node.directory || currentPath.value) return null
+  return skillMetas.value[node.name] ?? null
+}
+
 /** 相对 root 的路径 → 工作区相对路径(后端 API 入参) */
 function abs(rel: string): string {
   const r = props.root
@@ -92,6 +150,8 @@ async function load(path = '', silent = false) {
       (n) => n.name !== '.git' && n.name !== '.opencode' && n.name !== '.gitignore' && n.name !== 'tasks',
     )
     currentPath.value = path
+    // 技能模式:读取技能目录的 SKILL.md 元信息(图标/友好名称),仅在根目录执行
+    if (props.skillsMode && !path) await loadSkillMetas()
   } catch (e: any) { msg.error(e.message) }
   finally { if (!silent) loading.value = false }
 }
@@ -170,11 +230,14 @@ async function createSkill() {
   }
   try {
     await fileApi.mkdir(abs(name))
+    const icon = prompt('技能图标(可选,填一个 emoji,如 🤖;留空则自动分配)')?.trim() || ''
+    const fmIcon = icon ? `\nicon: ${icon}` : ''
     const md =
-      `---\nname: ${name}\ndescription: ${description.trim().replace(/\n/g, ' ')}\n---\n\n` +
+      `---\nname: ${name}\ndescription: ${description.trim().replace(/\n/g, ' ')}${fmIcon}\n---\n\n` +
       `## What I do\n- \n\n## When to use me\n- \n`
     await fileApi.write(`${abs(name)}/SKILL.md`, md)
     msg.success(`已创建技能「${name}」`)
+    skillMetaCacheKey = '' // 强制下次加载重读元信息
     clearEditor()
     await load(name)
   } catch (e: any) {
@@ -424,9 +487,10 @@ onBeforeUnmount(() => {
     <n-spin :show="loading || searching">
       <div v-for="n in displayNodes" :key="n.path" class="node">
         <div class="node-main" @click="open(n)">
-          <span class="node-icon">{{ n.directory ? '📁' : '📄' }}</span>
+          <span class="node-icon">{{ skillDisplay(n) ? skillDisplay(n)!.icon : (n.directory ? '📁' : '📄') }}</span>
           <span v-if="isAiChanged(n)" class="ai-mark" title="本轮 AI 改动">✦</span>
-          <span class="node-name" :class="{ dir: n.directory }">{{ n.name }}</span>
+          <span class="node-name" :class="{ dir: n.directory }">{{ skillDisplay(n) ? skillDisplay(n)!.title : n.name }}</span>
+          <span v-if="skillDisplay(n)" class="skill-sub" :title="n.name">/{{ n.name }}</span>
           <span v-if="isSearchMode" class="node-sub" :title="relFromAbs(n.path)">{{ relFromAbs(n.path) }}</span>
           <span v-if="!n.directory && !isSearchMode" class="node-size">{{ fmtSize(n.size) }}</span>
         </div>
@@ -579,6 +643,7 @@ onBeforeUnmount(() => {
 .op-btn:hover { background: var(--accent-soft); color: var(--accent-text); }
 .op-btn-danger:hover { background: rgba(228, 122, 134, 0.14); color: var(--err); }
 .node-sub { color: var(--accent-text); font-size: 11px; font-family: ui-monospace, monospace; flex-shrink: 0; margin-left: auto; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-sub { color: var(--text-3); font-size: 11px; font-family: ui-monospace, monospace; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .hist-body { display: flex; flex-direction: column; gap: 12px; height: 100%; min-height: 0; }
 .hist-list { overflow-y: auto; flex: 0 0 auto; max-height: 26%; border-bottom: 1px solid var(--border-soft); padding-bottom: 10px; }

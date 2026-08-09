@@ -17,6 +17,14 @@ public class PublishSkillRequest {
     @Size(max = 1024)
     private String description;
 
+    /** 分类标签:dev/doc/data/writing/office/other,缺省 other */
+    @Size(max = 32)
+    private String category;
+
+    /** 展示图标(emoji 或短语) */
+    @Size(max = 32)
+    private String icon;
+
     /** SKILL.md 全文(需含 frontmatter:name/description) */
     @NotBlank
     @Size(max = 60000)

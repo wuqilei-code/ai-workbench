@@ -318,6 +318,7 @@ const itemSize = 120
         <n-button size="small" quaternary title="提示词模板库" @click="templateLibShow = true">模板库</n-button>
         <n-button size="small" quaternary title="一键生成文档(周报/会议纪要/邮件/分析报告)" @click="docGenShow = true">生成文档</n-button>
         <n-button size="small" quaternary title="粘贴报错信息,让 AI 解读" @click="errorDiagnoseShow = true">解读报错</n-button>
+        <n-button size="small" quaternary title="技能广场:浏览/发布/安装技能" @click="marketplaceShow = true">技能广场</n-button>
         <n-button size="small" quaternary @click="showFiles = !showFiles">工作区</n-button>
       </div>
     </div>
@@ -407,10 +408,6 @@ const itemSize = 120
                 <FileTree :changed-paths="Array.from(chat.changedFilePaths)" />
               </n-tab-pane>
                 <n-tab-pane name="skills" tab="技能">
-                  <div class="skills-head">
-                    <span class="skills-title">工作区技能</span>
-                    <n-button size="tiny" quaternary @click="marketplaceShow = true">技能广场</n-button>
-                  </div>
                   <n-collapse :default-expanded-names="[]" :bordered="false" class="builtin-collapse">
                     <n-collapse-item name="builtin" title="内置技能">
                       <template #header-extra>
@@ -540,8 +537,6 @@ const itemSize = 120
 
 /* 内置技能列表(技能 tab 顶部,默认折叠、只读) */
 .builtin-collapse { margin-bottom: 2px; }
-.skills-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.skills-title { font-size: 12px; color: var(--text-3); }
 .builtin-note { font-size: 11px; color: var(--text-3); margin-left: 8px; }
 .builtin-empty { color: var(--text-3); font-size: 12px; padding: 8px 0; }
 .builtin-list { display: flex; flex-direction: column; gap: 6px; }

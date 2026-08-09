@@ -14,6 +14,10 @@ public class MarketplaceSkillVo {
     private String authorName;
     private String name;
     private String description;
+    /** 分类标签:dev/doc/data/writing/office/other */
+    private String category;
+    /** 展示图标(emoji 或短语) */
+    private String icon;
     /** SKILL.md 全文(详情用;列表可省略) */
     private String content;
     private int installs;    /** 当前用户是否已安装 */

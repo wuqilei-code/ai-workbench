@@ -30,6 +30,12 @@ public class SkillMarketplace {
     /** 一句话描述 */
     private String description;
 
+    /** 分类标签:dev/doc/data/writing/office/other */
+    private String category;
+
+    /** 展示图标(emoji 或短语) */
+    private String icon;
+
     /** SKILL.md 全文 */
     private String content;
 

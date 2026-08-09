@@ -44,7 +44,7 @@ export const chatApi = {
   deleteTemplate: (id: number) => http.delete(`/chat/templates/${id}`),
   listMarketplaceSkills: () => http.get<MarketplaceSkillVo[]>('/chat/skills/marketplace').then(unwrap),
   marketplaceSkillDetail: (id: number) => http.get<MarketplaceSkillVo>(`/chat/skills/marketplace/${id}`).then(unwrap),
-  publishSkill: (data: { name: string; description: string; content: string }) =>
+  publishSkill: (data: { name: string; description: string; category?: string; icon?: string; content: string }) =>
     http.post<MarketplaceSkillVo>('/chat/skills/marketplace', data).then(unwrap),
   installSkill: (id: number) => http.post(`/chat/skills/marketplace/${id}/install`),
   deleteMarketplaceSkill: (id: number) => http.delete(`/chat/skills/marketplace/${id}`),

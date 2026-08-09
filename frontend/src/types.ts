@@ -89,11 +89,26 @@ export interface MarketplaceSkillVo {
   authorName: string
   name: string
   description: string
+  category: string
+  icon: string
   content?: string
   installs: number
   installed: boolean
   mine: boolean
   updatedAt: string
+}
+
+/** 技能广场分类(键 → 中文标签 + 默认图标) */
+export const SKILL_CATEGORIES: { key: string; label: string; emoji: string }[] = [
+  { key: 'dev', label: '开发', emoji: '💻' },
+  { key: 'doc', label: '文档', emoji: '📄' },
+  { key: 'data', label: '数据分析', emoji: '📊' },
+  { key: 'writing', label: '写作', emoji: '✍️' },
+  { key: 'office', label: '办公', emoji: '🗂️' },
+  { key: 'other', label: '其他', emoji: '🧩' },
+]
+export function skillCategoryInfo(key: string) {
+  return SKILL_CATEGORIES.find((c) => c.key === key) ?? SKILL_CATEGORIES[SKILL_CATEGORIES.length - 1]
 }
 
 /** 提示词模板项:内置只读,个人自建可编辑 */

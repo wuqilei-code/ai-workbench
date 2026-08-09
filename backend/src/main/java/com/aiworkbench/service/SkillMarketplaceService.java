@@ -81,6 +81,8 @@ public class SkillMarketplaceService {
         s.setAuthorName(author != null && author.getUsername() != null ? author.getUsername() : "");
         s.setName(req.getName());
         s.setDescription(req.getDescription());
+        s.setCategory(req.getCategory() == null || req.getCategory().isBlank() ? "other" : req.getCategory());
+        s.setIcon(req.getIcon() == null ? "" : req.getIcon());
         s.setContent(req.getContent());
         s.setInstalls(0);
         marketplaceMapper.insert(s);
@@ -102,7 +104,7 @@ public class SkillMarketplaceService {
                     "已安装过技能「" + name + "」(如需重装,请先在技能页删除本地副本)");
         }
         String path = SKILLS_ROOT + "/" + name + "/SKILL.md";
-        workspaceService.writeFile(userId, path, s.getContent());
+        workspaceService.writeFile(userId, path, withIconFrontmatter(s.getContent(), s.getIcon()));
 
         SkillInstall it = new SkillInstall();
         it.setUserId(userId);
@@ -127,18 +129,34 @@ public class SkillMarketplaceService {
         }
         marketplaceMapper.deleteById(id);
     }
-
     private MarketplaceSkillVo toVo(SkillMarketplace s, boolean installed, boolean mine, boolean withContent) {
         return MarketplaceSkillVo.builder()
                 .id(s.getId())
                 .authorName(s.getAuthorName())
                 .name(s.getName())
                 .description(s.getDescription())
+                .category(s.getCategory() == null ? "other" : s.getCategory())
+                .icon(s.getIcon() == null ? "" : s.getIcon())
                 .content(withContent ? s.getContent() : null)
                 .installs(s.getInstalls() == null ? 0 : s.getInstalls())
                 .installed(installed)
                 .mine(mine)
                 .updatedAt(s.getUpdatedAt())
                 .build();
+    }
+
+    /**
+     * 把广场技能的 icon 注入 SKILL.md 的 frontmatter,让工作区技能列表能直接读取到图标。
+     * 已存在 icon 字段或没有 frontmatter 时原样返回。
+     */
+    private String withIconFrontmatter(String content, String icon) {
+        if (content == null || icon == null || icon.isBlank()) return content;
+        if (!content.startsWith("---")) return content;
+        int end = content.indexOf("\n---", 4);
+        if (end < 0) return content;
+        String front = content.substring(4, end);
+        if (front.contains("icon:")) return content;
+        String updated = content.substring(0, 4) + front + "\nicon: " + icon + content.substring(end);
+        return updated;
     }
 }

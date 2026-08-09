@@ -147,13 +147,20 @@ CREATE TABLE IF NOT EXISTS skill_marketplace (
     description   VARCHAR(1024) NOT NULL DEFAULT '' COMMENT '一句话描述',
     content       MEDIUMTEXT   NOT NULL COMMENT 'SKILL.md 全文',
     installs      INT          NOT NULL DEFAULT 0 COMMENT '被安装次数',
+    category      VARCHAR(32)  NOT NULL DEFAULT 'other' COMMENT '分类标签(dev/doc/data/writing/office/other)',
+    icon          VARCHAR(32)  NOT NULL DEFAULT '' COMMENT '展示图标(emoji 或短语)',
     created_at    DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at    DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (id),
     UNIQUE KEY uk_sm_name (name),
     KEY idx_sm_user (user_id),
-    KEY idx_sm_installs (installs)
+    KEY idx_sm_installs (installs),
+    KEY idx_sm_category (category)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 技能广场分类/图标:为已存在的 skill_marketplace 表补列(幂等,重复列 1060 错误被 continue-on-error 忽略)
+ALTER TABLE skill_marketplace ADD COLUMN category VARCHAR(32) NOT NULL DEFAULT 'other';
+ALTER TABLE skill_marketplace ADD COLUMN icon VARCHAR(32) NOT NULL DEFAULT '';
 
 -- 技能安装记录:同一用户不可重复安装同名技能(唯一约束)
 CREATE TABLE IF NOT EXISTS skill_install (
