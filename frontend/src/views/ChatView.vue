@@ -149,7 +149,10 @@ onMounted(() => {
   ensureSession()
   window.addEventListener('keydown', onKeydown)
 })
-watch(sessionId, ensureSession)
+watch(sessionId, () => {
+  stickToBottom.value = true
+  ensureSession()
+})
 onBeforeUnmount(() => {
   chat.closeStream()
   window.removeEventListener('keydown', onKeydown)
@@ -159,14 +162,25 @@ function scrollToBottom() {
   nextTick(() => {
     const vl = virtualListRef.value
     if (!vl) return
-    const n = virtualItems.value.length
-    if (!n) return
-    vl.scrollTo({ index: n - 1, position: 'bottom' })
+    if (!virtualItems.value.length) return
+    // 直接滚到内容底部,不依赖 item 高度实测估算(流式高度未同步时按 index 定位会抖动)
+    vl.scrollTo({ position: 'bottom' })
   })
 }
 watch(() => chat.messages.length, scrollToBottom)
 watch(() => chat.turns.length, scrollToBottom)
-watch(() => chat.streamingText, scrollToBottom)
+
+/** 用户是否停留在底部区域(阈值内视为贴底)。贴底时流式输出自动跟随;上翻阅读时不被拉回。 */
+const stickToBottom = ref(true)
+function handleVirtualScroll() {
+  const el = virtualListRef.value?.getScrollContainer?.()
+  if (!el) return
+  stickToBottom.value = el.scrollTop + el.clientHeight >= el.scrollHeight - 120
+}
+// 仅当贴底时才在流式时跟随底部,交给 vueuc 内置 ResizeObserver 跟随(避免与强制滚动竞争抖动)
+watch(() => chat.streamingText, () => {
+  if (stickToBottom.value) scrollToBottom()
+})
 
 onBeforeUnmount(() => {
   chat.closeStream()
@@ -286,6 +300,7 @@ const itemSize = 120
               item-resizable
               key-field="key"
               :items-style="{ padding: '24px 20px' }"
+              @scroll="handleVirtualScroll"
             >
               <template #default="{ item }">
                 <div
