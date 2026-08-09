@@ -71,6 +71,10 @@ export const useChatStore = defineStore('chat', () => {
   const connected = ref(false)
   /** 连接断开且正在自动重连(UI 提示用) */
   const reconnecting = ref(false)
+  /** 登录已过期(SSE 返回 401/403):停止重连,提示用户重新登录 */
+  const authExpired = ref(false)
+  /** 会话切换/加载进行中(避免切换时 UI 闪现旧会话) */
+  const switching = ref(false)
   /** 累计断线重连次数;>0 时重连成功需做一次消息对账恢复(补回断线期间丢失的事件) */
   const reconnectCount = ref(0)
   /** 最近一次收到 SSE 事件的时间(心跳看门狗用,检测"僵尸连接") */
@@ -241,6 +245,8 @@ export const useChatStore = defineStore('chat', () => {
     streamingText.value = ''
     streamingMessageId.value = null
     isStreaming.value = false
+    authExpired.value = false
+    switching.value = true
     manualCollapseOverride.value = {}
     try {
       messages.value = await chatApi.listMessages(id)
@@ -248,6 +254,8 @@ export const useChatStore = defineStore('chat', () => {
       hydratePendingState()
     } catch (e) {
       messages.value = []
+    } finally {
+      switching.value = false
     }
     subscribe()
     startWatchdog()
@@ -404,6 +412,12 @@ export const useChatStore = defineStore('chat', () => {
         connected.value = false
         reconnecting.value = true
         reconnectCount.value++
+      },
+      onAuthError: () => {
+        // token 失效:停止重连(Sse 层已终止 poll),停止心跳看门狗,提示登录过期
+        authExpired.value = true
+        reconnectCount.value = 0
+        closeStream()
       },
     }
     stream = subscribeSession(currentSessionId.value, auth.token, handlers)
@@ -1171,7 +1185,7 @@ export const useChatStore = defineStore('chat', () => {
     streamingMessageId, isStreaming, streamingStuckSeconds, streamingElapsedSeconds, runningActivity,
     streamingReasoningMsgId,
     hasPendingInteraction, connected, reconnecting, forceReconnect, agentStarting,
-    changedFilePaths,
+    authExpired, switching, changedFilePaths,
     searchResults, searching, searchSessions,
     availableModels, selectedProviderId, selectedModelId,
     pendingFill, fillInput,

@@ -24,6 +24,8 @@ const props = withDefaults(defineProps<{
   pollMs: 5000,
 })
 
+const emit = defineEmits<{ (e: 'askAI', path: string): void }>()
+
 const msg = useMessage()
 const dialog = useDialog()
 const nodes = ref<FileNode[]>([])
@@ -264,6 +266,40 @@ async function deleteNode(node: FileNode) {
   } catch (e: any) { msg.error(e.message) }
 }
 
+// ---------- 右键菜单:下载 / 问 AI / 复制路径 ----------
+const ctxVisible = ref(false)
+const ctxX = ref(0)
+const ctxY = ref(0)
+const ctxNode = ref<FileNode | null>(null)
+
+function onContextMenu(node: FileNode, e: MouseEvent) {
+  e.preventDefault()
+  ctxNode.value = node
+  ctxX.value = e.clientX
+  ctxY.value = e.clientY
+  ctxVisible.value = true
+}
+
+function closeContextMenu() {
+  ctxVisible.value = false
+  ctxNode.value = null
+}
+
+async function copyPath(node: FileNode) {
+  try {
+    await navigator.clipboard.writeText(node.path)
+    msg.success('已复制路径')
+  } catch (e: any) {
+    msg.error(e?.message || '复制失败')
+  }
+}
+
+/** 右键「问 AI」:把文件路径交给上层填入输入框,用户补充问题后发送 */
+function askAIMenu(node: FileNode) {
+  emit('askAI', node.path)
+  msg.success(`已把 ${node.path} 填入输入框,补充问题后发送即可`)
+}
+
 function triggerUpload() {
   uploadDir.value = abs(currentPath.value)
   fileInput.value?.click()
@@ -443,6 +479,8 @@ function isAiChanged(node: FileNode): boolean {
 
 onMounted(() => {
   load('')
+  // 点击其它区域时关闭右键菜单(菜单右键自身已在节点上 preventDefault,不在此监听)
+  window.addEventListener('click', closeContextMenu)
   // 自动刷新:文件变化后工作区自动更新。轮询静默刷新当前目录,保留用户导航位置与选中态;
   // 搜索/上传/预览进行中跳过,避免干扰交互。
   if (props.pollMs > 0) {
@@ -457,6 +495,7 @@ onBeforeUnmount(() => {
     clearInterval(pollTimer)
     pollTimer = null
   }
+  window.removeEventListener('click', closeContextMenu)
 })
 </script>
 
@@ -486,7 +525,7 @@ onBeforeUnmount(() => {
     </div>
     <n-spin :show="loading || searching">
       <div v-for="n in displayNodes" :key="n.path" class="node">
-        <div class="node-main" @click="open(n)">
+        <div class="node-main" @click="open(n)" @contextmenu="onContextMenu(n, $event)">
           <span class="node-icon">{{ skillDisplay(n) ? skillDisplay(n)!.icon : (n.directory ? '📁' : '📄') }}</span>
           <span v-if="isAiChanged(n)" class="ai-mark" title="本轮 AI 改动">✦</span>
           <span class="node-name" :class="{ dir: n.directory }">{{ skillDisplay(n) ? skillDisplay(n)!.title : n.name }}</span>
@@ -527,6 +566,29 @@ onBeforeUnmount(() => {
         :description="isSearchMode ? '无匹配文件' : (skillsMode ? '尚无技能,点「新建技能」创建' : '空目录')"
       />
     </n-spin>
+
+    <!-- 右键菜单:下载 / 问 AI / 复制路径 -->
+    <Teleport to="body">
+      <div
+        v-if="ctxVisible && ctxNode"
+        class="ctx-menu"
+        :style="{ left: ctxX + 'px', top: ctxY + 'px' }"
+        @click.stop
+      >
+        <div v-if="!ctxNode.directory" class="ctx-item" @click="downloadNode(ctxNode); closeContextMenu()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span>下载</span>
+        </div>
+        <div class="ctx-item" @click="askAIMenu(ctxNode); closeContextMenu()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          <span>问 AI</span>
+        </div>
+        <div class="ctx-item" @click="copyPath(ctxNode); closeContextMenu()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          <span>复制路径</span>
+        </div>
+      </div>
+    </Teleport>
 
     <n-modal
       v-model:show="previewVisible"
@@ -691,6 +753,21 @@ onBeforeUnmount(() => {
 </style>
 
 <style>
+/* 右键菜单(Teleport 到 body,需全局样式) */
+.ctx-menu {
+  position: fixed; z-index: 3000; min-width: 150px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); box-shadow: var(--shadow);
+  padding: 4px; user-select: none;
+}
+.ctx-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; font-size: 13px; color: var(--text-2);
+  border-radius: 6px; cursor: pointer;
+}
+.ctx-item:hover { background: var(--accent-soft); color: var(--accent-text); }
+.ctx-item svg { flex-shrink: 0; }
+
 /* n-modal teleport 到 body,需用全局样式(非 scoped)控制内容区高度 */
 .fp-modal .n-card__content {
   height: calc(86vh - 56px);

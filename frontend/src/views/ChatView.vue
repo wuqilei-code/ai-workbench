@@ -58,6 +58,11 @@ function onErrorGenerate(prompt: string) {
   chatInputRef.value?.fill(prompt)
 }
 
+/** 文件树右键「问 AI」:把文件路径填入输入框,引导用户补充问题后发送 */
+function onAskAIFile(path: string) {
+  chatInputRef.value?.fill(`请看看工作区里的这个文件:${path}\n\n我需要你:`)
+}
+
 // ---------- 技能面板(内置全局技能只读列表)----------
 
 const builtinSkills = ref<SkillInfo[]>([])
@@ -321,8 +326,14 @@ const itemSize = 120
       </div>
     </div>
 
+    <!-- 登录过期横幅:token 失效后 SSE 停止重连,提示重新登录而非无限重连 -->
+    <div v-if="chat.authExpired" class="auth-expired-bar">
+      <span>登录已过期,实时连接已断开,请重新登录后继续。</span>
+      <n-button size="tiny" type="primary" @click="router.push('/login')">重新登录</n-button>
+    </div>
+
     <!-- 断线横幅:意外断线时显示;切换会话/首次连接中的主动断开不算断线,不打扰 -->
-    <div v-if="chat.currentSessionId && !chat.connected && chat.reconnecting" class="reconnect-bar">
+    <div v-if="chat.currentSessionId && !chat.connected && chat.reconnecting && !chat.authExpired" class="reconnect-bar">
       <span>连接已断开{{ chat.reconnecting ? '，正在自动重连…' : '' }}</span>
       <n-button size="tiny" type="primary" @click="chat.forceReconnect">立即重连</n-button>
     </div>
@@ -351,7 +362,13 @@ const itemSize = 120
     <div class="chat-main">
       <div class="chat-col">
         <div class="chat-body">
-          <template v-if="chat.currentSessionId && !isNewSession">
+          <template v-if="chat.switching">
+            <div class="switching-mask">
+              <n-spin size="small" />
+              <span>正在加载会话…</span>
+            </div>
+          </template>
+          <template v-else-if="chat.currentSessionId && !isNewSession">
             <n-virtual-list
               ref="virtualListRef"
               class="chat-virtual"
@@ -403,7 +420,7 @@ const itemSize = 120
           <div class="workspace-tabs">
             <n-tabs type="line" animated size="small">
               <n-tab-pane name="files" tab="文件">
-                <FileTree :changed-paths="Array.from(chat.changedFilePaths)" />
+                <FileTree :changed-paths="Array.from(chat.changedFilePaths)" @ask-ai="onAskAIFile" />
               </n-tab-pane>
                 <n-tab-pane name="skills" tab="技能">
                   <n-collapse :default-expanded-names="[]" :bordered="false" class="builtin-collapse">
@@ -422,7 +439,7 @@ const itemSize = 120
                     </n-collapse-item>
                   </n-collapse>
                   <n-divider style="margin: 10px 0" />
-                  <FileTree :key="skillTreeKey" root=".opencode/skills" skills-mode :changed-paths="Array.from(chat.changedFilePaths)" />
+                  <FileTree :key="skillTreeKey" root=".opencode/skills" skills-mode :changed-paths="Array.from(chat.changedFilePaths)" @ask-ai="onAskAIFile" />
                 </n-tab-pane>
                 <n-tab-pane name="tasks" tab="任务">
                   <TaskPanel @open-session="onOpenSession" />
@@ -477,6 +494,12 @@ const itemSize = 120
 .chat-virtual { height: 100%; }
 .thinking { display: flex; align-items: center; gap: 8px; color: var(--text-3); padding: 8px 0; }
 
+/* 会话切换加载遮罩 */
+.switching-mask {
+  height: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;
+  color: var(--text-3); font-size: 13px;
+}
+
 /* 工作区面板 */
 .workspace-panel {
   width: 440px; flex-shrink: 0;
@@ -505,6 +528,13 @@ const itemSize = 120
 }
 .workspace-collapsed-tab:hover { color: var(--accent-text); background: var(--surface-hover); }
 .ws-vertical-text { writing-mode: vertical-rl; font-size: 13px; letter-spacing: 3px; }
+
+/* 登录过期横幅 */
+.auth-expired-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 18px; font-size: 13px; color: var(--err);
+  background: rgba(228, 122, 134, 0.1); border-bottom: 1px solid rgba(228, 122, 134, 0.25);
+}
 
 /* 断线横幅 */
 .reconnect-bar {

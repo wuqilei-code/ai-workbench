@@ -310,7 +310,12 @@ public class ProviderConfigService {
 
         Map<String, Object> permission = new LinkedHashMap<>();
         permission.put("bash", bash);
-        permission.put("external_directory", "ask"); // 访问工作区外路径 → 确认
+        // 访问工作区外路径 → 确认;容器临时目录(/tmp/opencode)为工具运行时自身创建的临时文件,直接放行
+        // 顺序敏感:opencode 最后匹配的规则优先,故 "*"(ask) 在前、具体路径(allow)在后
+        Map<String, Object> externalDir = new LinkedHashMap<>();
+        externalDir.put("*", "ask");
+        externalDir.put("/tmp/opencode/**", "allow");
+        permission.put("external_directory", externalDir);
         return permission;
     }
 

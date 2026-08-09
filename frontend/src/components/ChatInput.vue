@@ -4,11 +4,12 @@ import { useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { chatApi } from '@/api/chat'
 import { fileApi } from '@/api/files'
-import { useMessage } from 'naive-ui'
+import { useMessage, useDialog } from 'naive-ui'
 import type { CommandItem } from '@/types'
 
 const chat = useChatStore()
 const msg = useMessage()
+const dialog = useDialog()
 const router = useRouter()
 const text = ref('')
 const inputRef = ref<HTMLTextAreaElement | null>(null)
@@ -232,17 +233,42 @@ async function onSend() {
     const [head, ...rest] = payload.split(' ')
     const cmd = commands.value.find((c) => c.name === head.slice(1))
     if (cmd) {
+      const lastText = text.value
+      const lastAttachments = [...attachments.value]
       text.value = ''
       attachments.value = []
-      await chat.runCommand(cmd.name, rest.join(' ').trim())
+      try {
+        await chat.runCommand(cmd.name, rest.join(' ').trim())
+      } catch (e: any) {
+        text.value = lastText
+        attachments.value = lastAttachments
+        msg.error(e?.message || '命令执行失败,已为你保留输入内容')
+        await nextTick()
+        resizeInput()
+        inputRef.value?.focus()
+        return
+      }
       await nextTick()
       inputRef.value?.focus()
       return
     }
   }
+  const lastText = text.value
+  const lastAttachments = [...attachments.value]
   text.value = ''
   attachments.value = []
-  await chat.sendMessage(payload)
+  try {
+    await chat.sendMessage(payload)
+  } catch (e: any) {
+    // 发送失败:回填输入原文与附件,便于用户修正后重试,而不是丢失输入
+    text.value = lastText
+    attachments.value = lastAttachments
+    msg.error(e?.message || '发送失败,已为你保留输入内容')
+    await nextTick()
+    resizeInput()
+    inputRef.value?.focus()
+    return
+  }
   await nextTick()
   inputRef.value?.focus()
 }
@@ -266,8 +292,17 @@ watch(text, () => {
 })
 
 async function onAbort() {
-  if (chat.streamingStuckSeconds > 0) await chat.forceReleaseStreaming()
-  else await chat.abort()
+  if (chat.streamingStuckSeconds > 0) {
+    await chat.forceReleaseStreaming()
+    return
+  }
+  dialog.warning({
+    title: '停止本轮生成',
+    content: '停止后 AI 将立即中断。已执行的变更仍会保存在工作区,结束后仍可查看这次的变更总结。确定停止？',
+    positiveText: '停止',
+    negativeText: '继续生成',
+    onPositiveClick: () => chat.abort(),
+  })
 }
 
 /** ---- 底部工具栏:模型选择 ---- */
@@ -293,6 +328,8 @@ const modelValue = computed({
     if (!v) return
     const [pid, mid] = v.split('::')
     chat.selectModel(pid, mid)
+    const label = modelOptions.value.find((o) => o.value === v)?.label
+    msg.success(`已切换模型:${label || mid}`)
   },
 })
 

@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import { useMessage } from 'naive-ui'
 import { summarizeToolCall, extractFilePath, isFileProducingTool } from '@/utils/turns'
 import type { ToolCall } from '@/types'
 
 const props = defineProps<{ tc: ToolCall }>()
 const emit = defineEmits<{ download: [path: string] }>()
+const msg = useMessage()
 
 /** 工具输出(可能为空 → 不渲染输出框) */
 const output = computed(() => props.tc.output ?? '')
@@ -59,6 +61,32 @@ const lineCount = computed(() => {
   const t = output.value.trim()
   return t ? t.split('\n').length : 0
 })
+
+/** 把工具输出复制为文本(skip 运行中持续输出,避免复制半截) */
+async function copyOutput() {
+  if (running.value) return
+  try {
+    await navigator.clipboard.writeText(props.tc.output ?? '')
+    msg.success('已复制工具输出')
+  } catch (e: any) {
+    msg.error(e?.message || '复制失败')
+  }
+}
+
+/** 把工具输出保存为本地文件下载 */
+function downloadOutput() {
+  if (running.value) return
+  const blob = new Blob([props.tc.output ?? ''], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  const base = props.tc.tool.replace(/[^\w-]/g, '_') || 'tool'
+  a.href = url
+  a.download = `${base}-output.txt`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
 </script>
 
 <template>
@@ -80,6 +108,10 @@ const lineCount = computed(() => {
         <span class="label">工具输出</span>
         <span v-if="lineCount" class="lines">{{ lineCount }} 行</span>
         <span v-if="running" class="live">执行中…</span>
+        <span v-else-if="output && !running" class="output-actions" @click.stop>
+          <a class="output-act" title="复制工具输出" @click="copyOutput">⧉ 复制</a>
+          <a class="output-act" title="下载为文本文件" @click="downloadOutput">⬇ 下载</a>
+        </span>
       </button>
       <pre
         v-if="expanded"
@@ -126,6 +158,14 @@ const lineCount = computed(() => {
 .tool-output .label { font-weight: 600; color: var(--text-2); }
 .tool-output .lines { color: var(--text-3); font-size: 11px; }
 .tool-output .live { color: var(--warn); font-size: 11px; }
+.tool-output .output-actions {
+  margin-left: auto; display: inline-flex; gap: 8px; align-items: center;
+}
+.output-act {
+  color: var(--text-3); font-size: 11px; text-decoration: none; padding: 1px 5px;
+  border-radius: 4px; cursor: pointer;
+}
+.output-act:hover { background: var(--accent-soft); color: var(--accent-text); }
 .tool-output-body {
   margin: 0; padding: 8px 10px;
   max-height: 260px; overflow: auto;

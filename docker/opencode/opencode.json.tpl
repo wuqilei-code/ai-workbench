@@ -23,7 +23,10 @@
       "python* -m pip*": "deny",
       "python* -m ensurepip*": "deny"
     },
-    "external_directory": "ask"
+    "external_directory": {
+      "*": "ask",
+      "/tmp/opencode/**": "allow"
+    }
   },
   "provider": {
     "openai": {

@@ -7,12 +7,23 @@ import { useThemeStore } from '@/stores/theme'
 import { useDialog, useMessage } from 'naive-ui'
 import type { SessionVo } from '@/types'
 
+const props = withDefaults(defineProps<{ collapsed?: boolean; narrow?: boolean }>(), {
+  collapsed: false,
+  narrow: false,
+})
+const emit = defineEmits<{ 'update:collapsed': [v: boolean] }>()
+
 const router = useRouter()
 const chat = useChatStore()
 const auth = useAuthStore()
 const theme = useThemeStore()
 const dialog = useDialog()
 const msg = useMessage()
+
+/** 汉堡按钮:窄屏可手动收起/展开侧边栏 */
+function toggleCollapsed() {
+  emit('update:collapsed', !props.collapsed)
+}
 
 /** 管理员入口菜单:用户管理 / 模型管理 / 用量统计 */
 const adminMenuOptions = [
@@ -75,13 +86,40 @@ async function onAgentSelect(key: string) {
 }
 
 async function newChat() {
+  if (chat.isStreaming) {
+    const go = await confirmSwitch('新建会话')
+    if (!go) return
+  }
   const s = await chat.createSession('New Chat')
   router.push(`/session/${s.id}`)
 }
 
 async function openSession(id: number) {
+  if (id === chat.currentSessionId) {
+    router.push(`/session/${id}`)
+    return
+  }
+  if (chat.isStreaming) {
+    const go = await confirmSwitch('切换会话')
+    if (!go) return
+  }
   router.push(`/session/${id}`)
   await chat.selectSession(id)
+}
+
+/** 流式中切换会话的统一确认:提示正在生成,切换会中断本会话的实时推送(服务端继续运行,可再切回查看)。 */
+function confirmSwitch(action: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    dialog.warning({
+      title: action,
+      content: '当前会话仍在生成中。切换后本会话的实时推送会中断(已在服务端执行的操作会继续完成),确认继续？',
+      positiveText: '继续',
+      negativeText: '取消',
+      onPositiveClick: () => resolve(true),
+      onNegativeClick: () => resolve(false),
+      onClose: () => resolve(false),
+    })
+  })
 }
 
 async function remove(id: number) {
@@ -232,9 +270,14 @@ function logout() {
 </script>
 
 <template>
-  <n-layout-sider bordered :width="260" content-style="display:flex; flex-direction:column">
+  <n-layout-sider bordered :width="260" :collapsed-width="0" collapsible :collapsed="props.collapsed" show-trigger="bar" collapse-mode="width" content-style="display:flex; flex-direction:column" @update:collapsed="emit('update:collapsed', $event)">
     <div class="side-head">
-      <span class="logo">AI Workbench</span>
+      <div class="head-left">
+        <button v-if="props.narrow" class="hamburger" title="收起/展开侧边栏" @click="toggleCollapsed">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <span class="logo">AI Workbench</span>
+      </div>
       <div class="head-actions">
         <n-button size="small" type="primary" @click="newChat" title="新建默认会话">+ 新会话</n-button>
         <n-dropdown
@@ -345,6 +388,13 @@ function logout() {
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 12px; border-bottom: 1px solid var(--border-soft);
 }
+.head-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.hamburger {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text-3); cursor: pointer; padding: 4px; flex-shrink: 0;
+}
+.hamburger:hover { background: var(--surface-hover); color: var(--text-2); }
 .head-actions { display: flex; align-items: center; gap: 4px; }
 .logo {
   font-weight: 700; font-size: 15px;
