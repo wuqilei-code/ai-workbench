@@ -7,6 +7,7 @@ import { isFileProducingTool, extractDeliverables, stripDeliverableMarkers } fro
 import { chatApi } from '@/api/chat'
 import { fileApi } from '@/api/files'
 import { shouldShowGenerationToast } from '@/utils/generationToast'
+import { downloadMarkdown } from '@/utils/exportMarkdown'
 import JSZip from 'jszip'
 import type { Step, Turn, ToolCall, PendingQuestion, PendingPermission } from '@/types'
 import ChatMessage from './ChatMessage.vue'
@@ -121,6 +122,15 @@ async function copyFinalAnswer() {
   } catch {
     msg.error('复制失败')
   }
+}
+
+/** 导出为 .md 文件:文件名取会话标题或时间戳 */
+function exportFinalAnswerAsMarkdown() {
+  const fa = props.turn.finalAnswer
+  if (!fa) return
+  const text = stripDeliverableMarkers(fa.message.content || '').trim()
+  if (!text) return
+  downloadMarkdown(text, props.sessionId ?? undefined)
 }
 
 /** 本 turn 的结果文件清单(仅 turn 定稿后展示)。
@@ -489,6 +499,11 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
           title="复制回答"
           @click="copyFinalAnswer"
         >📋</button>
+        <button
+          class="copy-btn export-btn"
+          title="导出为 Markdown 文件"
+          @click="exportFinalAnswerAsMarkdown"
+        >⬇️</button>
         <span
           v-if="displayContent(turn.finalAnswer)"
           v-html="renderMarkdown(stripDeliverableMarkers(displayContent(turn.finalAnswer)))"

@@ -8,6 +8,7 @@ import AssistantTurn from '@/components/AssistantTurn.vue'
 import ChatInput from '@/components/ChatInput.vue'
 import WelcomeBoard from '@/components/WelcomeBoard.vue'
 import TemplateLibrary from '@/components/TemplateLibrary.vue'
+import DocumentGenerator from '@/components/DocumentGenerator.vue'
 import FileTree from '@/components/FileTree.vue'
 import TaskPanel from '@/components/TaskPanel.vue'
 import ChangeSummaryCard from '@/components/ChangeSummaryCard.vue'
@@ -24,6 +25,7 @@ const virtualListRef = ref<VirtualListInst | null>(null)
 const showFiles = ref(true)
 const chatInputRef = ref<InstanceType<typeof ChatInput> | null>(null)
 const templateLibShow = ref(false)
+const docGenShow = ref(false)
 
 /** 空会话判断:会话已建但尚无任何消息(turn 为空)。 */
 const isNewSession = computed(() => chat.currentSessionId != null && chat.turns.length === 0)
@@ -33,6 +35,10 @@ function onScenarioSelect(prompt: string) {
   chatInputRef.value?.fill(prompt)
 }
 function onTemplateUse(prompt: string) {
+  chatInputRef.value?.fill(prompt)
+}
+/** 文档生成:把拼好的提示词填入输入框供确认后发送。 */
+function onDocGenerate(prompt: string) {
   chatInputRef.value?.fill(prompt)
 }
 
@@ -273,6 +279,7 @@ const itemSize = 120
       <div class="head-right">
         <n-button size="small" quaternary title="会话内查找 (Ctrl+F)" @click="openFind">查找</n-button>
         <n-button size="small" quaternary title="提示词模板库" @click="templateLibShow = true">模板库</n-button>
+        <n-button size="small" quaternary title="一键生成文档(周报/会议纪要/邮件/分析报告)" @click="docGenShow = true">生成文档</n-button>
         <n-button size="small" quaternary @click="showFiles = !showFiles">工作区</n-button>
       </div>
     </div>
@@ -397,6 +404,10 @@ const itemSize = 120
   <TemplateLibrary
     v-model:show="templateLibShow"
     @use="onTemplateUse"
+  />
+  <DocumentGenerator
+    v-model:show="docGenShow"
+    @generate="onDocGenerate"
   />
 </template>
 

@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useMessage } from 'naive-ui'
 import { renderMarkdown } from '@/utils/markdown'
+import { downloadMarkdown } from '@/utils/exportMarkdown'
 import { fileApi } from '@/api/files'
 import type { MessageVo } from '@/types'
 
@@ -50,6 +51,12 @@ async function copyContent() {
     msg.error('复制失败')
   }
 }
+
+function exportAsMarkdown() {
+  const text = props.message.content || ''
+  if (!text) return
+  downloadMarkdown(text)
+}
 </script>
 
 <template>
@@ -58,6 +65,7 @@ async function copyContent() {
     <div class="bubble">
       <div class="bubble-tools">
         <button class="copy-btn" title="复制内容" @click="copyContent">📋</button>
+        <button v-if="!isUser" class="copy-btn export-btn" title="导出为 Markdown 文件" @click="exportAsMarkdown">⬇️</button>
       </div>
       <div v-if="message._pending" class="status">发送中…</div>
       <div v-else-if="message.status === 'error'" class="status err">{{ message.error || '发送失败' }}</div>
