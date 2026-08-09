@@ -242,12 +242,22 @@ async function onSend() {
 }
 
 function onInput() {
+  resizeInput()
+  if (text.value.trim().startsWith('/')) ensureCommands()
+}
+
+/** 文本框自适应高度:内容变化(含 programmatic 清空)后重算,保证清空/发送后恢复默认一行高度 */
+function resizeInput() {
   const el = inputRef.value
   if (!el) return
   el.style.height = 'auto'
   el.style.height = Math.min(el.scrollHeight, 200) + 'px'
-  if (text.value.trim().startsWith('/')) ensureCommands()
 }
+
+/** 兜底:任何方式改变 text(模板填充/粘贴/发送清空/命令清空)都触发高度重算 */
+watch(text, () => {
+  nextTick().then(resizeInput)
+})
 
 async function onAbort() {
   if (chat.streamingStuckSeconds > 0) await chat.forceReleaseStreaming()
