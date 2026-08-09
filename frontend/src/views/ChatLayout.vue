@@ -9,6 +9,10 @@ const onboardingRef = ref<InstanceType<typeof Onboarding> | null>(null)
 
 onMounted(async () => {
   await Promise.all([chat.loadModels(), chat.loadSessions(), chat.loadArchivedSessions()])
+  // 首次登录/无任何会话时,默认创建一个新会话,避免空列表无从下手
+  if (chat.sessions.length === 0) {
+    await chat.createSession('新对话')
+  }
   nextTick(() => onboardingRef.value?.tryShowOnboarding())
 })
 </script>
