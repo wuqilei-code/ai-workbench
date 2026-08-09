@@ -174,3 +174,22 @@ CREATE TABLE IF NOT EXISTS skill_install (
     KEY idx_si_user (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 技能广场官方种子:user_id=0 表示系统发布(普通用户 id>=1,避免误删);INSERT IGNORE 幂等,同名技能已存在则跳过
+INSERT IGNORE INTO skill_marketplace (user_id, author_name, name, description, category, icon, content, installs) VALUES
+  (0, '系统', 'meeting-minutes', '把会议讨论/录音整理成结构化会议纪要:主题、参会人、要点、结论、行动项(负责人+截止时间)', 'doc', '📝',
+   '---\nname: meeting-minutes\ndescription: Use when the user asks to create meeting minutes from a discussion or transcript: topic, attendees, key points, decisions and action items.\n---\n\n# Meeting Minutes\n\nTurn raw notes into structured minutes.\n\n## Steps\n1. Identify the topic and attendees.\n2. Extract the key points per discussion item.\n3. Record conclusions explicitly.\n4. List action items as a table: owner, due date, status.\n\n## Rules\n- Never invent attendees, deadlines or decisions.\n- Ask for missing essentials before finishing.\n', 0),
+  (0, '系统', 'weekly-report', '把工作内容整理成周报:本周完成、下周计划、风险与求助三部分', 'doc', '🗓️',
+   '---\nname: weekly-report\ndescription: Use when the user asks to write a weekly report from a work log: what was done, what is planned, risks and help needed.\n---\n\n# Weekly Report\n\nTurn work notes into a weekly report.\n\n## 结构\n1. 本周完成:列出成果,尽量量化。\n2. 下周计划:按优先级排列。\n3. 风险与求助:明说风险点与需要的帮助。\n\n## Rules\n- Keep it concise and reality-based.\n- Ask for missing numbers instead of inventing.\n', 0),
+  (0, '系统', 'ppt-outline', '把主题/素材扩展成 PPT 大纲:封面、目录、逐页标题与要点、结尾页', 'doc', '🎞️',
+   '---\nname: ppt-outline\ndescription: Use when the user asks to build a slide deck outline from a topic: cover, agenda, per-slide bullets, closing slide.\n---\n\n# PPT Outline\n\nTurn a topic/subject into a clear slide outline.\n\n## Steps\n1. Confirm audience & goal (report/pitch/training).\n2. Draft cover + agenda.\n3. Write each slide: one idea, 3-5 bullets.\n4. Close with summary / Q&A.\n\n## Rules\n- Keep 5-15 slides; no wall of text.\n- Make each slide title actionable.\n', 0),
+  (0, '系统', 'sql-helper', 'SQL 编写、执行计划分析、索引建议、慢查询剖析,附可运行样例', 'dev', '🗄️',
+   '---\nname: sql-helper\ndescription: Use when the user asks to write or optimize SQL: analyze execution plan risks (full scan, implicit conversion), rewrite, and suggest indexes.\n---\n\n# SQL Helper\n\nWrite / review / optimize SQL.\n\n## Steps\n1. Clarify schema and intent.\n2. Review: full scan, missing index, implicit type conversion, N+1.\n3. Rewrite query, explain the change.\n4. Suggest indexes (DDL).\n\n## Rules\n- Only against the user''s database.\n- Explain why, not just what.\n', 0),
+  (0, '系统', 'code-review', '逐段审查代码:bug、安全、性能、可读性,并按严重度给出修复建议', 'dev', '🛡️',
+   '---\nname: code-review\ndescription: Use when the user asks to review code for bugs, security, performance and readability, and suggest fixes.\n---\n\n# Code Review\n\n\nReview submission pragmatically.\n\n## Checklist\n- Correctness: edges, nulls, races.\n- Security: injection, secrets.\n- Performance: loops, I/O.\n- Readability: naming, structure.\n\n## Output\n- Severity tags (Critical/Major/Minor).\n- One fix per finding.\n- A short summary.\n\n## Rules\n- Ground every finding; never guess.\n', 0),
+  (0, '系统', 'commit-hint', '按 Git 差异生成 Conventional Commits 提交信息:type/scope/subject + 正文', 'dev', '🔖',
+   '---\nname: commit-hint\ndescription: Use when the user asks to write a commit message from a diff in Conventional Commits format.\n---\n\n# Commit Message\n\n## type\n`fix feat docs style refactor perf test build chore`\n\n## Rules\n- subject imperative & concise.\n- body explains why.\n', 0),
+  (0, '系统', 'zh-polish', '改写中文,优化用词、语法与结构,保留原义', 'writing', '🖋️',
+   '---\nname: zh-polish\ndescription: Use when the user asks to polish Chinese text: improve wording, grammar, tone and structure while keeping meaning.\n---\n\n# Chinese Polish\n\n## Steps\n1. Fix grammar & punctuation.\n2. Improve wording naturally.\n3. Restructure paragraphs if messy.\n\n## Rules\n- Keep the author''s intent.\n- Offer diff-style summary.\n', 0),
+  (0, '系统', 'translate', '中英互译,保留原意与语气,输出自然译文', 'writing', '🌐',
+   '---\nname: translate\ndescription: Use when the user asks to translate between languages while keeping meaning.\n---\n\n# Translate\n\n## Steps\n- Preserve meaning & tone.\n- Natural target expression.\n- Ask when ambiguous.\n', 0);
+
