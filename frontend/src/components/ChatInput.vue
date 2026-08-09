@@ -14,6 +14,12 @@ const text = ref('')
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 
+/** 交由父级打开「生成文档」「解读报错」弹窗 */
+const emit = defineEmits<{
+  (e: 'openDocGen'): void
+  (e: 'openErrorDiagnose'): void
+}>()
+
 /** 供欢迎页/模板库等外部注入:把提示词填入输入框并聚焦(不自动发送,便于用户补充)。 */
 function fill(prompt: string) {
   if (!prompt) return
@@ -462,6 +468,10 @@ async function startNewChat() {
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
         </n-dropdown>
+
+        <!-- 快捷工具:生成文档 / 解读报错 -->
+        <button class="tool-btn tool-btn-text" title="一键生成文档(周报/会议纪要/邮件/分析报告)" @click="emit('openDocGen')">📄 生成文档</button>
+        <button class="tool-btn tool-btn-text" title="粘贴报错信息,让 AI 解读" @click="emit('openErrorDiagnose')">🩺 解读报错</button>
       </div>
 
       <div class="toolbar-right">

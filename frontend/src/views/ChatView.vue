@@ -388,11 +388,7 @@ const itemSize = 120
           <n-empty v-else description="选择左侧会话或点击「新会话」开始" style="margin-top: 80px" />
         </div>
 
-        <ChatInput v-if="chat.currentSessionId" ref="chatInputRef" />
-        <div v-if="chat.currentSessionId" class="input-quick">
-          <n-button size="tiny" text type="primary" title="一键生成文档(周报/会议纪要/邮件/分析报告)" @click="docGenShow = true">📄 生成文档</n-button>
-          <n-button size="tiny" text type="primary" title="粘贴报错信息,让 AI 解读" @click="errorDiagnoseShow = true">🩺 解读报错</n-button>
-        </div>
+        <ChatInput v-if="chat.currentSessionId" ref="chatInputRef" @open-doc-gen="docGenShow = true" @open-error-diagnose="errorDiagnoseShow = true" />
       </div>
 
       <!-- 工作区:常驻右侧面板,可向右收起 -->
@@ -480,12 +476,6 @@ const itemSize = 120
 .chat-body { flex: 1; overflow: hidden; min-height: 0; position: relative; }
 .chat-virtual { height: 100%; }
 .thinking { display: flex; align-items: center; gap: 8px; color: var(--text-3); padding: 8px 0; }
-
-/* 输入框下方的快捷入口 */
-.input-quick {
-  display: flex; align-items: center; gap: 16px;
-  padding: 4px 16px 8px; background: var(--bg-elev);
-}
 
 /* 工作区面板 */
 .workspace-panel {
