@@ -14,6 +14,16 @@ const theme = useThemeStore()
 const dialog = useDialog()
 const msg = useMessage()
 
+/** 管理员入口菜单:用户管理 / 模型管理 / 用量统计 */
+const adminMenuOptions = [
+  { label: '👥 用户管理', key: '/admin/users' },
+  { label: '🧩 模型管理', key: '/admin/providers' },
+  { label: '📊 用量统计', key: '/admin/usage' },
+]
+function onAdminSelect(key: string) {
+  router.push(key)
+}
+
 /** 归档视图开关:false=主列表, true=已归档列表 */
 const viewArchived = ref(false)
 const sessions = computed(() => viewArchived.value ? chat.archivedSessions : chat.sessions)
@@ -299,9 +309,9 @@ function logout() {
       </div>
       <div class="foot-actions">
         <n-button size="small" quaternary :title="theme.mode === 'dark' ? '切换到浅色主题' : '切换到深色主题'" @click="theme.toggle()">{{ theme.mode === 'dark' ? '☀️' : '🌙' }}</n-button>
-        <n-button v-if="auth.isAdmin" size="small" quaternary @click="router.push('/admin/users')">用户管理</n-button>
-        <n-button v-if="auth.isAdmin" size="small" quaternary @click="router.push('/admin/providers')">模型管理</n-button>
-        <n-button v-if="auth.isAdmin" size="small" quaternary @click="router.push('/admin/usage')">用量统计</n-button>
+        <n-dropdown v-if="auth.isAdmin" :options="adminMenuOptions" trigger="click" placement="top-end" @select="onAdminSelect">
+          <n-button size="small" quaternary>⚙️ 管理</n-button>
+        </n-dropdown>
         <n-button size="small" quaternary @click="logout">退出</n-button>
       </div>
     </div>
@@ -363,8 +373,8 @@ function logout() {
 .session-item.active { background: var(--accent-soft); }
 .session-item.active .title { color: var(--accent-text); }
 .session-item .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; color: var(--text-2); }
-.side-foot { border-top: 1px solid var(--border-soft); padding: 12px; }
-.user-info { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.user-info .name { flex: 1; color: var(--text-2); }
-.foot-actions { display: flex; gap: 6px; }
+.side-foot { border-top: 1px solid var(--border-soft); padding: 10px 12px 12px; }
+.user-info { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.user-info .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
+.foot-actions { display: flex; align-items: center; gap: 4px; justify-content: space-between; }
 </style>
