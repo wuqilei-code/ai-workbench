@@ -316,8 +316,6 @@ const itemSize = 120
       <div class="head-right">
         <n-button size="small" quaternary title="会话内查找 (Ctrl+F)" @click="openFind">查找</n-button>
         <n-button size="small" quaternary title="提示词模板库" @click="templateLibShow = true">模板库</n-button>
-        <n-button size="small" quaternary title="一键生成文档(周报/会议纪要/邮件/分析报告)" @click="docGenShow = true">生成文档</n-button>
-        <n-button size="small" quaternary title="粘贴报错信息,让 AI 解读" @click="errorDiagnoseShow = true">解读报错</n-button>
         <n-button size="small" quaternary title="技能广场:浏览/发布/安装技能" @click="marketplaceShow = true">技能广场</n-button>
         <n-button size="small" quaternary @click="showFiles = !showFiles">工作区</n-button>
       </div>
@@ -391,6 +389,10 @@ const itemSize = 120
         </div>
 
         <ChatInput v-if="chat.currentSessionId" ref="chatInputRef" />
+        <div v-if="chat.currentSessionId" class="input-quick">
+          <n-button size="tiny" text type="primary" title="一键生成文档(周报/会议纪要/邮件/分析报告)" @click="docGenShow = true">📄 生成文档</n-button>
+          <n-button size="tiny" text type="primary" title="粘贴报错信息,让 AI 解读" @click="errorDiagnoseShow = true">🩺 解读报错</n-button>
+        </div>
       </div>
 
       <!-- 工作区:常驻右侧面板,可向右收起 -->
@@ -478,6 +480,12 @@ const itemSize = 120
 .chat-body { flex: 1; overflow: hidden; min-height: 0; position: relative; }
 .chat-virtual { height: 100%; }
 .thinking { display: flex; align-items: center; gap: 8px; color: var(--text-3); padding: 8px 0; }
+
+/* 输入框下方的快捷入口 */
+.input-quick {
+  display: flex; align-items: center; gap: 16px;
+  padding: 4px 16px 8px; background: var(--bg-elev);
+}
 
 /* 工作区面板 */
 .workspace-panel {
