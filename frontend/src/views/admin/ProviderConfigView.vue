@@ -161,10 +161,11 @@ onMounted(load)
 .provider-card { margin-bottom: 16px; }
 .meta { display: flex; gap: 20px; font-size: 12px; color: var(--text-2); margin-bottom: 12px; flex-wrap: wrap; }
 
-/* 卡片与页面背景区分:略亮的表面色 + 可见边框 */
+/* 卡片与页面背景区分:明显更亮的冷蓝灰表面 + 可见边框 */
 .admin-view :deep(.n-card) {
-  background: var(--surface);
+  background: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  box-shadow: var(--shadow);
 }
 </style>

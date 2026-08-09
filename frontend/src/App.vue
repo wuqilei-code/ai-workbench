@@ -59,6 +59,8 @@ const themeOverrides: GlobalThemeOverrides = {
   --bg-elev: #1d2026;
   --surface: #20242b;
   --surface-hover: #262b33;
+  /* 卡片表面:明显亮于背景、偏冷蓝灰,与深色页面底色拉开层次 */
+  --card-bg: #2b3445;
   --border: rgba(255, 255, 255, 0.09);
   --border-soft: rgba(255, 255, 255, 0.06);
   --text: #e8e9ec;
