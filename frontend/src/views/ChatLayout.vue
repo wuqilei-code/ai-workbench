@@ -1,17 +1,20 @@
 <script setup lang="ts">
 import { onMounted, ref, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import Sidebar from '@/components/Sidebar.vue'
 import Onboarding from '@/components/Onboarding.vue'
 
 const chat = useChatStore()
+const router = useRouter()
 const onboardingRef = ref<InstanceType<typeof Onboarding> | null>(null)
 
 onMounted(async () => {
   await Promise.all([chat.loadModels(), chat.loadSessions(), chat.loadArchivedSessions()])
-  // 首次登录/无任何会话时,默认创建一个新会话,避免空列表无从下手
+  // 首次登录/无任何会话时,默认创建一个新会话并跳转到它,避免空列表无从下手
   if (chat.sessions.length === 0) {
-    await chat.createSession('新对话')
+    const s = await chat.createSession('新对话')
+    if (s) router.replace(`/session/${s.id}`)
   }
   nextTick(() => onboardingRef.value?.tryShowOnboarding())
 })
