@@ -75,13 +75,13 @@ onMounted(load)
               class="bar-col"
               :title="`${d.date} · ${d.messages} 条消息 · ${d.users} 个用户`"
             >
+              <div class="bar-val">{{ d.messages }}</div>
               <div class="bar-track">
                 <div
                   class="bar-fill"
                   :style="{ height: Math.round((d.messages / maxDailyMessages) * 100) + '%' }"
                 />
               </div>
-              <div class="bar-val">{{ d.messages }}</div>
               <div class="bar-label">{{ dayLabel(d.date) }}</div>
             </div>
           </div>
@@ -111,9 +111,17 @@ onMounted(load)
 </template>
 
 <style scoped>
-.admin-view { max-width: 900px; margin: 0 auto; padding: 20px; }
-.admin-head { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
-.admin-head h2 { margin: 0; }
+.admin-view {
+  min-height: 100vh; background: var(--bg);
+  max-width: 900px; margin: 0 auto; padding: 20px;
+  box-sizing: border-box;
+}
+.admin-head {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 20px;
+  padding: 14px 16px; background: var(--bg-elev);
+  border: 1px solid var(--border-soft); border-radius: var(--radius);
+}
+.admin-head h2 { margin: 0; font-size: 16px; }
 .spacer { flex: 1; }
 
 .overview { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 16px; }
@@ -122,13 +130,22 @@ onMounted(load)
 
 .block { margin-bottom: 16px; }
 
-.bars { display: flex; align-items: flex-end; gap: 6px; height: 180px; padding: 8px 4px 0; }
-.bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
-.bar-track {
-  width: 100%; max-width: 34px; flex: 1; display: flex; align-items: flex-end;
-  background: #1c1c20; border-radius: 4px; overflow: hidden; height: 120px;
+.bars { display: flex; align-items: flex-end; gap: 8px; height: 200px; padding: 8px 4px 0; }
+.bar-col {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0;
+  height: 100%;
 }
-.bar-fill { width: 100%; background: #56b6c2; border-radius: 4px 4px 0 0; transition: height .3s; }
-.bar-val { font-size: 11px; color: #9aa3b2; }
-.bar-label { font-size: 10px; color: #888; white-space: nowrap; }
+.bar-val { font-size: 11px; color: var(--text-2); line-height: 1; }
+.bar-track {
+  flex: 1; width: 100%; max-width: 36px;
+  display: flex; align-items: flex-end;
+  background: var(--bg); border-radius: 6px; overflow: hidden;
+  position: relative; min-height: 0;
+}
+.bar-fill {
+  width: 100%;
+  background: linear-gradient(180deg, var(--accent), #8b7bfd);
+  border-radius: 6px 6px 0 0; transition: height .3s ease;
+}
+.bar-label { font-size: 10px; color: var(--text-3); white-space: nowrap; line-height: 1; }
 </style>

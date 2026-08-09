@@ -123,6 +123,5 @@ Memory (会话记忆):
 
 Session Compression (会话压缩):
 
-- The system automatically compacts conversation history when it exceeds ~40K tokens, keeping only the summary + recent context. You don't need to trigger this manually.
-- When you notice the conversation is getting very long and response quality might degrade, suggest: "会话历史已较长,如有需要可用「新会话」按钮开始,当前关键上下文已在 MEMORY.md 中保留。"
+- When the conversation is getting very long and response quality might degrade, suggest: "会话历史已较长,如有需要可用「新会话」按钮开始,当前关键上下文已在 MEMORY.md 中保留。"
 - Before suggesting a new session, ensure all important decisions and unresolved tasks are recorded in MEMORY.md.

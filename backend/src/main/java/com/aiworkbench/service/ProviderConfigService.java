@@ -218,7 +218,6 @@ public class ProviderConfigService {
 
         Map<String, Object> root = new LinkedHashMap<>();
         root.put("$schema", "https://opencode.ai/config.json");
-        root.put("autoCompact", 40000);
         root.put("permission", buildPermissionConfig());
         root.put("provider", providerMap);
 

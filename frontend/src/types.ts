@@ -7,6 +7,18 @@ export interface UserVo {
   role: 'user' | 'admin'
 }
 
+/** 管理端用户列表项 */
+export interface AdminUserVo {
+  id: number
+  username: string
+  email: string
+  role: 'user' | 'admin'
+  status: number
+  uid: number | null
+  createdAt: string
+  updatedAt: string
+}
+
 export interface AuthResponse {
   token: string
   user: UserVo

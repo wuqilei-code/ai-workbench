@@ -22,6 +22,11 @@ const routes = [
     name: 'admin-usage',
     component: () => import('@/views/admin/UsageStatsView.vue'),
   },
+  {
+    path: '/admin/users',
+    name: 'admin-users',
+    component: () => import('@/views/admin/UserManageView.vue'),
+  },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
 

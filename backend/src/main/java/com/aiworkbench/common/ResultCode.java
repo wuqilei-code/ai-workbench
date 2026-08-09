@@ -17,7 +17,10 @@ public enum ResultCode {
     BAD_CREDENTIALS(4011, "bad credentials"),
     OPENCODE_UNAVAILABLE(5001, "opencode unavailable"),
     SESSION_NOT_FOUND(4004, "session not found"),
-    TOO_MANY_REQUESTS(429, "too many requests");
+    TOO_MANY_REQUESTS(429, "too many requests"),
+    USER_NOT_FOUND(4012, "user not found"),
+    CANNOT_OPERATE_SELF(4013, "cannot operate on yourself"),
+    LAST_ADMIN(4014, "cannot demote or disable the last admin");
 
     private final int code;
     private final String message;

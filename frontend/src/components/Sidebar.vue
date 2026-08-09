@@ -283,6 +283,7 @@ function logout() {
         <n-tag v-if="auth.isAdmin" size="tiny" type="warning">admin</n-tag>
       </div>
       <div class="foot-actions">
+        <n-button v-if="auth.isAdmin" size="small" quaternary @click="router.push('/admin/users')">用户管理</n-button>
         <n-button v-if="auth.isAdmin" size="small" quaternary @click="router.push('/admin/providers')">模型管理</n-button>
         <n-button v-if="auth.isAdmin" size="small" quaternary @click="router.push('/admin/usage')">用量统计</n-button>
         <n-button size="small" quaternary @click="logout">退出</n-button>

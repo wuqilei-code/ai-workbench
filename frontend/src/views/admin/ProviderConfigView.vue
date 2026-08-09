@@ -146,10 +146,18 @@ onMounted(load)
 </template>
 
 <style scoped>
-.admin-view { max-width: 900px; margin: 0 auto; padding: 20px; }
-.admin-head { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
-.admin-head h2 { margin: 0; }
+.admin-view {
+  min-height: 100vh; background: var(--bg);
+  max-width: 900px; margin: 0 auto; padding: 20px;
+  box-sizing: border-box;
+}
+.admin-head {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 20px;
+  padding: 14px 16px; background: var(--bg-elev);
+  border: 1px solid var(--border-soft); border-radius: var(--radius);
+}
+.admin-head h2 { margin: 0; font-size: 16px; }
 .spacer { flex: 1; }
 .provider-card { margin-bottom: 16px; }
-.meta { display: flex; gap: 20px; font-size: 12px; color: #888; margin-bottom: 12px; flex-wrap: wrap; }
+.meta { display: flex; gap: 20px; font-size: 12px; color: var(--text-2); margin-bottom: 12px; flex-wrap: wrap; }
 </style>
