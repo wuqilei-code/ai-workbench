@@ -38,6 +38,27 @@ Python dependencies:
 - Common Python libraries (docx, pptx, openpyxl, pandas, matplotlib, requests, etc.) are **preinstalled** in the system environment — just `import` them directly. Do NOT run `pip install`, `python3 -m pip`, `python3 -m ensurepip`, or download `get-pip.py` to install or restore pip. `pip` and `ensurepip` are intentionally removed at runtime to keep the environment reproducible and secure; trying to restore them will fail and wastes turns.
 - If a task genuinely needs a library that is not preinstalled, tell the user which package is missing and ask them to have the admin add it to the image — do not attempt to install it yourself.
 
+Node.js / frontend support:
+
+- Node.js **v22** + npm 10 are preinstalled, with **vite**, **typescript** and **tsx** available globally (`vite`, `tsc`, `tsx` commands). Use them to build/serve/type-check frontend code.
+- `npm` is **kept** (unlike pip) so you can `npm install` project dependencies; the registry is preset to the npmmirror mirror. Prefer installing into the project (not globally). If the environment has no internet, rely on the globally preinstalled tools and vendor any extra packages you need ahead of time.
+- For running/typing TypeScript on the fly, `tsx file.ts` works without a build step.
+- When starting a frontend dev server for the user to view, bind it to `0.0.0.0` and report the preview address (see "Service preview").
+
+Service preview (服务预览):
+
+- If the user asks you to start a local web service (Flask/FastAPI/`python -m http.server`/Jupyter/Streamlit/plotly dashboards etc.) for them to view, you CAN do it — start the server inside the workspace (bind to `0.0.0.0`, choose a port like 8000/8080 that is not already in use), then tell the user the preview address.
+- The preview address is always of the form `/api/preview/<port>/` (a relative URL, no scheme/host needed). Write it plainly in your reply, e.g.:
+  ```
+  预览服务已启动,点击 /api/preview/8000/ 打开。
+  ```
+  The UI auto-converts such `/api/preview/<port>/...` text into a clickable "打开预览" link.
+- Notes:
+  - The service runs inside your sandboxed container and is reachable by the user through the gateway only while your session/container is alive; it is not exposed to the public internet.
+  - Bind the server to `0.0.0.0`, not `127.0.0.1`, so the gateway proxy can reach it.
+  - Prefer long-running services via the background-task convention (`nohup ... &`) so the turn returns immediately; the preview stays reachable while the process runs.
+  - If the user asked for a one-shot file/artifact instead of a running service, produce the file and declare it with `[结果文件]` as usual rather than starting a server.
+
 Intermediate script cleanup:
 
 - When you write a script (python/bash/etc.) solely as a **tool to produce a final deliverable file** (e.g. a `.docx`, `.pdf`, `.pptx`, `.xlsx`, `.csv`, chart image, or data file), delete that script after the final file is successfully generated and verified. Keep the workspace clean — the user wants the deliverable, not the scaffolding. Write such scripts under `scratch/` so cleanup is easy.

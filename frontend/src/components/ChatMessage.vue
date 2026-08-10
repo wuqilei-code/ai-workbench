@@ -212,6 +212,13 @@ async function submitEdit() {
 .edit-hint { font-size: 11px; color: var(--text-3); margin-right: auto; }
 .msg.user .bubble { background: var(--accent-soft); border-color: rgba(107, 138, 253, 0.25); }
 .content :deep(p) { margin: 6px 0; }
+.content :deep(a.preview-link) {
+  display: inline-block; margin: 2px 0;
+  padding: 5px 12px; border-radius: 10px;
+  background: var(--accent-soft); color: var(--accent-text);
+  border: 1px solid var(--border); text-decoration: none; font-size: 13px;
+}
+.content :deep(a.preview-link:hover) { background: var(--accent); color: #fff; }
 .content :deep(pre.hljs) { background: #16181d; border-radius: var(--radius-sm); padding: 10px; overflow-x: auto; }
 .content :deep(code) { font-family: ui-monospace, monospace; font-size: 13px; }
 .content :deep(pre code) { background: none; }

@@ -134,6 +134,32 @@ RUN rm -f /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.11 \
   && rm -rf /usr/local/lib/python3.11/ensurepip /usr/lib/python3*/ensurepip \
   && python3 -c "import docx, openpyxl, pandas, matplotlib; print('preinstalled deps still ok')"
 
+# ---------- Node.js 前端支持(agent 容器) ----------
+# 官方 Node 22 LTS tarball(gz 格式,tar 直接解压,不依赖额外 xz 工具)。
+# apt 源只有已 EOL 的 node 18,故用官方 tarball 保证较新运行时。
+ARG NODE_VERSION=22.14.0
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) nodearch="linux-x64" ;; \
+      arm64) nodearch="linux-arm64" ;; \
+      *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \
+    esac; \
+    url="https://npmmirror.com/mirrors/node/v${NODE_VERSION}/node-v${NODE_VERSION}-${nodearch}.tar.gz"; \
+    tmpdir="$(mktemp -d)"; \
+    curl -fsSL "$url" -o "$tmpdir/node.tar.gz"; \
+    tar -xzf "$tmpdir/node.tar.gz" -C /usr/local --strip-components=1; \
+    rm -rf "$tmpdir"; \
+    node --version && npm --version
+
+# npm 国内镜像 + 全局前端 CLI(vite 构建/开发、typescript、tsx 运行 TS)。
+# 保留 npm(前端项目常需 install 依赖;内网/国内可达用 npmmirror 镜像)。
+RUN npm config set registry ${NPM_REGISTRY} --global \
+  && npm install -g --no-audit --no-fund vite typescript tsx \
+  && npm config get registry \
+  && npm ls -g --depth=0
+
 # 下载 opencode 二进制(与 runtime 阶段同源同版本)
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \

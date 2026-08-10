@@ -49,6 +49,69 @@ const md = new MarkdownIt({
   },
 })
 
+/** 把内联文本中的预览地址 /api/preview/<port>(及子路径)识别为可点击链接。
+ *  在 token 流层面处理,天然跳过代码块(fence)内容。 */
+const PREVIEW_RE = /\/api\/preview\/\d{2,5}(?:\/[^\s`)\]}>]*)?/g
+
+/** 预览链接带上当前登录 JWT(顶层导航新标签页无法携带 Authorization 头/cookie 跨域不保证,
+ *  只能靠 URL 参数传递凭据)。JWT 24h 过期,泄露面可控。 */
+function previewHref(path: string): string {
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null
+  if (!token) return path
+  return path.includes('?') ? `${path}&token=${encodeURIComponent(token)}` : `${path}?token=${encodeURIComponent(token)}`
+}
+
+function previewLinks(state: any) {
+  for (const block of state.tokens) {
+    if (block.type !== 'inline' || !block.children) continue
+    const children = block.children
+    for (let i = 0; i < children.length; i++) {
+      const token = children[i]
+      if (token.type !== 'text') continue
+      const text: string = token.content
+      if (!text.includes('/api/preview/')) continue
+      let last = 0
+      let m: RegExpExecArray | null
+      PREVIEW_RE.lastIndex = 0
+      const newChildren: any[] = []
+      while ((m = PREVIEW_RE.exec(text)) !== null) {
+        const before = text.slice(last, m.index)
+        if (before) {
+          const t = new state.Token('text', '', 0)
+          t.content = before
+          newChildren.push(t)
+        }
+        const link = new state.Token('link_open', 'a', 1)
+        link.attrs = [
+          ['href', previewHref(m[0])],
+          ['target', '_blank'],
+          ['rel', 'noreferrer noopener'],
+          ['class', 'preview-link'],
+        ]
+        newChildren.push(link)
+        const inner = new state.Token('text', '', 0)
+        inner.content = '🖥 打开预览'
+        newChildren.push(inner)
+        const close = new state.Token('link_close', 'a', -1)
+        newChildren.push(close)
+        last = m.index + m[0].length
+      }
+      const tail = text.slice(last)
+      if (tail) {
+        const t = new state.Token('text', '', 0)
+        t.content = tail
+        newChildren.push(t)
+      }
+      if (newChildren.length) {
+        children.splice(i, 1, ...newChildren)
+        i += newChildren.length - 1
+      }
+    }
+  }
+}
+
+md.core.ruler.push('preview_links', previewLinks)
+
 export function renderMarkdown(text: string): string {
   if (!text) return ''
   return md.render(text)
