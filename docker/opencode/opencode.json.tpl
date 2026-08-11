@@ -28,6 +28,14 @@
       "/tmp/opencode/**": "allow"
     }
   },
+  "experimental": {
+    "continue_loop_on_deny": true
+  },
+  "agent": {
+    "build": {
+      "prompt": "When the user rejects or skips a question you asked (they chose 拒绝/跳过), do NOT ask the same or a similar question again. Proceed with the best available information, state your assumptions, and continue the task. Only ask a follow-up question if a genuinely new, blocking decision is required."
+    }
+  },
   "provider": {
     "openai": {
       "id": "openai",

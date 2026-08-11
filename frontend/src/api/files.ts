@@ -54,6 +54,23 @@ export const fileApi = {
     })
   },
 
+  /** 上传 ZIP 项目包并解压到指定目录(默认 uploads/);返回解压文件数。
+   *  大文件公网上传较慢,放宽超时到 5 分钟。 */
+  uploadZip: (dir: string, file: File, onProgress?: (pct: number) => void) => {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('dir', dir)
+    return http.post<{ data: number }>('/files/upload-zip', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 5 * 60 * 1000,
+      onUploadProgress: onProgress
+        ? (e) => {
+            if (e.total) onProgress(Math.round((e.loaded / e.total) * 100))
+          }
+        : undefined,
+    }).then((res) => res.data.data as number)
+  },
+
   /** 新建目录 */
   mkdir: (path: string) => http.post('/files/mkdir', null, { params: { path } }),
 

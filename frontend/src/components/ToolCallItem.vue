@@ -130,7 +130,9 @@ function downloadOutput() {
   font-size: 12px; padding: 3px 10px; border-radius: 10px;
   background: var(--bg-elev); color: var(--text-2); border: 1px solid var(--border);
   width: fit-content;
+  transition: border-color .15s, background .15s;
 }
+.chip:hover { border-color: var(--border); background: var(--surface-hover); }
 .chip-arg { color: var(--accent); }
 .chip .chip-status { font-weight: bold; }
 .chip-download {
@@ -139,9 +141,10 @@ function downloadOutput() {
   border-radius: 4px;
 }
 .chip-download:hover { background: var(--surface-hover); }
-.chip.run .chip-status { color: var(--text-3); }
+.chip.run .chip-status { color: var(--text-3); animation: chip-pulse 1.6s ease-in-out infinite; }
 .chip.ok .chip-status { color: var(--ok); }
 .chip.err .chip-status { color: var(--err); }
+@keyframes chip-pulse { 50% { opacity: 0.45; } }
 
 .tool-output {
   border: 1px solid var(--border); border-radius: var(--radius-sm);

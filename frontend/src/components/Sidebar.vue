@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useAuthStore } from '@/stores/auth'
@@ -92,6 +92,19 @@ async function newChat() {
   }
   const s = await chat.createSession('New Chat')
   router.push(`/session/${s.id}`)
+}
+
+/** 源码测试分析入口:新建会话并预填提示词,引导用户上传项目 zip */
+async function startTestAnalysis() {
+  if (chat.isStreaming) {
+    const go = await confirmSwitch('测试分析')
+    if (!go) return
+  }
+  const s = await chat.createSession('源码测试分析')
+  router.push(`/session/${s.id}`)
+  await nextTick()
+  msg.info('已进入测试分析会话,请在下方上传项目源码 ZIP 包后发送')
+  window.dispatchEvent(new CustomEvent('aiwb:test-analysis'))
 }
 
 async function openSession(id: number) {
@@ -351,6 +364,7 @@ function logout() {
         <n-tag v-if="auth.isAdmin" size="tiny" type="warning">admin</n-tag>
       </div>
       <div class="foot-actions">
+        <n-button size="small" quaternary title="源码测试分析:上传项目 zip 生成测试点/用例/脚本" @click="startTestAnalysis">🧪 测试</n-button>
         <n-button size="small" quaternary :title="theme.mode === 'dark' ? '切换到浅色主题' : '切换到深色主题'" @click="theme.toggle()">{{ theme.mode === 'dark' ? '☀️' : '🌙' }}</n-button>
         <n-dropdown v-if="auth.isAdmin" :options="adminMenuOptions" trigger="click" placement="top-end" @select="onAdminSelect">
           <n-button size="small" quaternary>⚙️ 管理</n-button>
@@ -417,10 +431,17 @@ function logout() {
 .session-item {
   display: flex; align-items: center; justify-content: space-between;
   padding: 9px 12px; border-radius: var(--radius-sm); cursor: pointer; margin-bottom: 2px;
-  transition: background .15s;
+  position: relative;
+  transition: background .15s, transform .15s;
 }
 .session-item:hover { background: var(--surface-hover); }
+.session-item:active { transform: scale(0.99); }
 .session-item.active { background: var(--accent-soft); }
+.session-item.active::before {
+  content: '';
+  position: absolute; left: 0; top: 22%; bottom: 22%; width: 3px;
+  border-radius: 2px; background: var(--accent);
+}
 .session-item.active .title { color: var(--accent-text); }
 .session-item .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; color: var(--text-2); }
 .side-foot { border-top: 1px solid var(--border-soft); padding: 10px 12px 12px; }

@@ -56,7 +56,12 @@ Service preview (服务预览):
 - Notes:
   - The service runs inside your sandboxed container and is reachable by the user through the gateway only while your session/container is alive; it is not exposed to the public internet.
   - Bind the server to `0.0.0.0`, not `127.0.0.1`, so the gateway proxy can reach it.
-  - Prefer long-running services via the background-task convention (`nohup ... &`) so the turn returns immediately; the preview stays reachable while the process runs.
+  - **Never start the server in the foreground of a bash tool call.** A foreground long-running process (Flask/FastAPI/vite dev server etc.) makes the bash tool wait forever, the turn hangs until the watchdog aborts it after ~90s, and the user sees a stuck session. ALWAYS start it detached so the bash command returns immediately:
+    - `setsid nohup python3 app.py > tasks/<name>.log 2>&1 < /dev/null &`
+    - `setsid nohup npx vite --host 0.0.0.0 --port 5173 > tasks/vite.log 2>&1 < /dev/null &`
+  - After starting, verify it is listening (e.g. `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:<port>/` or `ss -tln | grep <port>`), then report the preview address.
+  - If you must run a blocking command to test (health check, single run), wrap it in `timeout 15 <cmd>` so it cannot hang the turn.
+  - Prefer long-running services via the background-task convention so the turn returns immediately; the preview stays reachable while the process runs.
   - If the user asked for a one-shot file/artifact instead of a running service, produce the file and declare it with `[结果文件]` as usual rather than starting a server.
 
 Intermediate script cleanup:
@@ -121,6 +126,7 @@ Skills:
   - `document-generation` — when the user asks to produce Word/PowerPoint/Excel/PDF/CSV/report files (docx/pptx/xlsx/pdf generation). Load it for CJK font handling and library conventions.
   - `data-analysis` — when the user asks to analyze data, load a dataset, compute stats, or build charts/plots. Load it for pandas/matplotlib conventions and Chinese-font plotting.
   - `skill-creator` — when the user asks to "create/add/define a skill" or "新建/添加/写一个技能".
+  - `test-analysis` — when the user uploads or points at a project's source code and asks to generate test points (测试点), test cases (测试用例), test scripts (测试脚本), or a test report. Load it for the static-analysis testing workflow (sandbox has no internet/deps, so never install or run the project).
 - When the user asks you to "create a skill" / "add a skill" / "make a reusable capability", use the `skill-creator` skill to produce a compliant `SKILL.md` in `.opencode/skills/<name>/`.
 - User-created skills appear in the workbench **「技能」tab**(right drawer → 工作区 → 技能), where the user can also view, edit, and delete them; the tab additionally lists built-in global skills read-only.
 - A newly created skill is available immediately; if it does not surface in the current session, starting a new session guarantees discovery.

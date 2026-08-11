@@ -13,6 +13,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
@@ -50,6 +51,17 @@ public class OpencodeInstanceEventConsumer {
 
     /** 同一消息两次文本落库的最小间隔:节流窗口内的中间态只进内存,不落库 */
     private static final long TEXT_PERSIST_MIN_INTERVAL_MS = 800L;
+
+    /** 视为"有进展"的 opencode 事件类型:消息定稿/文本输出/工具完成/会话结束。
+     *  session.status(busy) 等心电不算进展(agent 思考/工具执行期间也会持续发),
+     *  不参与看门狗"最后进展时间"判定;绝对超时(DB streaming 年龄)另行兜底。 */
+    private static final Set<String> PROGRESS_EVENTS = Set.of(
+            "message.updated",
+            "message.part.updated",
+            "session.idle",
+            "session.error",
+            "tool.updated",
+            "tool.output");
 
     private final WebClient instanceClient;
     private final OpencodeEventRouter router;
@@ -183,8 +195,10 @@ public OpencodeInstanceEventConsumer(WebClient instanceClient, OpencodeEventRout
 
             String sessionID = extractSessionId(properties);
 
-            // 事件心跳:供看门狗判定「在途但长时间无事件」的卡死(如未回答的权限请求)
-            if (eventSink != null) {
+            // 事件心跳:供看门狗判定「在途但长时间无事件」的卡死(如未回答的权限请求)。
+            // 仅「有意义的进展事件」刷新最后进展时间;session.status(busy 心跳)等在 agent 思考/工具
+            // 执行期间会持续发,若也刷新会导致看门狗永远认为"活跃",无法发现前台常驻命令卡死。
+            if (eventSink != null && PROGRESS_EVENTS.contains(resolvedType)) {
                 try {
                     eventSink.accept(sessionID, resolvedType);
                 } catch (Exception ignore) {

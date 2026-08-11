@@ -115,6 +115,8 @@ const UPLOAD_DIR = 'uploads'
 interface Attachment { name: string; path: string }
 const attachments = ref<Attachment[]>([])
 const uploading = ref(false)
+/** 上传进度百分比(仅 zip 等大文件展示);null = 不在上传 */
+const uploadProgress = ref<number | null>(null)
 
 /** 数据文件扩展名:检测到这些文件时展示数据问答引导 */
 const DATA_EXT = ['.csv', '.xlsx', '.xls', '.json', '.tsv', '.txt']
@@ -153,7 +155,8 @@ function pickFile() {
   fileInputRef.value?.click()
 }
 
-/** 通用上传:把一组 File 上传到工作区 uploads/ 并加入附件列表。返回成功数 */
+/** 通用上传:把一组 File 上传到工作区 uploads/ 并加入附件列表。返回成功数。
+ *  ZIP 项目包走 upload-zip 接口解压到 uploads/<zip名>/ 目录,附件指向该目录。 */
 async function uploadFiles(fileList: File[]) {
   if (!fileList.length) return 0
   uploading.value = true
@@ -162,8 +165,19 @@ async function uploadFiles(fileList: File[]) {
   try {
     for (const f of fileList) {
       try {
-        await fileApi.upload(UPLOAD_DIR, f)
-        attachments.value.push({ name: f.name, path: `${UPLOAD_DIR}/${f.name}` })
+        const lower = f.name.toLowerCase()
+        if (lower.endsWith('.zip')) {
+          const base = f.name.replace(/\.zip$/i, '')
+          const dir = `${UPLOAD_DIR}/${base}`
+          uploadProgress.value = 0
+          const count = await fileApi.uploadZip(dir, f, (pct) => { uploadProgress.value = pct })
+          uploadProgress.value = null
+          attachments.value.push({ name: f.name, path: dir })
+          msg.success(`已解压 ${count} 个项目文件到工作区 ${dir}/`)
+        } else {
+          await fileApi.upload(UPLOAD_DIR, f)
+          attachments.value.push({ name: f.name, path: `${UPLOAD_DIR}/${f.name}` })
+        }
         ok++
       } catch {
         fail++
@@ -174,6 +188,7 @@ async function uploadFiles(fileList: File[]) {
     else msg.error('上传失败,请重试')
   } finally {
     uploading.value = false
+    uploadProgress.value = null
   }
   return ok
 }
@@ -201,6 +216,13 @@ async function onPaste(e: ClipboardEvent) {
   e.preventDefault() // 阻止浏览器默认把图片/文件文本插入输入框
   await uploadFiles(files)
   nextTick(() => inputRef.value?.focus())
+}
+
+/** 拖拽上传:把拖入的文件(含 zip 项目包)上传为附件。 */
+async function onDrop(e: DragEvent) {
+  const files = e.dataTransfer?.files
+  if (!files || !files.length) return
+  await uploadFiles(Array.from(files))
 }
 
 function removeAttachment(i: number) {
@@ -398,7 +420,11 @@ async function startNewChat() {
 </script>
 
 <template>
-  <div class="chat-input">
+  <div
+    class="chat-input"
+    @dragover.prevent
+    @drop.prevent="onDrop"
+  >
     <!-- slash 命令菜单 -->
     <div v-if="showCommandMenu" class="cmd-menu">
       <div
@@ -412,6 +438,12 @@ async function startNewChat() {
         <span class="cmd-name">/{{ c.name }}</span>
         <span class="cmd-desc">{{ c.description || '' }}</span>
       </div>
+    </div>
+
+    <!-- 上传进度(zip 大文件上传时显示) -->
+    <div v-if="uploadProgress !== null" class="upload-progress">
+      <span class="up-label">正在上传项目包… {{ uploadProgress }}%</span>
+      <n-progress :percentage="uploadProgress" :show-indicator="false" :height="6" />
     </div>
 
     <!-- 附件 chip 列表 -->
@@ -576,6 +608,9 @@ async function startNewChat() {
 }
 
 /* 附件 */
+.upload-progress { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.up-label { font-size: 12px; color: var(--text-3); flex-shrink: 0; }
+.upload-progress :deep(.n-progress) { flex: 1; }
 .attachments {
   display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px;
 }
@@ -615,10 +650,14 @@ async function startNewChat() {
   font-size: 14px; line-height: 1.6; outline: none;
   max-height: 200px; overflow-y: auto;
   box-sizing: border-box;
-  transition: border-color .15s, background .15s;
+  transition: border-color .2s, background .2s, box-shadow .2s;
 }
 .textarea::placeholder { color: var(--text-3); }
-.textarea:focus { border-color: var(--accent); background: var(--surface-hover); }
+.textarea:hover { border-color: var(--border); }
+.textarea:focus {
+  border-color: var(--accent); background: var(--surface-hover);
+  box-shadow: 0 0 0 3px var(--accent-soft), 0 4px 20px rgba(0, 0, 0, 0.1);
+}
 .hidden-input { display: none; }
 
 /* 底部工具栏 */

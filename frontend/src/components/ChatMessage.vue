@@ -184,13 +184,28 @@ async function submitEdit() {
   display: flex; align-items: center; justify-content: center;
   font-size: 12px; font-weight: 600; background: var(--surface);
   color: var(--text-3);
+  border: 1px solid var(--border-soft);
 }
-.msg.user .avatar { background: var(--accent-soft); color: var(--accent-text); }
+.msg.user .avatar {
+  background: linear-gradient(135deg, var(--accent), #7d6bfd);
+  color: #fff; border: none;
+  box-shadow: 0 2px 8px var(--accent-soft);
+}
+.msg.assistant .avatar {
+  background: linear-gradient(135deg, #2b3445, #232832);
+}
 .bubble {
   position: relative;
   max-width: 75%; padding: 12px 16px; border-radius: var(--radius);
-  background: var(--surface); line-height: 1.6; word-break: break-word;
+  line-height: 1.6; word-break: break-word;
+  background: var(--surface);
   border: 1px solid var(--border-soft);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transition: box-shadow .2s ease, border-color .2s ease;
+}
+.bubble:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14);
+  border-color: var(--border);
 }
 .bubble-tools { position: absolute; top: 4px; right: 6px; opacity: 0; transition: opacity .15s; }
 .bubble:hover .bubble-tools { opacity: 1; }
@@ -210,7 +225,10 @@ async function submitEdit() {
 .edit-box:focus { outline: none; border-color: var(--accent); }
 .edit-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 6px; }
 .edit-hint { font-size: 11px; color: var(--text-3); margin-right: auto; }
-.msg.user .bubble { background: var(--accent-soft); border-color: rgba(107, 138, 253, 0.25); }
+.msg.user .bubble {
+  background: linear-gradient(135deg, var(--accent-soft), rgba(107, 138, 253, 0.06));
+  border-color: rgba(107, 138, 253, 0.25);
+}
 .content :deep(p) { margin: 6px 0; }
 .content :deep(a.preview-link) {
   display: inline-block; margin: 2px 0;

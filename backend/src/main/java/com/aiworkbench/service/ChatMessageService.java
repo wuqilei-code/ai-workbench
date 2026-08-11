@@ -1055,6 +1055,18 @@ public class ChatMessageService {
                 .set(ChatMessage::getStatus, "aborted"));
     }
 
+    /** 该会话是否存在创建时间早于给定时刻、且仍为 streaming 的 assistant 消息。
+     *  看门狗"绝对超时"兜底用:不依赖 opencode 事件心跳(事件可能在卡死时仍持续刷新),
+     *  直接按 DB 里 streaming 消息的年龄判定——超过硬阈值仍未定稿即视为卡死。 */
+    public boolean hasStreamingMessageOlderThan(Long sessionId, java.time.LocalDateTime threshold) {
+        Long count = chatMessageMapper.selectCount(new LambdaQueryWrapper<ChatMessage>()
+                .eq(ChatMessage::getSessionId, sessionId)
+                .eq(ChatMessage::getRole, "assistant")
+                .eq(ChatMessage::getStatus, "streaming")
+                .lt(ChatMessage::getCreatedAt, threshold));
+        return count != null && count > 0;
+    }
+
     /** 该会话当前是否存在未回答的 pendingPermission(parts 含 pendingPermission 的最新 assistant 消息)。看门狗判定卡死用。 */
     public boolean hasUnresolvedPending(Long sessionId) {
         List<ChatMessage> candidates = chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()

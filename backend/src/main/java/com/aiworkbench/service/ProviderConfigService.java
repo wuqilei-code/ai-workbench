@@ -219,6 +219,20 @@ public class ProviderConfigService {
         Map<String, Object> root = new LinkedHashMap<>();
         root.put("$schema", "https://opencode.ai/config.json");
         root.put("permission", buildPermissionConfig());
+        // 权限被拒绝(用户点"拒绝")后 agent 继续循环(换方式/说明),而不是整个生成停止。
+        // 否则 opencode 默认 continue_loop_on_deny 为 false,拒绝后 agent loop 直接 stop,任务中断。
+        Map<String, Object> experimental = new LinkedHashMap<>();
+        experimental.put("continue_loop_on_deny", true);
+        root.put("experimental", experimental);
+        // build agent 约束:用户拒绝/跳过问题时不要反复问(否则选择框重复弹出,体验差)
+        Map<String, Object> buildAgent = new LinkedHashMap<>();
+        buildAgent.put("prompt", "When the user rejects or skips a question you asked (they chose 拒绝/跳过), "
+                + "do NOT ask the same or a similar question again. Proceed with the best available information, "
+                + "state your assumptions, and continue the task. Only ask a follow-up question if a genuinely new, "
+                + "blocking decision is required.");
+        Map<String, Object> agentConfig = new LinkedHashMap<>();
+        agentConfig.put("build", buildAgent);
+        root.put("agent", agentConfig);
         root.put("provider", providerMap);
 
         // 写模板真相源

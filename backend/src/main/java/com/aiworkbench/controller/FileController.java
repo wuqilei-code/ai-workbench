@@ -109,6 +109,24 @@ public class FileController {
         return R.ok();
     }
 
+    /** 上传 ZIP 项目包并解压到指定目录(默认 uploads/),返回解压文件数 */
+    @PostMapping("/upload-zip")
+    @AuditLog(action = "上传项目包")
+    public R<Integer> uploadZip(@RequestParam("file") MultipartFile file,
+                                @RequestParam(value = "dir", defaultValue = "") String dir) {
+        if (file.isEmpty()) {
+            throw new com.aiworkbench.common.BusinessException(
+                    com.aiworkbench.common.ResultCode.BAD_REQUEST.getCode(), "file is empty");
+        }
+        try (InputStream data = file.getInputStream()) {
+            int count = workspaceService.uploadZip(SecurityUtil.currentUserId(), dir, data);
+            return R.ok(count);
+        } catch (IOException e) {
+            throw new com.aiworkbench.common.BusinessException(
+                    com.aiworkbench.common.ResultCode.INTERNAL_ERROR.getCode(), "upload zip failed");
+        }
+    }
+
     /** 新建目录 */
     @PostMapping("/mkdir")
     @AuditLog(action = "新建目录")

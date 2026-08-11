@@ -462,6 +462,7 @@ export const useChatStore = defineStore('chat', () => {
       content: text,
       status: 'pending',
       _pending: true,
+      createdAt: new Date().toISOString(),
     }
     messages.value.push(optimistic)
     streamingText.value = ''

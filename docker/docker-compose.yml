@@ -5,7 +5,7 @@ services:
       dockerfile: docker/Dockerfile
       target: runtime
       args:
-        OPENCODE_VERSION: "1.18.8"
+        OPENCODE_VERSION: "1.18.16"
         # 内网部署:把下面注释打开,指向内部 opencode 二进制镜像
         # OPENCODE_DOWNLOAD_URL: "http://internal-mirror/opencode-linux-x64-baseline.tar.gz"
     # 固定镜像 tag:每用户 agent 容器复用本镜像(容器模式)
@@ -60,7 +60,7 @@ services:
       dockerfile: docker/Dockerfile
       target: agent-runtime
       args:
-        OPENCODE_VERSION: "1.18.8"
+        OPENCODE_VERSION: "1.18.16"
     image: ai-workbench-agent
     restart: "no"
     command: ["true"]

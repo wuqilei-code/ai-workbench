@@ -220,6 +220,47 @@ public class WorkspaceService {
         }
     }
 
+    /**
+     * 上传 ZIP 项目包并解压到 {@code dir} 目录下。
+     * <p>
+     * 防路径逃逸:每个条目解压前用 safeResolve 校验并 normalize,目标必须仍位于用户工作区内;
+     * 拒绝绝对路径、包含 ".." 或空条目。返回解压出的文件数(便于前端提示)。
+     */
+    public int uploadZip(Long userId, String dir, InputStream data) {
+        Path base = safeResolve(userId, dir == null || dir.isBlank() ? "uploads" : dir);
+        try {
+            Files.createDirectories(base);
+        } catch (IOException e) {
+            throw new BusinessException(ResultCode.INTERNAL_ERROR.getCode(), "create zip dir failed");
+        }
+        int count = 0;
+        try (java.util.zip.ZipInputStream zis = new java.util.zip.ZipInputStream(data)) {
+            java.util.zip.ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                String name = entry.getName();
+                if (name == null || name.isBlank() || name.startsWith("/")) {
+                    continue;
+                }
+                // 拒绝任何含 .. 的条目(含 Windows 反斜杠变体),防 zip-slip
+                if (name.contains("..") || name.contains("\\")) {
+                    continue;
+                }
+                Path target = safeResolve(userId,
+                        (dir == null || dir.isBlank() ? "uploads" : dir) + "/" + name);
+                if (entry.isDirectory()) {
+                    Files.createDirectories(target);
+                    continue;
+                }
+                Files.createDirectories(target.getParent());
+                Files.copy(zis, target, StandardCopyOption.REPLACE_EXISTING);
+                count++;
+            }
+        } catch (IOException e) {
+            throw new BusinessException(ResultCode.INTERNAL_ERROR.getCode(), "unzip failed");
+        }
+        return count;
+    }
+
     /** 新建目录(支持多级) */
     public void createDirectory(Long userId, String relativePath) {
         Path path = safeResolve(userId, relativePath);

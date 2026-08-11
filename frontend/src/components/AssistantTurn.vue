@@ -205,7 +205,10 @@ const deliverables = computed(() =>
 const expandedNames = computed<string[]>(() => {
   const ov = chat.manualCollapseOverride[props.turn.id]
   if (ov !== undefined) return ov ? ['thinking'] : []
-  return turnInProgress.value ? ['thinking'] : []
+  // 仍在处理(流式中)或有待答/刚答复的权限/问题 → 保持展开思考区,
+  // 避免权限框消失瞬间 isStreaming 抖动导致思考区折叠、用户以为 AI 停了。
+  if (turnInProgress.value) return ['thinking']
+  return []
 })
 
 function handleExpand(names: string[] | null) {
@@ -801,6 +804,10 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
   display: flex; align-items: center; justify-content: center;
   font-size: 12px; font-weight: 600; background: var(--surface);
   color: var(--text-3);
+  border: 1px solid var(--border-soft);
+}
+.msg.assistant .avatar {
+  background: linear-gradient(135deg, #2b3445, #232832);
 }
 .bubble {
   position: relative;
@@ -809,7 +816,13 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
   padding: 12px 16px; border-radius: var(--radius);
   background: var(--surface); line-height: 1.6; word-break: break-word;
   border: 1px solid var(--border-soft);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transition: box-shadow .2s ease, border-color .2s ease;
   overflow: hidden;
+}
+.bubble:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14);
+  border-color: var(--border);
 }
 .content { position: relative; }
 .copy-btn {

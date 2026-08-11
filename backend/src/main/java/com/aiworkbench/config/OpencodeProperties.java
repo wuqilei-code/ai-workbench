@@ -50,8 +50,11 @@ public class OpencodeProperties {
     private String templateDir = "/data/opencode/template";
 
     // ---- 工具在途看门狗(StuckToolWatcher):兜底「卡死但无人回答」的权限/工具在途 ----
-    /** 判定阈值:生成中且在途但超过该时长(ms)无任何事件 → 视为卡死 */
-    private long stuckToolTimeoutMs = 90_000;
+    // 注意:opencode bash 工具自带 2 分钟默认超时(OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS,超时后
+    // kill 命令并把超时提示返回给 agent,agent 可继续/说明)。看门狗阈值必须**大于** bash 超时,
+    // 让 bash 的超时先生效(agent 得以继续),而不是看门狗 90s 提前 abort 整个生成(那会导致任务中断无后续)。
+    /** 判定阈值:生成中且在途但超过该时长(ms)无任何事件 → 视为卡死(须 > bash 2min 默认超时) */
+    private long stuckToolTimeoutMs = 150_000;
     /** 权限未被回答的兜底阈值(ms):超过即在对话中注入提示(不自动 abort) */
     private long stuckPermissionPromptMs = 30_000;
     /** 看门狗扫描间隔(ms) */

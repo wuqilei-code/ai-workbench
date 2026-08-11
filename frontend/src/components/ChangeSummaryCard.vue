@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { fileApi } from '@/api/files'
 import { useMessage, useDialog } from 'naive-ui'
 import type { ChangeSummary, FileDiffResult } from '@/types'
@@ -8,6 +8,14 @@ const props = defineProps<{ summary: ChangeSummary }>()
 
 const msg = useMessage()
 const dialog = useDialog()
+
+/** 文件太多时默认只展示前 N 个,其余折叠,避免 680 个 chip 撑爆卡片 */
+const MAX_VISIBLE_FILES = 30
+const showAllFiles = ref(false)
+const visibleFiles = computed(() =>
+  showAllFiles.value ? (props.summary.files || []) : (props.summary.files || []).slice(0, MAX_VISIBLE_FILES),
+)
+const hiddenCount = computed(() => Math.max(0, (props.summary.files?.length || 0) - MAX_VISIBLE_FILES))
 
 // ---------- 点击文件 chip → 卡片内直接展开该文件的版本 diff / 回滚 ----------
 const openPath = ref('')
@@ -98,7 +106,7 @@ function restoreTo(sha = props.summary.sha) {
     <div class="summary-text">{{ summary.summary }}</div>
     <div v-if="summary.files?.length" class="summary-files">
       <span
-        v-for="(f, i) in summary.files"
+        v-for="(f, i) in visibleFiles"
         :key="i"
         class="file-chip"
         :class="{ open: openPath === f.path }"
@@ -108,6 +116,9 @@ function restoreTo(sha = props.summary.sha) {
         <span class="st">{{ statusLabel(f.status) }}</span>
         {{ f.path.split(/[\\/]/).pop() }}
         <span class="chip-arrow">{{ openPath === f.path ? '▲' : '▼' }}</span>
+      </span>
+      <span v-if="hiddenCount > 0" class="file-chip more-chip" @click="showAllFiles = !showAllFiles">
+        {{ showAllFiles ? '收起' : `… 还有 ${hiddenCount} 个文件` }}
       </span>
     </div>
 
@@ -158,6 +169,8 @@ function restoreTo(sha = props.summary.sha) {
   cursor: pointer; transition: border-color .15s;
 }
 .file-chip:hover { border-color: var(--accent); color: var(--text); }
+.more-chip { border-style: dashed; color: var(--accent-text); background: transparent; }
+.more-chip:hover { background: var(--accent-soft); }
 .file-chip.open { border-color: var(--accent); color: var(--text); background: var(--accent-soft); }
 .file-chip .st { color: var(--accent-text); font-weight: 600; margin-right: 4px; }
 .chip-arrow { margin-left: 4px; font-size: 10px; opacity: .7; }

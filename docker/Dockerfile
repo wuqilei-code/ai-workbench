@@ -25,11 +25,6 @@ RUN mvn -B -q clean package -DskipTests
 # FROM ${DOCKER_REGISTRY}/eclipse-temurin:21-jre-bookworm 以获得更小的 JRE 镜像。
 FROM ${DOCKER_REGISTRY}/maven:3.9-eclipse-temurin-21 AS runtime
 
-ARG OPENCODE_VERSION=1.18.8
-ARG OPENCODE_DOWNLOAD_URL=
-# 默认从 sst/opencode 官方 release 下载;GitHub 不可达时,在 docker-compose.yml 用
-# OPENCODE_DOWNLOAD_URL 指向代理(如 ghfast.top)或内部镜像
-
 # app 是纯 Java 服务(网关 + nginx + docker CLI 管理 agent 容器),不执行 AI 生成的 python 脚本,
 # 故不装 python/文档处理依赖(那些只在 agent 镜像需要)。只装运行所需:nginx/supervisor/docker CLI/git/curl。
 RUN apt-get update \
@@ -41,24 +36,6 @@ RUN apt-get update \
   # 清理 docker CLI 附带的无关 bash-completion/文档,进一步瘦身
   && rm -rf /usr/share/doc /usr/share/man /usr/share/locale /usr/share/i18n \
   && rm -rf /var/lib/apt/lists/*
-
-# 下载 opencode 二进制
-RUN set -eux; \
-    arch="$(dpkg --print-architecture)"; \
-    case "$arch" in \
-      amd64) asset="opencode-linux-x64-baseline.tar.gz" ;; \
-      arm64) asset="opencode-linux-arm64.tar.gz" ;; \
-      *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \
-    esac; \
-    url="${OPENCODE_DOWNLOAD_URL:-https://github.com/sst/opencode/releases/download/v${OPENCODE_VERSION}/${asset}}"; \
-    tmpdir="$(mktemp -d)"; \
-    curl -fsSL "$url" -o "$tmpdir/$asset"; \
-    tar -xzf "$tmpdir/$asset" -C "$tmpdir"; \
-    bin="$(find "$tmpdir" -type f -name opencode | head -n1)"; \
-    test -n "$bin"; \
-    install -m 0755 "$bin" /usr/local/bin/opencode; \
-    rm -rf "$tmpdir"; \
-    opencode --version
 
 # 后端 jar
 COPY --from=backend-build /build/target/*.jar /app/app.jar
@@ -118,7 +95,7 @@ RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debia
 # 技能文档(document-generation / data-analysis)从该固定路径注册字体,不再依赖 app.jar。
 COPY backend/src/main/resources/fonts/simhei.ttf /usr/share/fonts/truetype/simhei.ttf
 
-# Python 常用依赖(与 runtime 阶段同清单):文档操作 / 数据处理 / API / 图表
+# Python 常用依赖(与 runtime 阶段同清单):文档操作 / 数据处理 / API / 图表 + 测试框架(pytest/coverage)
 RUN pip3 install --no-cache-dir --break-system-packages \
       --index-url ${PIP_INDEX_URL} \
       python-docx python-pptx openpyxl reportlab PyPDF2 pdfplumber markdown \
@@ -126,7 +103,8 @@ RUN pip3 install --no-cache-dir --break-system-packages \
       requests httpx aiohttp \
       flask fastapi uvicorn pydantic \
       beautifulsoup4 lxml Pillow \
- && python3 -c "import docx, pptx, openpyxl, reportlab, PyPDF2, pdfplumber, markdown, numpy, pandas, matplotlib, requests, httpx, aiohttp, flask, fastapi, uvicorn, pydantic, bs4, lxml, PIL; print('agent python deps ok')"
+      pytest coverage \
+ && python3 -c "import docx, pptx, openpyxl, reportlab, PyPDF2, pdfplumber, markdown, numpy, pandas, matplotlib, requests, httpx, aiohttp, flask, fastapi, uvicorn, pydantic, bs4, lxml, PIL, pytest, coverage; print('agent python deps ok')"
 
 # 运行时禁止 AI 自行 pip install(与 runtime 阶段一致):移除 pip/ensurepip,预装依赖不受影响。
 RUN rm -f /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.11 \

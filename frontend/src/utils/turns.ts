@@ -57,7 +57,7 @@ export type FlowItem =
       at?: string
       sha?: string
       parentSha?: string
-    } }
+    }; _insertBefore?: number }
 
 /** summary 条目形状(与 chat store 的 summaries 元素对齐) */
 export interface SummaryItem {
@@ -71,34 +71,44 @@ export interface SummaryItem {
 /**
  * 把"轮 + 总结"按时间交错成有序渲染流,让每张总结卡片紧跟它所属的那一轮。
  * <p>
- * 轮结束时间 = 该轮最后一条 assistant 的 createdAt(无则用 user 时间);
- * 总结时间 = 其 createdAt/at。总结诞生于对应轮 idle 之后、下一条 user 之前,按时间归并即可原位放置。
+ * 总结生成于对应轮 idle 之后、下一条 user 消息之前,故把每张总结插到
+ * 「at 时间之后的第一条 user 消息」之前(时间上晚于该总结的下一轮开头之前)。
+ * 用 user 消息时间定位(而非 turnEnd):流式期间新 user 乐观气泡的 createdAt 是本地 now,
+ * 若用 turnEnd(可能缺/晚)会导致总结与新消息谁先谁后抖动。
  */
 export function buildFlow(turns: Turn[], summaries: SummaryItem[]): FlowItem[] {
-  const items: FlowItem[] = []
-  const turnEnd = (t: Turn): number => {
-    const steps = [...t.steps]
-    if (t.finalAnswer) steps.push(t.finalAnswer)
-    const last = steps[steps.length - 1]
-    const ts = last?.message?.createdAt ?? t.userMessage?.createdAt
+  // 每个 turn 的"起始时间" = 其 user 消息的 createdAt(无则取 0)
+  const turnStart = (t: Turn): number => {
+    const ts = t.userMessage?.createdAt
     return ts ? new Date(ts).getTime() : 0
   }
   const summaryAt = (s: SummaryItem): number => (s.at ? new Date(s.at).getTime() : 0)
 
-  let i = 0
-  let j = 0
-  while (i < turns.length || j < summaries.length) {
-    const hasTurn = i < turns.length
-    const hasSum = j < summaries.length
-    if (hasTurn && (!hasSum || turnEnd(turns[i]) <= summaryAt(summaries[j]))) {
-      items.push({ kind: 'turn', turn: turns[i++] })
-    } else if (hasSum) {
-      items.push({ kind: 'summary', summary: summaries[j++] })
-    } else {
-      break
+  const items: FlowItem[] = []
+  for (const s of summaries) {
+    // 找到 at 时间之后的第一条 user 消息所属 turn 的索引
+    let insertAt = turns.length
+    for (let k = 0; k < turns.length; k++) {
+      if (turnStart(turns[k]) > summaryAt(s)) {
+        insertAt = k
+        break
+      }
     }
+    // 若总结时间介于某个 turn 内部(不该发生),用时间戳交错兜底
+    items.push({ kind: 'summary', summary: s, _insertBefore: insertAt })
   }
-  return items
+  // 先把 summary 按插入位置排好,再与 turns 归并
+  items.sort((a, b) => (a._insertBefore ?? 0) - (b._insertBefore ?? 0))
+  const merged: FlowItem[] = []
+  let si = 0
+  for (let t = 0; t < turns.length; t++) {
+    while (si < items.length && (items[si] as any)._insertBefore === t) {
+      merged.push(items[si++])
+    }
+    merged.push({ kind: 'turn', turn: turns[t] })
+  }
+  while (si < items.length) merged.push(items[si++])
+  return merged
 }
 
 /** 把 turn 内最后一条 step 提为 finalAnswer;若有 stop 标记则优先它 */

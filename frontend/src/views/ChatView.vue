@@ -63,6 +63,13 @@ function onAskAIFile(path: string) {
   chatInputRef.value?.fill(`请看看工作区里的这个文件:${path}\n\n我需要你:`)
 }
 
+/** 侧边栏「测试分析」入口:填入测试提示词,引导用户上传项目 zip 后发送 */
+function onTestAnalysis() {
+  chatInputRef.value?.fill(
+    '我上传了一个项目源码压缩包,请用 test-analysis 技能对源码做静态分析:①生成测试点清单 ②生成测试用例 ③生成测试脚本(通过语法校验) ④输出测试报告。沙箱无法安装依赖,不要运行项目,只做静态分析与语法校验。',
+  )
+}
+
 // ---------- 技能面板(内置全局技能只读列表)----------
 
 const builtinSkills = ref<SkillInfo[]>([])
@@ -208,6 +215,7 @@ async function flashToMessage(messageId?: number) {
 onMounted(() => {
   ensureSession()
   window.addEventListener('keydown', onKeydown)
+  window.addEventListener('aiwb:test-analysis', onTestAnalysis)
 })
 watch(() => chat.sessions, (list) => {
   if (list.length) fav.refreshSessionTitles(list)
@@ -219,6 +227,7 @@ watch(sessionId, () => {
 onBeforeUnmount(() => {
   chat.closeStream()
   window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('aiwb:test-analysis', onTestAnalysis)
 })
 
 function scrollToBottom() {
@@ -226,12 +235,29 @@ function scrollToBottom() {
     const vl = virtualListRef.value
     if (!vl) return
     if (!virtualItems.value.length) return
-    // 直接滚到内容底部,不依赖 item 高度实测估算(流式高度未同步时按 index 定位会抖动)
+    // 优先用底层容器直接滚到 scrollHeight,避免虚拟列表对未实测高度的 item 估算偏差导致滚不到位
+    const el = vl.getScrollContainer?.()
+    if (el) {
+      el.scrollTop = el.scrollHeight
+      return
+    }
     vl.scrollTo({ position: 'bottom' })
   })
 }
 watch(() => chat.messages.length, scrollToBottom)
 watch(() => chat.turns.length, scrollToBottom)
+
+/** 用户提交/拒绝权限或问题后(resumeStreaming 置 isStreaming=true),agent 会继续输出。
+ *  此时把用户拉回底部,避免"确认后看不到后续输出"。
+ *  nextTick 滚动可能早于虚拟列表渲染新项,故延迟再滚一次保证到位。 */
+watch(() => chat.isStreaming, (now, prev) => {
+  if (now && !prev) {
+    stickToBottom.value = true
+    scrollToBottom()
+    setTimeout(scrollToBottom, 200)
+    setTimeout(scrollToBottom, 600)
+  }
+})
 
 /** 用户是否停留在底部区域(阈值内视为贴底)。贴底时流式输出自动跟随;上翻阅读时不被拉回。 */
 const stickToBottom = ref(true)
@@ -482,9 +508,11 @@ const itemSize = 120
   display: flex; align-items: center; justify-content: space-between;
   padding: 10px 18px; border-bottom: 1px solid var(--border-soft);
   background: var(--bg-elev);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 .head-left { display: flex; align-items: center; gap: 10px; }
-.head-left .title { font-weight: 600; color: var(--text); }
+.head-left .title { font-weight: 600; color: var(--text); font-size: 14px; }
 .head-right { display: flex; align-items: center; gap: 8px; }
 
 /* 左右两栏:左=对话区(自适应),右=工作区(固定宽,可收起) */

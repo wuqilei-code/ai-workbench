@@ -118,9 +118,25 @@ class StuckToolWatcherTest {
     }
 
     @Test
-    void noPendingNoTool_leavesAloneEvenWhenStale() {
-        // 修复目标:无 pendingPermission 且无 running tool 的长思考/长执行不得被误杀
+    void noPendingNoTool_stale_aborts() {
+        // 目标变更:无 pendingPermission 与 running tool 的纯思考/执行,若超过强杀阈值仍无任何事件,
+        // 视为卡死(常见:agent 在发起工具调用前的 reasoning 阶段挂起,或 toolCall 状态未落库),也 abort 解除死锁。
         stubStreamingUser(1L, Instant.now().minusSeconds(200), "ses_x");
+        when(chatMessageService.hasRunningTool(116L)).thenReturn(false);
+        when(chatMessageService.hasUnresolvedPending(116L)).thenReturn(false);
+        when(opencodeClient.abort(1L, "ses_x")).thenReturn(true);
+        when(chatMessageService.markStreamingAborted(116L)).thenReturn(1);
+
+        watcher.sweep();
+
+        verify(opencodeClient).abort(1L, "ses_x");
+        verify(chatMessageService).markStreamingAborted(116L);
+    }
+
+    @Test
+    void noPendingNoTool_underTimeout_leavesAlone() {
+        // 未超时(事件年龄 < 强杀阈值)时不干预
+        stubStreamingUser(1L, Instant.now().minusSeconds(10), "ses_x");
         when(chatMessageService.hasRunningTool(116L)).thenReturn(false);
         when(chatMessageService.hasUnresolvedPending(116L)).thenReturn(false);
 
@@ -227,15 +243,18 @@ class StuckToolWatcherTest {
     }
 
     @Test
-    void sessionNotFound_noAbort() {
+    void sessionNotFound_stale_aborts() {
+        // 会话在 DB 查不到(可能刚建/已删),但 opencode sessionId 有效且 streaming 超时无事件 →
+        // 仍 abort,避免因 DB 记录缺失而永久卡死。
         when(processManager.activeUserIds()).thenReturn(Set.of(1L));
         when(processManager.isStreaming(1L)).thenReturn(true);
         when(processManager.lastEventAt(1L)).thenReturn(Instant.now().minusSeconds(200));
         when(processManager.lastEventSessionId(1L)).thenReturn("unknown_ses");
         when(chatSessionService.findByOpencodeSessionId("unknown_ses")).thenReturn(null);
+        when(opencodeClient.abort(1L, "unknown_ses")).thenReturn(true);
 
         watcher.sweep();
 
-        verify(opencodeClient, never()).abort(anyLong(), anyString());
+        verify(opencodeClient).abort(1L, "unknown_ses");
     }
 }

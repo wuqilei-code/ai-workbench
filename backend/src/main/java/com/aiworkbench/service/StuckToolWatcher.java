@@ -59,13 +59,27 @@ public class StuckToolWatcher {
         if (!processManager.isStreaming(userId)) {
             return;
         }
+        String sessionId = processManager.lastEventSessionId(userId);
+        // 绝对超时兜底:DB 中存在超过硬阈值仍未定稿的 streaming 消息 → 直接 abort。
+        // 不依赖 opencode 事件心跳(卡死时事件可能仍持续刷新,导致 lastEventAt 永不超时)。
+        long hardTimeoutMs = props.getStuckToolTimeoutMs() * 2;
+        if (sessionId != null) {
+            ChatSession session = chatSessionService.findByOpencodeSessionId(sessionId);
+            if (session != null && chatMessageService.hasStreamingMessageOlderThan(
+                    session.getId(), java.time.LocalDateTime.now().minus(java.time.Duration.ofMillis(hardTimeoutMs)))) {
+                log.warn("stuck-tool: user {} session {} has streaming message older than {}ms, aborting as stuck (absolute timeout)",
+                        userId, sessionId, hardTimeoutMs);
+                abort(userId, sessionId, 0);
+                return;
+            }
+        }
+
         Instant lastEvent = processManager.lastEventAt(userId);
         // 尚无任何事件心跳(刚启动/异常),不干预
         if (lastEvent == null || lastEvent.equals(Instant.MIN)) {
             return;
         }
         long ageMs = System.currentTimeMillis() - lastEvent.toEpochMilli();
-        String sessionId = processManager.lastEventSessionId(userId);
         boolean pending = false;
         boolean runningTool = false;
         if (sessionId != null) {
@@ -75,9 +89,16 @@ public class StuckToolWatcher {
                 runningTool = chatMessageService.hasRunningTool(session.getId());
             }
         }
-        // 无未回答权限、也无在途工具:可能是合理的长思考/长工具执行,不自动干预,仅记录
+        // 无未回答权限、也无在途工具:可能仍是合理的长思考/长工具执行,但若超过强杀阈值,
+        // 视为卡死(常见:agent 在发起工具调用前 reasoning 阶段挂起,或 toolCall 状态未落库),
+        // 也要 abort 解除死锁,让用户重新发起即可。会话上下文缺失(sessionId==null)时无从定位,
+        // 不 abort,避免误操作。
         if (!pending && !runningTool) {
-            if (ageMs > props.getStuckToolTimeoutMs()) {
+            if (sessionId != null && ageMs >= props.getStuckToolTimeoutMs()) {
+                log.warn("stuck-tool: user {} streaming with no event for {}ms (lastSession={}), "
+                        + "no pending permission & no running tool, aborting as stuck", userId, ageMs, sessionId);
+                abort(userId, sessionId, ageMs);
+            } else if (ageMs > props.getStuckToolTimeoutMs()) {
                 log.warn("stuck-tool: user {} streaming with no event for {}ms (lastSession={}), no pending permission & no running tool, leaving alone",
                         userId, ageMs, sessionId);
             }

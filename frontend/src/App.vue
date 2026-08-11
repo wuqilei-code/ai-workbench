@@ -124,6 +124,9 @@ const lightOverrides: GlobalThemeOverrides = {
   --radius: 12px;
   --radius-sm: 8px;
   --shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  /* 氛围光晕(背景装饰) */
+  --glow-1: rgba(107, 138, 253, 0.10);
+  --glow-2: rgba(124, 107, 253, 0.06);
 }
 
 /* 浅色 */
@@ -148,6 +151,23 @@ const lightOverrides: GlobalThemeOverrides = {
   --radius: 12px;
   --radius-sm: 8px;
   --shadow: 0 6px 24px rgba(30, 40, 90, 0.12);
+  --glow-1: rgba(90, 111, 216, 0.07);
+  --glow-2: rgba(124, 107, 253, 0.05);
+}
+
+/* 全局背景氛围:在纯平底色上加极淡的径向光晕,避免界面过于单调 */
+html, body {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background:
+    radial-gradient(1100px 500px at 15% -10%, var(--glow-1), transparent 60%),
+    radial-gradient(900px 500px at 100% 110%, var(--glow-2), transparent 60%),
+    var(--bg);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 /* 全局滚动条:柔和、细窄、半透明(随主题) */
@@ -183,6 +203,12 @@ const lightOverrides: GlobalThemeOverrides = {
 }
 ::-webkit-scrollbar-corner {
   background: transparent;
+}
+
+/* 全局选中颜色跟随主题 */
+::selection {
+  background: var(--accent-soft);
+  color: var(--text);
 }
 
 /* ===== Markdown 代码块:深色底 + 右上角复制按钮 ===== */

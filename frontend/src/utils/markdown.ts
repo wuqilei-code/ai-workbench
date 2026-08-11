@@ -49,13 +49,22 @@ const md = new MarkdownIt({
   },
 })
 
-/** 把内联文本中的预览地址 /api/preview/<port>(及子路径)识别为可点击链接。
- *  在 token 流层面处理,天然跳过代码块(fence)内容。 */
-const PREVIEW_RE = /\/api\/preview\/\d{2,5}(?:\/[^\s`)\]}>]*)?/g
+/** 把内联文本中的预览地址识别为可点击链接,在 token 流层面处理,天然跳过代码块(fence)。
+ *  匹配两种形式:
+ *  - 标准代理地址 /api/preview/<port>(chat.md 约定)
+ *  - agent 可能输出 http://localhost:<port> / http://127.0.0.1:<port> / localhost:<port>
+ *    这些在用户浏览器里指向用户本机,必须重写为代理地址才能访问。 */
+const PREVIEW_RE = /(?:\/api\/preview\/\d{2,5}(?:\/[^\s`)\]}>]*)?|(?:https?:\/\/)?(?:localhost|127\.0\.0\.1):\d{2,5}(?:\/[^\s`)\]}>]*)?)/g
 
 /** 预览链接带上当前登录 JWT(顶层导航新标签页无法携带 Authorization 头/cookie 跨域不保证,
- *  只能靠 URL 参数传递凭据)。JWT 24h 过期,泄露面可控。 */
-function previewHref(path: string): string {
+ *  只能靠 URL 参数传递凭据)。JWT 24h 过期,泄露面可控。
+ *  localhost/127.0.0.1 形式重写为标准代理地址 /api/preview/<port>。 */
+function previewHref(raw: string): string {
+  let path = raw
+  const localMatch = raw.match(/(?:https?:\/\/)?(?:localhost|127\.0\.0\.1):(\d{2,5})(.*)/)
+  if (localMatch) {
+    path = '/api/preview/' + localMatch[1] + (localMatch[2] || '/')
+  }
   const token = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null
   if (!token) return path
   return path.includes('?') ? `${path}&token=${encodeURIComponent(token)}` : `${path}?token=${encodeURIComponent(token)}`
@@ -65,11 +74,35 @@ function previewLinks(state: any) {
   for (const block of state.tokens) {
     if (block.type !== 'inline' || !block.children) continue
     const children = block.children
+    // 第一遍:重写 linkify 已生成的 localhost 链接(<a href="http://localhost:8012">…</a>)
+    // 其 href 指向用户本机,必须改为代理地址才能访问。
     for (let i = 0; i < children.length; i++) {
       const token = children[i]
-      if (token.type !== 'text') continue
+      if (token.type !== 'link_open') continue
+      const hrefAttr = (token.attrs || []).find((a: any[]) => a[0] === 'href')
+      if (!hrefAttr) continue
+      const href: string = String(hrefAttr[1] || '')
+      if (!/^(?:https?:\/\/)?(?:localhost|127\.0\.0\.1):\d{2,5}/.test(href)) continue
+      hrefAttr[1] = previewHref(href)
+      token.attrs = [...(token.attrs || []).filter((a: any[]) => a[0] !== 'target' && a[0] !== 'class'),
+        ['target', '_blank'], ['rel', 'noreferrer noopener'], ['class', 'preview-link']]
+      // 把链接内文本改成"打开预览"(其后通常是 text → link_close)
+      for (let j = i + 1; j < children.length; j++) {
+        const inner = children[j]
+        if (inner.type === 'text' || inner.type === 'code_inline') {
+          inner.content = '🖥 打开预览'
+          break
+        }
+        if (inner.type === 'link_close') break
+      }
+    }
+    // 第二遍:裸文本(含 /api/preview/ 或 localhost:端口)转成代理链接
+    for (let i = 0; i < children.length; i++) {
+      const token = children[i]
+      // 处理普通文本与反引号内联代码(code_inline)——agent 常用 `/api/preview/8010/` 反引号形式
+      if (token.type !== 'text' && token.type !== 'code_inline') continue
       const text: string = token.content
-      if (!text.includes('/api/preview/')) continue
+      if (!text.includes('/api/preview/') && !/localhost:\d|127\.0\.0\.1:\d/.test(text)) continue
       let last = 0
       let m: RegExpExecArray | null
       PREVIEW_RE.lastIndex = 0
