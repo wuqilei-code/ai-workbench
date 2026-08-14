@@ -13,4 +13,6 @@ public class ModelRequest {
     private String name;
     private Integer enabled;
     private Integer sortOrder;
+    /** 模型上下文窗口 token 上限(进度环用;不填则前端估算兜底) */
+    private Integer contextLimit;
 }

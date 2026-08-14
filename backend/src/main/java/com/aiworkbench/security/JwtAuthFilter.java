@@ -26,10 +26,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain chain) throws ServletException, IOException {
-        // 依次尝试 header(Bearer) → query token → cookie,任一有效即放行;
-        // 避免某个无效来源(如页面自带的无关 token 参数)覆盖掉本已有效的 cookie 鉴权。
+        // 依次尝试 header(Bearer) → cookie,任一有效即放行。
+        // 不支持 query token:避免 JWT 暴露进 URL(预览已改用同源 HttpOnly cookie 鉴权)。
         if (tryAuthenticate(headerToken(request), request)
-                || tryAuthenticate(request.getParameter("token"), request)
                 || tryAuthenticate(cookieToken(request), request)) {
             chain.doFilter(request, response);
             return;

@@ -29,6 +29,7 @@ function toggleCollapsed() {
 const adminMenuOptions = [
   { label: '👥 用户管理', key: '/admin/users' },
   { label: '🧩 模型管理', key: '/admin/providers' },
+  { label: '🔌 MCP 服务', key: '/admin/mcps' },
   { label: '📊 用量统计', key: '/admin/usage' },
 ]
 function onAdminSelect(key: string) {
@@ -40,6 +41,32 @@ const viewArchived = ref(false)
 const sessions = computed(() => viewArchived.value ? chat.archivedSessions : chat.sessions)
 const agents = computed(() => chat.agents)
 const agentMenuOpen = ref(false)
+/** 耗时操作进行中:会话导出/导入等,显示轻量遮罩防止重复点击 */
+const busy = ref('')
+function withBusy<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  busy.value = label
+  return fn().finally(() => { busy.value = '' })
+}
+/** 导入会话的文件 input */
+const importFileRef = ref<HTMLInputElement | null>(null)
+
+/** 选择导出的 JSON 文件并导入为新会话 */
+async function importSessionFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  try {
+    await withBusy('正在导入会话…', async () => {
+      const text = await file.text()
+      const s = await chat.importSession(text)
+      msg.success(`已导入会话「${s.title}」`)
+      router.push(`/session/${s.id}`)
+    })
+  } catch (err: any) {
+    msg.error(err?.message || '导入失败,请确认是导出的 JSON 文件')
+  }
+}
 
 /** 会话搜索:输入即搜(标题/消息内容),命中含归档;非空时展示搜索结果视图 */
 const searchQuery = ref('')
@@ -62,7 +89,7 @@ async function onOpenSearchResult(s: { id: number }) {
 }
 async function onViewArchived(v: boolean) {
   viewArchived.value = v
-  if (v) await chat.loadArchivedSessions()
+  if (v) await withBusy('正在加载归档会话…', () => chat.loadArchivedSessions())
 }
 
 /** agent 下拉选项:默认 + 可用 primary/all agents */
@@ -81,8 +108,12 @@ async function onAgentMenuShow(show: boolean) {
 }
 
 async function onAgentSelect(key: string) {
-  const s = await chat.createSession('New Chat', key === '__default__' ? undefined : key)
-  router.push(`/session/${s.id}`)
+  try {
+    const s = await withBusy('正在新建会话…', () => chat.createSession('New Chat', key === '__default__' ? undefined : key))
+    router.push(`/session/${s.id}`)
+  } catch (e: any) {
+    msg.error(e?.message || '新建会话失败')
+  }
 }
 
 async function newChat() {
@@ -90,8 +121,12 @@ async function newChat() {
     const go = await confirmSwitch('新建会话')
     if (!go) return
   }
-  const s = await chat.createSession('New Chat')
-  router.push(`/session/${s.id}`)
+  try {
+    const s = await withBusy('正在新建会话…', () => chat.createSession('New Chat'))
+    router.push(`/session/${s.id}`)
+  } catch (e: any) {
+    msg.error(e?.message || '新建会话失败')
+  }
 }
 
 /** 源码测试分析入口:新建会话并预填提示词,引导用户上传项目 zip */
@@ -100,11 +135,15 @@ async function startTestAnalysis() {
     const go = await confirmSwitch('测试分析')
     if (!go) return
   }
-  const s = await chat.createSession('源码测试分析')
-  router.push(`/session/${s.id}`)
-  await nextTick()
-  msg.info('已进入测试分析会话,请在下方上传项目源码 ZIP 包后发送')
-  window.dispatchEvent(new CustomEvent('aiwb:test-analysis'))
+  try {
+    const s = await withBusy('正在新建会话…', () => chat.createSession('源码测试分析'))
+    router.push(`/session/${s.id}`)
+    await nextTick()
+    msg.info('已进入测试分析会话,请在下方上传项目源码 ZIP 包后发送')
+    window.dispatchEvent(new CustomEvent('aiwb:test-analysis'))
+  } catch (e: any) {
+    msg.error(e?.message || '新建会话失败')
+  }
 }
 
 async function openSession(id: number) {
@@ -143,7 +182,7 @@ async function remove(id: number) {
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
-        await chat.deleteSession(id)
+        await withBusy('正在删除会话…', () => chat.deleteSession(id))
         msg.success('已删除')
         if (chat.currentSessionId === null) router.push('/')
       } catch (e: any) { msg.error(e.message) }
@@ -166,7 +205,7 @@ async function onArchive(s: { id: number; title: string }) {
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
-        await chat.archiveSession(s.id)
+        await withBusy('正在归档会话…', () => chat.archiveSession(s.id))
         msg.success('已归档')
       } catch (e: any) { msg.error(e.message) }
     },
@@ -175,7 +214,7 @@ async function onArchive(s: { id: number; title: string }) {
 
 async function onRestore(s: { id: number; title: string }) {
   try {
-    await chat.unarchiveSession(s.id)
+    await withBusy('正在恢复会话…', () => chat.unarchiveSession(s.id))
     msg.success('已取消归档')
   } catch (e: any) { msg.error(e.message) }
 }
@@ -196,14 +235,15 @@ async function submitRename() {
   if (!v) { msg.warning('标题不能为空'); return }
   if (!renameTarget.value) return
   try {
-    await chat.renameSession(renameTarget.value.id, v)
+    await withBusy('正在重命名…', () => chat.renameSession(renameTarget.value!.id, v))
     msg.success('已重命名')
     renameVisible.value = false
   } catch (e: any) { msg.error(e.message) }
 }
 
 function onExport(s: { id: number; title: string }, format: 'md' | 'json' | 'pdf' | 'docx') {
-  chat.exportSession(s.id, format).catch((e: any) => msg.error(e.message))
+  const labels: Record<string, string> = { md: 'Markdown', json: 'JSON', pdf: 'PDF', docx: 'Word' }
+  withBusy(`正在导出 ${labels[format] || format}…`, () => chat.exportSession(s.id, format)).catch((e: any) => msg.error(e.message))
 }
 
 async function onClear(s: { id: number; title: string }) {
@@ -214,7 +254,7 @@ async function onClear(s: { id: number; title: string }) {
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
-        await chat.clearSession(s.id)
+        await withBusy('正在清空会话…', () => chat.clearSession(s.id))
         msg.success('已清空')
       } catch (e: any) { msg.error(e.message) }
     },
@@ -356,6 +396,12 @@ function logout() {
         :description="searchActive ? '未找到匹配的会话' : (viewArchived ? '暂无归档会话' : '暂无会话')"
         style="margin-top: 40px"
       />
+      <transition name="sidebusy-fade">
+        <div v-if="busy" class="side-busy">
+          <n-spin size="small" />
+          <span class="side-busy-text">{{ busy }}</span>
+        </div>
+      </transition>
     </div>
     <div class="side-foot">
       <div class="user-info">
@@ -364,13 +410,14 @@ function logout() {
         <n-tag v-if="auth.isAdmin" size="tiny" type="warning">admin</n-tag>
       </div>
       <div class="foot-actions">
-        <n-button size="small" quaternary title="源码测试分析:上传项目 zip 生成测试点/用例/脚本" @click="startTestAnalysis">🧪 测试</n-button>
+        <n-button size="small" quaternary title="导入会话(JSON 文件)" @click="importFileRef?.click()">↩️ 导入</n-button>
         <n-button size="small" quaternary :title="theme.mode === 'dark' ? '切换到浅色主题' : '切换到深色主题'" @click="theme.toggle()">{{ theme.mode === 'dark' ? '☀️' : '🌙' }}</n-button>
         <n-dropdown v-if="auth.isAdmin" :options="adminMenuOptions" trigger="click" placement="top-end" @select="onAdminSelect">
           <n-button size="small" quaternary>⚙️ 管理</n-button>
         </n-dropdown>
         <n-button size="small" quaternary @click="logout">退出</n-button>
       </div>
+      <input ref="importFileRef" type="file" accept=".json,application/json" class="hidden-import" @change="importSessionFile" />
     </div>
 
     <n-modal
@@ -417,7 +464,16 @@ function logout() {
   letter-spacing: .3px;
 }
 .agent-tag { flex-shrink: 0; margin-right: 4px; }
-.session-list { flex: 1; overflow-y: auto; padding: 8px; }
+.session-list { flex: 1; overflow-y: auto; padding: 8px; position: relative; }
+.side-busy {
+  position: absolute; inset: 0; z-index: 5;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  background: color-mix(in srgb, var(--bg, #fff) 70%, transparent);
+  backdrop-filter: blur(2px);
+}
+.side-busy-text { font-size: 12px; color: var(--text-2); }
+.sidebusy-fade-enter-active, .sidebusy-fade-leave-active { transition: opacity .2s ease; }
+.sidebusy-fade-enter-from, .sidebusy-fade-leave-to { opacity: 0; }
 .list-tabs { display: flex; gap: 4px; padding: 10px 12px 8px; }
 .list-tabs .tab {
   font-size: 12px; color: var(--text-3); padding: 4px 12px; border-radius: 14px; cursor: pointer;
@@ -448,4 +504,5 @@ function logout() {
 .user-info { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .user-info .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
 .foot-actions { display: flex; align-items: center; gap: 4px; justify-content: space-between; }
+.hidden-import { display: none; }
 </style>

@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 
 /** 提示词模板库(用户侧):内置只读 + 个人自建 CRUD。 */
 @RestController
@@ -29,6 +30,20 @@ public class TemplateController {
     @GetMapping
     public R<List<TemplateVo>> list() {
         return R.ok(templateService.listMine(SecurityUtil.currentUserId()));
+    }
+
+    /** 首页展示的模板(用户启用的;无启用时兜底内置) */
+    @GetMapping("/home")
+    public R<List<TemplateVo>> home() {
+        return R.ok(templateService.homeTemplates(SecurityUtil.currentUserId()));
+    }
+
+    /** 启用/停用模板(内置或自建) */
+    @PostMapping("/{id}/enabled")
+    public R<Void> setEnabled(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        boolean enabled = Boolean.TRUE.equals(body.get("enabled"));
+        templateService.setEnabled(SecurityUtil.currentUserId(), id, enabled);
+        return R.ok();
     }
 
     @PostMapping

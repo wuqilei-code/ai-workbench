@@ -25,7 +25,19 @@ http.interceptors.response.use(
       localStorage.removeItem('token')
       if (location.pathname !== '/login') location.href = '/login'
     }
-    const msg = err.response?.data?.message || err.message || 'network error'
+    const data = err.response?.data
+    // blob 响应(文件下载/预览):错误以 R 包裹的 JSON Blob 返回,读取文本解析 message
+    if (data instanceof Blob) {
+      return data.text().then((t) => {
+        let msg = 'request failed'
+        try {
+          const j = JSON.parse(t)
+          if (j?.message) msg = j.message
+        } catch { /* 非 JSON 的错误正文,保留默认文案 */ }
+        return Promise.reject(new Error(msg))
+      })
+    }
+    const msg = data?.message || err.message || 'network error'
     return Promise.reject(new Error(msg))
   },
 )

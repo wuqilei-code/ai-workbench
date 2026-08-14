@@ -1,5 +1,5 @@
 import { http, unwrap } from './http'
-import type { AdminUserVo, ProviderVo, UsageStats } from '@/types'
+import type { AdminUserVo, McpVo, ProviderVo, UsageStats } from '@/types'
 
 export const modelApi = {
   available: () => http.get<ProviderVo[]>('/models').then(unwrap),
@@ -14,6 +14,10 @@ export const adminApi = {
     http.post('/admin/models', data).then(unwrap),
   deleteModel: (id: number) => http.delete(`/admin/models/${id}`),
   apply: () => http.post('/admin/providers/apply'),
+  listMcps: () => http.get<McpVo[]>('/admin/mcps').then(unwrap),
+  createMcp: (data: any) => http.post<McpVo>('/admin/mcps', data).then(unwrap),
+  updateMcp: (id: number, data: any) => http.put<McpVo>(`/admin/mcps/${id}`, data).then(unwrap),
+  deleteMcp: (id: number) => http.delete(`/admin/mcps/${id}`),
   usageStats: (days = 14) => http.get<UsageStats>('/admin/stats/usage', { params: { days } }).then(unwrap),
   listUsers: (keyword?: string) => http.get<AdminUserVo[]>('/admin/users', { params: { keyword } }).then(unwrap),
   updateUserStatus: (id: number, status: number) => http.put(`/admin/users/${id}/status`, { status }),

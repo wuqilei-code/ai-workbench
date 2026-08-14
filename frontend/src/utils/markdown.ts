@@ -56,8 +56,7 @@ const md = new MarkdownIt({
  *    这些在用户浏览器里指向用户本机,必须重写为代理地址才能访问。 */
 const PREVIEW_RE = /(?:\/api\/preview\/\d{2,5}(?:\/[^\s`)\]}>]*)?|(?:https?:\/\/)?(?:localhost|127\.0\.0\.1):\d{2,5}(?:\/[^\s`)\]}>]*)?)/g
 
-/** 预览链接带上当前登录 JWT(顶层导航新标签页无法携带 Authorization 头/cookie 跨域不保证,
- *  只能靠 URL 参数传递凭据)。JWT 24h 过期,泄露面可控。
+/** 预览地址重写为代理路径,依赖同源 HttpOnly cookie(aiwb_token)鉴权,不把 JWT 暴露进 URL。
  *  localhost/127.0.0.1 形式重写为标准代理地址 /api/preview/<port>。 */
 function previewHref(raw: string): string {
   let path = raw
@@ -65,9 +64,7 @@ function previewHref(raw: string): string {
   if (localMatch) {
     path = '/api/preview/' + localMatch[1] + (localMatch[2] || '/')
   }
-  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null
-  if (!token) return path
-  return path.includes('?') ? `${path}&token=${encodeURIComponent(token)}` : `${path}?token=${encodeURIComponent(token)}`
+  return path
 }
 
 function previewLinks(state: any) {

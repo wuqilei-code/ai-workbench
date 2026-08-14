@@ -47,7 +47,7 @@ COPY --from=frontend-build /web/dist /usr/share/nginx/html
 COPY docker/supervisord.conf /etc/supervisord.conf
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY docker/entrypoint.sh /entrypoint.sh
-COPY docker/opencode/agents/chat.md /opt/aiworkbench/agents/chat.md
+COPY docker/opencode/agents /opt/aiworkbench/agents
 COPY docker/opencode/opencode.json.tpl /opt/aiworkbench/opencode.json.tpl
 COPY docker/opencode/skills /opt/aiworkbench/skills
 RUN chmod +x /entrypoint.sh \
@@ -131,10 +131,10 @@ RUN set -eux; \
     rm -rf "$tmpdir"; \
     node --version && npm --version
 
-# npm 国内镜像 + 全局前端 CLI(vite 构建/开发、typescript、tsx 运行 TS)。
+# npm 国内镜像 + 全局前端 CLI(vite 构建/开发、typescript、tsx 运行 TS)+ MySQL MCP server(agent 查库用,默认只读)
 # 保留 npm(前端项目常需 install 依赖;内网/国内可达用 npmmirror 镜像)。
 RUN npm config set registry ${NPM_REGISTRY} --global \
-  && npm install -g --no-audit --no-fund vite typescript tsx \
+  && npm install -g --no-audit --no-fund vite typescript tsx @benborla29/mcp-server-mysql \
   && npm config get registry \
   && npm ls -g --depth=0
 

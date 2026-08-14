@@ -12,4 +12,5 @@ public class ModelVo {
     private String name;
     private Integer enabled;
     private Integer sortOrder;
+    private Integer contextLimit;
 }

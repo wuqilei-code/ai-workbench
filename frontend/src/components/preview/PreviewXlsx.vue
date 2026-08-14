@@ -5,12 +5,14 @@ import * as XLSX from 'xlsx'
 const props = defineProps<{ blob: Blob }>()
 const sheets = ref<{ name: string; html: string; truncated: boolean }[]>([])
 const error = ref<string | null>(null)
+const parsing = ref(false)
 
 const MAX_ROWS = 1000
 const MAX_COLS = 50
 
 async function parse(blob: Blob) {
   error.value = null
+  parsing.value = true
   try {
     const buf = await blob.arrayBuffer()
     const wb = XLSX.read(buf, { type: 'array' })
@@ -21,6 +23,8 @@ async function parse(blob: Blob) {
     })
   } catch (e) {
     error.value = e instanceof Error ? e.message : '表格解析失败'
+  } finally {
+    parsing.value = false
   }
 }
 
@@ -144,22 +148,28 @@ watch(() => props.blob, (b) => { if (b) parse(b) }, { immediate: true })
 
 <template>
   <div class="xlsx-wrap">
-    <div v-if="error" class="xlsx-error">表格解析失败:{{ error }}</div>
+    <div v-if="parsing" class="xlsx-parsing">
+      <span class="xlsx-spinner"></span>
+      <span>正在解析表格…</span>
+    </div>
     <template v-else>
-      <n-tabs v-if="sheets.length > 1" type="line" size="small" animated>
-        <n-tab-pane v-for="s in sheets" :key="s.name" :name="s.name" :tab="s.name">
-          <div v-if="s.truncated" class="xlsx-truncate">
+      <div v-if="error" class="xlsx-error">表格解析失败:{{ error }}</div>
+      <template v-else>
+        <n-tabs v-if="sheets.length > 1" type="line" size="small" animated>
+          <n-tab-pane v-for="s in sheets" :key="s.name" :name="s.name" :tab="s.name">
+            <div v-if="s.truncated" class="xlsx-truncate">
+              仅显示前 {{ MAX_ROWS }} 行或 {{ MAX_COLS }} 列,完整数据请下载
+            </div>
+            <div class="sheet-html" v-html="s.html" />
+          </n-tab-pane>
+        </n-tabs>
+        <div v-else-if="sheets.length === 1">
+          <div v-if="sheets[0].truncated" class="xlsx-truncate">
             仅显示前 {{ MAX_ROWS }} 行或 {{ MAX_COLS }} 列,完整数据请下载
           </div>
-          <div class="sheet-html" v-html="s.html" />
-        </n-tab-pane>
-      </n-tabs>
-      <div v-else-if="sheets.length === 1">
-        <div v-if="sheets[0].truncated" class="xlsx-truncate">
-          仅显示前 {{ MAX_ROWS }} 行或 {{ MAX_COLS }} 列,完整数据请下载
+          <div class="sheet-html" v-html="sheets[0].html" />
         </div>
-        <div class="sheet-html" v-html="sheets[0].html" />
-      </div>
+      </template>
     </template>
   </div>
 </template>
@@ -173,6 +183,15 @@ watch(() => props.blob, (b) => { if (b) parse(b) }, { immediate: true })
 }
 .xlsx-truncate { padding: 8px 12px; background: #fff3cd; color: #856404; font-size: 12px; margin: 4px; }
 .xlsx-error { color: #ff6b6b; padding: 16px; text-align: center; }
+.xlsx-parsing {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  height: 100%; color: #888; font-size: 13px;
+}
+.xlsx-spinner {
+  width: 16px; height: 16px; border: 2px solid #ccc; border-top-color: #555;
+  border-radius: 50%; animation: xlsx-spin 0.8s linear infinite;
+}
+@keyframes xlsx-spin { to { transform: rotate(360deg); } }
 .xlsx-empty { padding: 32px; text-align: center; color: #999; }
 
 /* 强制覆盖暗色主题下的文字颜色继承 */

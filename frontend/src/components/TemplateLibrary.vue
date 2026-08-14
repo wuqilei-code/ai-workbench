@@ -15,6 +15,8 @@ const templates = ref<TemplateVo[]>([])
 const loading = ref(false)
 const keyword = ref('')
 const activeCategory = ref('全部')
+/** 行级操作进行中的模板 id(启停/删除) */
+const rowBusyId = ref<number | null>(null)
 
 const categories = computed(() => {
   const set = new Set<string>(['全部'])
@@ -56,13 +58,22 @@ const editId = ref<number | null>(null)
 const editTitle = ref('')
 const editCategory = ref('办公')
 const editContent = ref('')
+const editIcon = ref('📋')
 const saving = ref(false)
+
+/** 可选的预置图标(覆盖常用场景,保证首页展示可区分) */
+const ICON_PRESETS = [
+  '📋', '📝', '📊', '📈', '📉', '💻', '🐛', '🛠️', '🔧', '🧪', '🔍', '📚',
+  '✍️', '📧', '🗓️', '💡', '🚀', '🎯', '⚙️', '🧩', '🗂️', '🔬', '📄', '🖥️',
+  '☁️', '🔒', '💾', '🤖', '🧠', '📎', '🗺️', '⏰',
+]
 
 function openCreate() {
   editId.value = null
   editTitle.value = ''
   editCategory.value = '办公'
   editContent.value = ''
+  editIcon.value = '📋'
   editVisible.value = true
 }
 function openEdit(t: TemplateVo) {
@@ -70,6 +81,7 @@ function openEdit(t: TemplateVo) {
   editTitle.value = t.title
   editCategory.value = t.category
   editContent.value = t.content
+  editIcon.value = t.icon || '📋'
   editVisible.value = true
 }
 async function save() {
@@ -82,10 +94,10 @@ async function save() {
   saving.value = true
   try {
     if (editId.value == null) {
-      await chatApi.createTemplate({ title, category: editCategory.value || '其他', content })
+      await chatApi.createTemplate({ title, category: editCategory.value || '其他', content, icon: editIcon.value })
       msg.success('已创建模板')
     } else {
-      await chatApi.updateTemplate(editId.value, { title, category: editCategory.value || '其他', content })
+      await chatApi.updateTemplate(editId.value, { title, category: editCategory.value || '其他', content, icon: editIcon.value })
       msg.success('已保存')
     }
     editVisible.value = false
@@ -97,14 +109,32 @@ async function save() {
   }
 }
 
+async function toggleEnabled(t: TemplateVo) {
+  if (rowBusyId.value !== null) return
+  rowBusyId.value = t.id
+  const next = !t.enabled
+  try {
+    await chatApi.setTemplateEnabled(t.id, next)
+    t.enabled = next
+    msg.success(next ? `「${t.title}」已启用,将显示在首页` : `「${t.title}」已停用,不再显示在首页`)
+  } catch (e: any) {
+    msg.error(e?.message || '操作失败')
+  } finally {
+    rowBusyId.value = null
+  }
+}
+
 async function remove(t: TemplateVo) {
-  if (t.builtin) return
+  if (t.builtin || rowBusyId.value !== null) return
+  rowBusyId.value = t.id
   try {
     await chatApi.deleteTemplate(t.id)
     msg.success('已删除')
     await load()
   } catch (e: any) {
     msg.error(e?.message || '删除失败')
+  } finally {
+    rowBusyId.value = null
   }
 }
 </script>
@@ -139,6 +169,7 @@ async function remove(t: TemplateVo) {
       <div v-if="!filtered.length" class="tpl-empty">暂无模板</div>
       <div v-else class="tpl-list">
         <div v-for="t in filtered" :key="t.id" class="tpl-item">
+          <div class="tpl-icon" :title="t.title">{{ t.icon || '📋' }}</div>
           <div class="tpl-main">
             <div class="tpl-row">
               <span class="tpl-title">{{ t.title }}</span>
@@ -148,11 +179,23 @@ async function remove(t: TemplateVo) {
             <div class="tpl-content">{{ t.content }}</div>
           </div>
           <div class="tpl-actions">
+            <n-switch
+              size="small"
+              :value="t.enabled"
+              :checked-value="true"
+              :unchecked-value="false"
+              :disabled="rowBusyId !== null"
+              :loading="rowBusyId === t.id"
+              @update:value="() => toggleEnabled(t)"
+            >
+              <template #checked>首页</template>
+              <template #unchecked>停用</template>
+            </n-switch>
             <n-button size="tiny" type="primary" quaternary @click="useTemplate(t)">使用</n-button>
             <n-button v-if="!t.builtin" size="tiny" quaternary @click="openEdit(t)">编辑</n-button>
             <n-popconfirm v-if="!t.builtin" @positive-click="remove(t)">
               <template #trigger>
-                <n-button size="tiny" quaternary type="error">删除</n-button>
+                <n-button size="tiny" quaternary type="error" :disabled="rowBusyId !== null">删除</n-button>
               </template>
               确定删除该模板？
             </n-popconfirm>
@@ -180,6 +223,17 @@ async function remove(t: TemplateVo) {
           ]"
           placeholder="分类"
         />
+        <div class="icon-picker">
+          <span class="icon-label">图标:</span>
+          <span
+            v-for="ic in ICON_PRESETS"
+            :key="ic"
+            class="icon-choice"
+            :class="{ active: editIcon === ic }"
+            :title="ic"
+            @click="editIcon = ic"
+          >{{ ic }}</span>
+        </div>
         <n-input
           v-model:value="editContent"
           type="textarea"
@@ -215,6 +269,21 @@ async function remove(t: TemplateVo) {
   padding: 10px 12px; border-radius: var(--radius-sm);
   background: var(--surface); border: 1px solid var(--border-soft);
 }
+.tpl-icon {
+  width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; background: var(--accent-soft);
+}
+.icon-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.icon-label { font-size: 12px; color: var(--text-3); margin-right: 4px; }
+.icon-choice {
+  width: 28px; height: 28px; border-radius: 6px; font-size: 15px;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; border: 1px solid transparent;
+  transition: border-color .15s, background .15s;
+}
+.icon-choice:hover { border-color: var(--border); background: var(--surface-hover); }
+.icon-choice.active { border-color: var(--accent); background: var(--accent-soft); }
 .tpl-main { flex: 1; min-width: 0; }
 .tpl-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .tpl-title { font-size: 14px; font-weight: 600; color: var(--text); }

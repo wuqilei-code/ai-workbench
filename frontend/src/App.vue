@@ -224,4 +224,24 @@ body {
 }
 .code-block:hover .code-copy-btn { opacity: 1; }
 .code-copy-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.16); }
+
+/* 浅色主题:hljs 代码块适配浅色底(覆盖 github-dark 默认) */
+:root[data-theme='light'] pre.hljs,
+:root[data-theme='light'] .preview-code.hljs {
+  background: #f6f8fa; color: #24292e;
+}
+:root[data-theme='light'] .hljs-keyword,
+:root[data-theme='light'] .hljs-selector-tag,
+:root[data-theme='light'] .hljs-literal { color: #cf222e; }
+:root[data-theme='light'] .hljs-string,
+:root[data-theme='light'] .hljs-regexp,
+:root[data-theme='light'] .hljs-attribute { color: #0a3069; }
+:root[data-theme='light'] .hljs-number,
+:root[data-theme='light'] .hljs-symbol { color: #0550ae; }
+:root[data-theme='light'] .hljs-title,
+:root[data-theme='light'] .hljs-title.function_,
+:root[data-theme='light'] .hljs-title.class_ { color: #8250df; }
+:root[data-theme='light'] .hljs-comment,
+:root[data-theme='light'] .hljs-quote { color: #6e7781; font-style: italic; }
+:root[data-theme='light'] .hljs-built_in { color: #953800; }
 </style>

@@ -40,10 +40,14 @@ export interface SessionVo {
 export interface MessageVo {
   id: number
   opencodeMessageId?: string
-  role: 'user' | 'assistant' | 'tool' | 'system' | 'summary'
+  role: 'user' | 'assistant' | 'tool' | 'system' | 'summary' | 'compaction'
   content: string
   /** 结构化 part:工具调用 & 步骤结束标记;旧消息为 null */
   parts?: StepParts | null
+  /** assistant 消息真实 token 用量 {input,output,reasoning,cache:{read,write}};无则 null */
+  tokens?: { input: number; output: number; reasoning: number; cache: { read: number; write: number } } | null
+  /** 压缩产生的总结消息(不展示,仅占位) */
+  compactionSummary?: boolean
   status: string
   createdAt: string
   /** 前端本地态 */
@@ -124,7 +128,11 @@ export interface TemplateVo {
   title: string
   category: string
   content: string
+  /** emoji 图标 */
+  icon?: string
   builtin: boolean
+  /** 当前用户是否已启用(首页展示) */
+  enabled: boolean
   updatedAt: string
 }
 
@@ -239,6 +247,8 @@ export interface ModelVo {
   modelId: string
   name: string
   enabled: number
+  /** 模型上下文窗口 token 上限;进度环优先用真实 tokens / limit */
+  contextLimit?: number | null
 }
 
 export interface ProviderVo {
@@ -252,6 +262,21 @@ export interface ProviderVo {
   enabled: number
   sortOrder: number
   models: ModelVo[]
+}
+
+/** MCP Server 配置(local 命令进程 / remote HTTP/SSE URL) */
+export interface McpVo {
+  id: number
+  name: string
+  type: 'local' | 'remote'
+  command: string | null
+  url: string | null
+  headers: string | null
+  environment: string | null
+  enabled: number
+  sortOrder: number
+  createdAt: string
+  updatedAt: string
 }
 
 export interface FileNode {

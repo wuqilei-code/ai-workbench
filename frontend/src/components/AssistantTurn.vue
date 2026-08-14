@@ -46,6 +46,7 @@ const runningSeconds = computed(() => chat.streamingElapsedSeconds)
  *  - 其它工具 → "正在执行 xxx…"
  *  - 无工具无文本(纯思考)→ "AI 正在处理中…" */
 const showWorkingHint = computed(() =>
+  !chat.compacting &&
   turnInProgress.value &&
   !pendingQuestionHost.value &&
   !pendingPermissionHost.value &&
@@ -53,7 +54,7 @@ const showWorkingHint = computed(() =>
 )
 
 const pendingHint = computed(() => {
-  if (chat.agentStarting) return 'agent 启动中,请稍候…'
+  if (chat.agentStarting) return '正在连接智能体,请稍候…'
   const act = chat.runningActivity
   if (act?.kind === 'tool') {
     if (isFileProducingTool({ tool: act.tool } as ToolCall)) {
@@ -218,11 +219,16 @@ function handleExpand(names: string[] | null) {
 // ---------- 工具 chip 状态 ----------
 
 /** 下载工具产出的文件(chip 上的 📥 按钮) */
+const downloadingPath = ref<string | null>(null)
 async function downloadFile(path: string) {
+  if (downloadingPath.value !== null) return
+  downloadingPath.value = path
   try {
     await fileApi.download(path)
   } catch (e: any) {
     msg.error(e?.message || '下载失败')
+  } finally {
+    downloadingPath.value = null
   }
 }
 
@@ -506,6 +512,7 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
       v-if="deliverables.length"
       :items="deliverables"
       :busy="downloadingAll"
+      :downloading-path="downloadingPath"
       @preview="previewFile"
       @download="downloadFile"
       @downloadAll="downloadAllFiles"

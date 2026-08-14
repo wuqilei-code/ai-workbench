@@ -16,6 +16,10 @@ public class MessageVo {
     private String content;
     /** 结构化 part:{toolCalls:[...], stepFinish:{reason}}。旧消息为 null(non_null 不输出) */
     private JsonNode parts;
+    /** assistant 消息真实 token 用量 {input,output,reasoning,cache:{read,write}};进度环用,无则 null */
+    private JsonNode tokens;
+    /** 1=压缩产生的总结消息(前端不展示,仅占位) */
+    private boolean compactionSummary;
     private String status;
     private LocalDateTime createdAt;
     /** 仅 role=summary:本次快照 commit sha(历史重建总结卡片 + 跳转 diff 用) */

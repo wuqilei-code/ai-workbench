@@ -64,9 +64,16 @@ public class AgentContainerManager {
         return "http://" + containerName(userId) + ":" + SERVE_PORT;
     }
 
-    /** 创建并启动某用户的 agent 容器。已存在同名容器则先删除重建(保证配置/env 最新)。 */
+    /**
+     * 创建并启动某用户的 agent 容器。已存在<b>运行中</b>容器则直接复用(不删不重建,
+     * 保留其健康进程与 opencode 会话状态);仅存在已停止/残留容器时才删除重建
+     * (保证配置/env 最新)。幂等。
+     */
     public void createAndStart(Long userId, int uid, int gid, Map<String, String> env) {
         String name = containerName(userId);
+        if (isRunning(userId)) {
+            return;
+        }
         if (inspectOk(name)) {
             remove(name);
         }

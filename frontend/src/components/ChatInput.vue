@@ -15,10 +15,11 @@ const text = ref('')
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 
-/** 交由父级打开「生成文档」「解读报错」弹窗 */
+/** 交由父级打开「生成文档」「解读报错」弹窗 / 触发测试分析 */
 const emit = defineEmits<{
   (e: 'openDocGen'): void
   (e: 'openErrorDiagnose'): void
+  (e: 'openTestAnalysis'): void
 }>()
 
 /** 供欢迎页/模板库等外部注入:把提示词填入输入框并聚焦(不自动发送,便于用户补充)。 */
@@ -32,13 +33,33 @@ function fill(prompt: string) {
   })
 }
 
-defineExpose({ fill })
+/** 把工作区已有的文件作为附件挂到输入框(不重复上传;如已挂载则不重复)。 */
+function attachFilePath(path: string) {
+  if (!path) return
+  const name = path.split(/[\\/]/).filter(Boolean).pop() || path
+  if (attachments.value.some((a) => a.path === path)) return
+  attachments.value.push({ name, path })
+}
+
+defineExpose({ fill, attachFilePath })
 
 /** 监听 chat.pendingFill:建议追问等场景把提示词填入输入框(消费一次后清空) */
-watch(chat.pendingFill, (v) => {
+watch(() => chat.pendingFill, (v) => {
   if (!v) return
   fill(v)
-  chat.pendingFill.value = ''
+  chat.pendingFill = ''
+})
+
+/** 监听 chat.pendingAttachPath:文件树右键「问 AI」等把文件挂到附件(消费一次后清空) */
+watch(() => chat.pendingAttachPath, (v) => {
+  if (!v) return
+  attachFilePath(v)
+  chat.pendingAttachPath = ''
+  // 提示词汇总当前已挂载的全部文件,而不是只提最新一个
+  const paths = attachments.value.map((a) => a.path)
+  const list = paths.map((p) => `- ${p}`).join('\n')
+  const header = paths.length === 1 ? `请看看工作区里的这个文件:${paths[0]}\n\n我需要你:` : `请看看工作区里的这些文件:\n${list}\n\n我需要你:`
+  fill(header)
 })
 
 /** ---- slash 命令菜单 ---- */
@@ -52,6 +73,7 @@ async function ensureCommands() {
     commandsLoadedFor = chat.currentSessionId
   } catch (e: any) {
     console.error('[ChatInput] load commands failed', e)
+    msg.error('命令菜单加载失败,请重试')
   }
 }
 
@@ -128,13 +150,21 @@ const dataFiles = computed(() =>
 )
 const dataSamples = computed(() => {
   if (!dataFiles.value.length) return []
-  const first = dataFiles.value[0].name
-  return [
-    `分析 ${first} 的数据结构,告诉我有哪些字段`,
-    `对 ${first} 做整体数据概览(行数/字段/常见值分布)`,
-    `从 ${first} 中找出最值得关注的规律或异常`,
-    `基于 ${first} 生成一份数据分析报告`,
-  ]
+  const samples: string[] = []
+  // 每个数据文件各生成一条分析示例,移除/新增文件后自动同步
+  for (const f of dataFiles.value) {
+    samples.push(`分析 ${f.name} 的数据结构,告诉我有哪些字段`)
+  }
+  if (dataFiles.value.length === 1) {
+    const first = dataFiles.value[0].name
+    samples.push(`对 ${first} 做整体数据概览(行数/字段/常见值分布)`)
+    samples.push(`从 ${first} 中找出最值得关注的规律或异常`)
+    samples.push(`基于 ${first} 生成一份数据分析报告`)
+  } else {
+    samples.push('对比这几个数据文件,找出它们的差异和关联')
+    samples.push('汇总所有数据文件,生成一份综合数据分析报告')
+  }
+  return samples
 })
 /** 点击示例:把示例问题填入输入框(附件仍在,发送时会带文件路径) */
 function applySample(sample: string) {
@@ -242,6 +272,10 @@ function buildPayload(): string {
 async function onSend() {
   const payload = buildPayload()
   if (!payload) return
+  if (chat.compacting) {
+    msg.info('正在压缩会话中,请稍候再发送')
+    return
+  }
   if (chat.isStreaming) {
     if (chat.streamingStuckSeconds > 0) {
       await chat.forceReleaseStreaming()
@@ -327,6 +361,32 @@ async function onAbort() {
   })
 }
 
+/** 主动压缩会话:调用 opencode summarize,总结早期内容释放上下文。 */
+async function onSummarize() {
+  if (!chat.currentSessionId) return
+  dialog.warning({
+    title: '压缩会话',
+    content: '将自动总结早期对话内容以释放上下文,最近 2 轮对话保留完整。确定压缩?',
+    positiveText: '压缩',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      if (chat.compacting) return
+      try {
+        await chatApi.summarizeSession(chat.currentSessionId!)
+        // 请求返回即压缩已触发(opencode 后台异步总结):立即把 token 环的统计起点
+        // 推到当前最后一条消息,让圆环即时回落;若之后有 session.compacted 事件再幂等刷新。
+        chat.markCompacted()
+        // 显示"正在压缩"提示;compaction agent 生成 summary 消息时后端会推 session.compacting
+        // 覆盖(幂等),压缩完成(session.compacted)后自动消失。
+        chat.compacting = true
+        statsOpen.value = false
+      } catch (e: any) {
+        msg.error(e?.message || '压缩失败')
+      }
+    },
+  })
+}
+
 /** ---- 底部工具栏:模型选择 ---- */
 const modelOptions = computed(() => {
   const opts: { label: string; value: string }[] = []
@@ -377,14 +437,21 @@ async function onAgentSelect(key: string) {
   }
 }
 
-/** ---- 会话 token 进度环:300K token 满环(适配大上下文模型) ---- */
-const TOKEN_LIMIT = 300_000
+/** ---- 会话 token 进度环:优先用 opencode 真实 token 用量,估算兜底 ---- */
 const statsOpen = ref(false)
 const stats = computed(() => {
   const msgs = chat.messages
+  // 压缩点:store 在 session.compacted 后设为当时最大消息 id;其前的历史已总结、字符不参与估算
+  const cutoff = chat.compactCutoffId
+
   let user = 0, assistant = 0, tool = 0, chars = 0
   let toolCalls = 0
   for (const m of msgs) {
+    // 跳过压缩产生的消息(占位/Continue/总结),不参与统计
+    if (m.compactionSummary) continue
+    if (m.role === 'user' && !(m.content || '').trim()) continue
+    if ((m.content || '').trim().startsWith('Continue if you have next steps')) continue
+    if (cutoff > 0 && (m.id ?? 0) <= cutoff) continue
     if (m.role === 'user') user++
     else if (m.role === 'assistant') assistant++
     else if (m.role === 'tool') tool++
@@ -395,10 +462,53 @@ const stats = computed(() => {
       if (typeof tc.output === 'string') chars += tc.output.length
     }
   }
-  return { total: msgs.length, user, assistant, tool, toolCalls, chars, estTokens: Math.ceil(chars / 2) }
+
+  // 真实 token 用量(与 opencode web 一致):取最后一条带 tokens 的 assistant 消息,
+  //    total = input + output + reasoning + cache.read + cache.write。
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const t = msgs[i].tokens
+    if (!t || msgs[i].compactionSummary) continue
+    const total = (t.input ?? 0) + (t.output ?? 0) + (t.reasoning ?? 0) + (t.cache?.read ?? 0) + (t.cache?.write ?? 0)
+    return {
+      total: msgs.length, user, assistant, tool, toolCalls, chars,
+      estTokens: Math.max(0, total),
+      real: true, tokens: t,
+    }
+  }
+
+  // 估算兜底:chars/4(对齐 opencode),无真实 tokens
+  return {
+    total: msgs.length, user, assistant, tool, toolCalls, chars,
+    estTokens: Math.ceil(chars / 4),
+    real: false, tokens: null,
+  }
 })
-/** 进度 0~1;>=300K 满环 */
-const tokenRatio = computed(() => Math.min(1, stats.value.estTokens / TOKEN_LIMIT))
+
+/** 模型上下文窗口上限:取当前会话模型配置的 context_limit,缺省 300K(仅估算兜底用,真实 tokens 不需要它) */
+const TOKEN_LIMIT = 300_000
+const modelLimit = computed(() => {
+  const s = chat.currentSession
+  if (!s?.providerId || !s?.modelId) return TOKEN_LIMIT
+  for (const p of chat.availableModels) {
+    if (p.providerId !== s.providerId) continue
+    for (const m of p.models) {
+      if (m.modelId === s.modelId && m.contextLimit && m.contextLimit > 0) return m.contextLimit
+    }
+  }
+  return TOKEN_LIMIT
+})
+
+/** 进度 0~1;>=模型窗口满环 */
+const tokenRatio = computed(() => {
+  if (stats.value.real) {
+    const limit = modelLimit.value
+    const t = stats.value.tokens!
+    // 真实模式:上下文占用 = 输入 token(input 已含缓存读);output/reasoning 是响应,不占窗口
+    const input = t.input ?? 0
+    return Math.min(1, input / limit)
+  }
+  return Math.min(1, stats.value.estTokens / TOKEN_LIMIT)
+})
 /** 环色:低占用柔和蓝,>60% 变琥珀,>85% 变红(提示该开新会话了) */
 const ringColor = computed(() => {
   const r = tokenRatio.value
@@ -440,10 +550,12 @@ async function startNewChat() {
       </div>
     </div>
 
-    <!-- 上传进度(zip 大文件上传时显示) -->
-    <div v-if="uploadProgress !== null" class="upload-progress">
-      <span class="up-label">正在上传项目包… {{ uploadProgress }}%</span>
-      <n-progress :percentage="uploadProgress" :show-indicator="false" :height="6" />
+    <!-- 上传进度(zip 大文件或普通文件上传时显示) -->
+    <div v-if="uploading || uploadProgress !== null" class="upload-progress">
+      <span v-if="uploadProgress !== null" class="up-label">正在上传项目包… {{ uploadProgress }}%</span>
+      <span v-else class="up-label">正在上传文件…</span>
+      <n-progress v-if="uploadProgress !== null" :percentage="uploadProgress" :show-indicator="false" :height="6" />
+      <div v-else class="up-indeterminate"><span class="up-bar"></span></div>
     </div>
 
     <!-- 附件 chip 列表 -->
@@ -490,7 +602,7 @@ async function startNewChat() {
         <button
           class="token-ring-btn"
           :class="{ full: ringNearFull }"
-          :title="`会话约 ${stats.estTokens.toLocaleString()} token / ${TOKEN_LIMIT.toLocaleString()},点击查看详情${ringNearFull ? ';建议新开会话' : ''}`"
+          :title="`${stats.real ? '会话上下文' : '会话约'} ${stats.estTokens.toLocaleString()} token / ${(stats.real ? modelLimit : TOKEN_LIMIT).toLocaleString()},点击查看详情${ringNearFull ? ';建议新开会话' : ''}`"
           @click="statsOpen = true"
         >
           <svg class="token-ring" width="30" height="30" viewBox="0 0 36 36">
@@ -509,8 +621,9 @@ async function startNewChat() {
         </button>
 
         <!-- 附件按钮 -->
-        <button class="tool-btn" title="选择附件" @click="pickFile">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        <button class="tool-btn" title="选择附件" @click="pickFile" :disabled="uploading">
+          <span v-if="uploading" class="tool-spinner"></span>
+          <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
         </button>
 
         <!-- 模型选择 -->
@@ -538,9 +651,11 @@ async function startNewChat() {
           </button>
         </n-dropdown>
 
-        <!-- 快捷工具:生成文档 / 解读报错 -->
+        <!-- 快捷工具:测试分析 / 生成文档 / 解读报错 / 我的MCP -->
+        <button class="tool-btn tool-btn-text" title="源码测试分析:上传项目 zip 生成测试点/用例/脚本" @click="emit('openTestAnalysis')">🧪 测试</button>
         <button class="tool-btn tool-btn-text" title="一键生成文档(周报/会议纪要/邮件/分析报告)" @click="emit('openDocGen')">📄 生成文档</button>
         <button class="tool-btn tool-btn-text" title="粘贴报错信息,让 AI 解读" @click="emit('openErrorDiagnose')">🩺 解读报错</button>
+        <button class="tool-btn tool-btn-text" title="配置我的 MCP Server(仅对我生效)" @click="router.push('/settings/mcps')">🔌 我的MCP</button>
       </div>
 
       <div class="toolbar-right">
@@ -570,13 +685,25 @@ async function startNewChat() {
         <div class="stat"><span class="k">工具消息</span><span class="v">{{ stats.tool }}</span></div>
         <div class="stat"><span class="k">工具调用次数</span><span class="v">{{ stats.toolCalls }}</span></div>
         <div class="stat"><span class="k">总字符数</span><span class="v">{{ stats.chars }}</span></div>
-        <div class="stat"><span class="k">约计 token</span><span class="v">{{ stats.estTokens }}</span></div>
+        <template v-if="stats.real">
+          <div class="stat"><span class="k">上下文 token(输入)</span><span class="v">{{ stats.tokens!.input }}</span></div>
+          <div class="stat"><span class="k">输出 token</span><span class="v">{{ stats.tokens!.output }}</span></div>
+          <div class="stat"><span class="k">推理 token</span><span class="v">{{ stats.tokens!.reasoning }}</span></div>
+          <div class="stat"><span class="k">缓存读取/写入</span><span class="v">{{ stats.tokens!.cache?.read ?? 0 }} / {{ stats.tokens!.cache?.write ?? 0 }}</span></div>
+        </template>
+        <template v-else>
+          <div class="stat"><span class="k">约计 token</span><span class="v">{{ stats.estTokens }}</span></div>
+        </template>
         <div class="stat"><span class="k">token 进度</span><span class="v">{{ Math.round(tokenRatio * 100) }}%</span></div>
       </div>
-      <p class="stats-note">token 数为粗略估算（总字符数 / 2），仅供参考。300K 满环。</p>
-      <div v-if="ringNearFull" class="stats-warn">
-        <span>会话上下文已接近上限，建议新开会话以释放上下文。</span>
-        <n-button size="small" type="primary" @click="startNewChat">新开会话</n-button>
+      <p v-if="stats.real" class="stats-note">为模型真实返回的 token 用量(上限 {{ modelLimit.toLocaleString() }})。压缩后该值会随上下文释放而下降。</p>
+      <p v-else class="stats-note">token 数为粗略估算（字符数 / 4），仅供参考。</p>
+      <div class="stats-warn" :class="{ alert: ringNearFull }">
+        <span>{{ ringNearFull ? '会话上下文已接近上限，可压缩会话以释放上下文，或新开会话。' : '上下文占用过高时，可压缩会话以释放空间。' }}</span>
+        <div class="stats-actions">
+          <n-button size="small" @click="onSummarize">压缩会话</n-button>
+          <n-button size="small" type="primary" @click="startNewChat">新开会话</n-button>
+        </div>
       </div>
     </n-modal>
   </div>
@@ -611,6 +738,13 @@ async function startNewChat() {
 .upload-progress { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .up-label { font-size: 12px; color: var(--text-3); flex-shrink: 0; }
 .upload-progress :deep(.n-progress) { flex: 1; }
+.up-indeterminate { flex: 1; height: 6px; border-radius: 3px; background: var(--surface-hover); overflow: hidden; position: relative; }
+.up-bar { position: absolute; top: 0; left: 0; height: 100%; width: 40%; border-radius: 3px; background: linear-gradient(90deg, transparent, var(--accent), transparent); animation: up-slide 1.2s ease-in-out infinite; }
+@keyframes up-slide { 0% { left: -40%; } 100% { left: 100%; } }
+.tool-spinner { width: 14px; height: 14px; border: 2px solid var(--text-3); border-top-color: transparent; border-radius: 50%; animation: up-spin .7s linear infinite; }
+@keyframes up-spin { to { transform: rotate(360deg); } }
+.tool-btn:disabled { opacity: .55; cursor: default; }
+.tool-btn:disabled:hover { background: transparent; }
 .attachments {
   display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px;
 }
@@ -621,7 +755,8 @@ async function startNewChat() {
   font-size: 12px; padding: 3px 8px; border-radius: 10px; max-width: 240px;
 }
 .att-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.att-remove { cursor: pointer; opacity: .7; padding: 0 2px; }
+.att-remove { cursor: pointer; opacity: .7; padding: 0 4px; }
+.att-remove::after { content: '×'; font-size: 13px; line-height: 1; }
 .att-remove:hover { opacity: 1; color: var(--err); }
 
 /* 数据问答引导卡片 */
@@ -746,9 +881,14 @@ async function startNewChat() {
 .stat .v { font-size: 18px; font-weight: 600; color: var(--accent-text); }
 .stats-note { color: var(--text-3); font-size: 12px; margin-top: 12px; }
 .stats-warn {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
   margin-top: 12px; padding: 10px 12px; border-radius: var(--radius-sm);
-  background: rgba(228, 122, 134, 0.1); border: 1px solid rgba(228, 122, 134, 0.3);
-  color: var(--err); font-size: 13px;
+  background: rgba(107, 138, 253, 0.08); border: 1px solid rgba(107, 138, 253, 0.22);
+  color: var(--text-2); font-size: 13px;
 }
+.stats-warn.alert {
+  background: rgba(228, 122, 134, 0.1); border: 1px solid rgba(228, 122, 134, 0.3);
+  color: var(--err);
+}
+.stats-actions { display: flex; gap: 8px; }
 </style>

@@ -5,10 +5,12 @@ import { renderAsync } from 'docx-preview'
 const props = defineProps<{ blob: Blob }>()
 const container = ref<HTMLElement | null>(null)
 const error = ref<string | null>(null)
+const rendering = ref(false)
 
 async function render(blob: Blob) {
   if (!container.value || !blob) return
   error.value = null
+  rendering.value = true
   container.value.innerHTML = ''
   try {
     await renderAsync(blob, container.value, undefined, {
@@ -22,6 +24,8 @@ async function render(blob: Blob) {
     })
   } catch (e) {
     error.value = e instanceof Error ? e.message : '文档渲染失败'
+  } finally {
+    rendering.value = false
   }
 }
 
@@ -31,13 +35,28 @@ onBeforeUnmount(() => { if (container.value) container.value.innerHTML = '' })
 
 <template>
   <div class="docx-scroll">
-    <div v-if="error" class="docx-error">docx 渲染失败:{{ error }}</div>
-    <div ref="container" class="docx-container" />
+    <div v-if="rendering" class="docx-rendering">
+      <span class="spinner"></span>
+      <span>正在渲染文档…</span>
+    </div>
+    <template v-else>
+      <div v-if="error" class="docx-error">docx 渲染失败:{{ error }}</div>
+      <div ref="container" class="docx-container" />
+    </template>
   </div>
 </template>
 
 <style scoped>
 .docx-scroll { overflow: auto; height: 100%; background: #f0f0f0; padding: 16px; }
+.docx-rendering {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  height: 100%; color: #888; font-size: 13px;
+}
+.spinner {
+  width: 16px; height: 16px; border: 2px solid #ccc; border-top-color: #555;
+  border-radius: 50%; animation: docx-spin 0.8s linear infinite;
+}
+@keyframes docx-spin { to { transform: rotate(360deg); } }
 .docx-container {
   background: #fff; max-width: 960px; margin: 0 auto;
   box-shadow: 0 2px 8px rgba(0,0,0,0.15); padding: 40px; min-height: 200px;

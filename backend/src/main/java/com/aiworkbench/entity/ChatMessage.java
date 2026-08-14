@@ -26,6 +26,10 @@ public class ChatMessage {
     private String content;
     /** 完整 parts 数组(JSON 字符串),保真 */
     private String parts;
+    /** opencode assistant 消息真实 token 用量(JSON 字符串 {input,output,reasoning,cache:{read,write}});供进度环使用 */
+    private String tokens;
+    /** 1=压缩产生的总结消息(compaction summary),前端不展示,仅占位避免历史断裂 */
+    private Integer compactionSummary;
 
     /** pending | streaming | completed | error | aborted */
     private String status;

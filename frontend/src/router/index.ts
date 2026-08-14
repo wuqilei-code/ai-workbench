@@ -18,6 +18,18 @@ const routes = [
     component: () => import('@/views/admin/ProviderConfigView.vue'),
   },
   {
+    path: '/admin/mcps',
+    name: 'admin-mcps',
+    component: () => import('@/views/admin/McpConfigView.vue'),
+    props: { scope: 'admin' },
+  },
+  {
+    path: '/settings/mcps',
+    name: 'my-mcps',
+    component: () => import('@/views/admin/McpConfigView.vue'),
+    props: { scope: 'user' },
+  },
+  {
     path: '/admin/usage',
     name: 'admin-usage',
     component: () => import('@/views/admin/UsageStatsView.vue'),

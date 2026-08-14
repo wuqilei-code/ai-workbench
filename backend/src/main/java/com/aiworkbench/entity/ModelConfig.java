@@ -20,6 +20,8 @@ public class ModelConfig {
     private String name;
     private Integer enabled;
     private Integer sortOrder;
+    /** 模型上下文窗口 token 上限(进度环使用;空则前端用估算兜底) */
+    private Integer contextLimit;
 
     @TableField(value = "created_at", updateStrategy = FieldStrategy.NEVER)
     private LocalDateTime createdAt;

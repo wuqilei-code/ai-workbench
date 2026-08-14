@@ -118,6 +118,31 @@ public class OpencodeClient {
         }
     }
 
+    /** POST /session/{id}/summarize — 主动触发会话压缩(用 compaction 模型总结早期内容)。 */
+    public boolean summarize(long userId, String opencodeSessionId, String providerId, String modelId, boolean auto) {
+        UserProcess proc = processManager.getOrStart(userId);
+        String dir = workspaceService.userDir(userId);
+        try {
+            Map<String, Object> body = new java.util.LinkedHashMap<>();
+            if (providerId != null) body.put("providerID", providerId);
+            if (modelId != null) body.put("modelID", modelId);
+            body.put("auto", auto);
+            proc.getWebClient().post().uri("/session/{id}/summarize", opencodeSessionId)
+                    .header("x-opencode-directory", dir)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(body)
+                    .retrieve().bodyToMono(Boolean.class)
+                    .block();
+            return true;
+        } catch (WebClientResponseException e) {
+            log.warn("summarize opencode session failed: {} {}", e.getStatusCode(), e.getResponseBodyAsString());
+            return false;
+        } catch (Exception e) {
+            log.warn("summarize opencode session error: {}", e.toString());
+            throw new BusinessException(ResultCode.OPENCODE_UNAVAILABLE);
+        }
+    }
+
     /** GET /session/{id} */
     public OpencodeSessionDto getSession(long userId, String opencodeSessionId) {
         UserProcess proc = processManager.getOrStart(userId);

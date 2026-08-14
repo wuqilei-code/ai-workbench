@@ -55,6 +55,47 @@ public class StuckToolWatcher {
         }
     }
 
+    /** 未回答的权限/问题请求超时(默认 5 分钟)后自动拒绝,让 AI 继续。
+     *  避免用户长时间不操作 → 容器被空闲回收 → 回来点提交时 requestId 已失效卡住。 */
+    @Scheduled(fixedDelayString = "${opencode.stuck-permission-timeout-ms:300000}")
+    public void rejectStalePendingSweep() {
+        long timeoutMs = props.getStuckPermissionTimeoutMs();
+        if (timeoutMs <= 0) {
+            return;
+        }
+        java.time.LocalDateTime threshold = java.time.LocalDateTime.now()
+                .minus(java.time.Duration.ofMillis(timeoutMs));
+        for (com.aiworkbench.service.ChatMessageService.StalePending sp
+                : chatMessageService.findStalePendingRequests(threshold)) {
+            try {
+                ChatSession session = chatSessionService.findById(sp.sessionId());
+                if (session == null || session.getOpencodeSessionId() == null) {
+                    continue;
+                }
+                Long userId = session.getUserId();
+                if ("permission".equals(sp.kind())) {
+                    opencodeClient.replyPermission(userId, session.getOpencodeSessionId(), sp.requestId(), "reject");
+                } else {
+                    opencodeClient.rejectQuestion(userId, session.getOpencodeSessionId(), sp.requestId());
+                }
+                // 本地清掉 pending,避免重复扫描
+                chatMessageService.clearPendingPermission(sp.sessionId(), sp.requestId());
+                chatMessageService.clearPendingQuestion(sp.sessionId(), sp.requestId());
+                log.info("stale-pending: auto-rejected {} {} (session {}) after {}ms",
+                        sp.kind(), sp.requestId(), sp.sessionId(), timeoutMs);
+            } catch (com.aiworkbench.common.BusinessException e) {
+                // 容器早被回收/requestId 已失效(404):pending 是无效残留,直接清理,避免每 5 分钟重试
+                chatMessageService.clearPendingPermission(sp.sessionId(), sp.requestId());
+                chatMessageService.clearPendingQuestion(sp.sessionId(), sp.requestId());
+                log.info("stale-pending: cleared stale {} {} (session {}): {}",
+                        sp.kind(), sp.requestId(), sp.sessionId(), e.getMessage());
+            } catch (Exception e) {
+                log.debug("stale-pending reject failed ({} {}): {}",
+                        sp.kind(), sp.requestId(), e.toString());
+            }
+        }
+    }
+
     private void scan(Long userId) {
         if (!processManager.isStreaming(userId)) {
             return;

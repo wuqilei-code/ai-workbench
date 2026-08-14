@@ -153,6 +153,13 @@ public class ChatMessageController {
         return R.ok(chatMessageService.abort(id, SecurityUtil.currentUserId()));
     }
 
+    /** 主动压缩会话(项目侧检测到会话接近预算时调用) */
+    @PostMapping("/summarize")
+    @AuditLog(action = "压缩会话", targetSpel = "#id")
+    public R<Boolean> summarize(@PathVariable Long id) {
+        return R.ok(chatMessageService.summarize(id, SecurityUtil.currentUserId()));
+    }
+
     /**
      * SSE 订阅该会话的实时事件(opencode /event 经路由转发)。
      * 越权校验:getOwned 不属于当前用户则抛 SESSION_NOT_FOUND(404)。

@@ -28,6 +28,7 @@ import java.nio.file.Paths;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashSet;
+import java.util.Base64;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
@@ -164,10 +165,8 @@ public class OpencodeProcessManager {
             configureEnv(pb.environment(), userId, uid);
             process = pb.start();
 
-            // 4. 构造实例 WebClient(绝对 baseUrl + Basic auth 已由 builder 默认头带)
-            WebClient instanceClient = webClientBuilder.clone()
-                    .baseUrl("http://127.0.0.1:" + port)
-                    .build();
+            // 4. 构造实例 WebClient(绝对 baseUrl + 该用户独立 Basic auth)
+            WebClient instanceClient = instanceClient("http://127.0.0.1:" + port, userId);
 
             // 5. 健康轮询至 READY
             HealthDto health = waitReadyProcess(instanceClient, process, userId, port);
@@ -210,9 +209,7 @@ public class OpencodeProcessManager {
             agentContainerManager.createAndStart(userId, uid, gid, env);
 
             // app 容器与 agent 容器共享 aiwb-agents 网络,按容器名 DNS 直连 serve(无需发布端口)
-            WebClient instanceClient = webClientBuilder.clone()
-                    .baseUrl(agentContainerManager.serveUrl(userId))
-                    .build();
+            WebClient instanceClient = instanceClient(agentContainerManager.serveUrl(userId), userId);
 
             HealthDto health = waitReadyContainer(instanceClient, userId, port);
             if (health == null || !Boolean.TRUE.equals(health.getHealthy())) {
@@ -541,11 +538,37 @@ public class OpencodeProcessManager {
         env.put("XDG_DATA_HOME", home.resolve(".local/share").toString());
         env.put("XDG_STATE_HOME", home.resolve(".local/state").toString());
         env.put("OPENCODE_SERVER_USERNAME", props.getUsername());
-        env.put("OPENCODE_SERVER_PASSWORD", props.getPassword());
+        env.put("OPENCODE_SERVER_PASSWORD", perUserPassword(userId));
         // 解析用户 opencode.env 中的 KEY=VALUE(解密后的 API key),注入环境
         Path envFile = home.resolve(".config/opencode/opencode.env");
         parseEnvFile(envFile).forEach(env::put);
         return env;
+    }
+
+    /** 每用户独立 opencode 密码:由共享 master password + userId 确定性派生,
+     *  容器间无法用同一凭据互访(缓解同网横向访问)。 */
+    private String perUserPassword(Long userId) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] hash = md.digest((props.getPassword() + ":" + userId).getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < 16; i++) {
+                sb.append(String.format("%02x", hash[i]));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            return props.getPassword();
+        }
+    }
+
+    /** 构造实例 WebClient:baseUrl + 该用户独立 Basic auth 凭据(覆盖 builder 默认共享凭据)。 */
+    private WebClient instanceClient(String baseUrl, Long userId) {
+        String basic = Base64.getEncoder().encodeToString(
+                (props.getUsername() + ":" + perUserPassword(userId)).getBytes(StandardCharsets.UTF_8));
+        return webClientBuilder.clone()
+                .baseUrl(baseUrl)
+                .defaultHeader("Authorization", "Basic " + basic)
+                .build();
     }
 
     private Map<String, String> parseEnvFile(Path envFile) {

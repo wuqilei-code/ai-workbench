@@ -2,7 +2,7 @@
 /** 结果文件卡片区:展示 AI 本 turn 产出的交付文件,点击即下载。
  *  数据来源:AssistantTurn 通过 extractDeliverables(turn) 解析 AI 回复里的
  *  `[结果文件] <路径>` 标记得到 items,再交给本组件渲染。 */
-defineProps<{ items: { path: string; name: string }[]; busy?: boolean }>()
+defineProps<{ items: { path: string; name: string }[]; busy?: boolean; downloadingPath?: string | null }>()
 defineEmits<{
   (e: 'preview', path: string): void
   (e: 'download', path: string): void
@@ -45,6 +45,7 @@ function icon(name: string): string {
         v-for="item in items"
         :key="item.path"
         class="deliverable-item"
+        :class="{ 'item-busy': downloadingPath === item.path }"
         :title="`预览 ${item.path}`"
         @click="$emit('preview', item.path)"
       >
@@ -52,9 +53,10 @@ function icon(name: string): string {
         <span class="deliverable-name">{{ item.name }}</span>
         <span
           class="deliverable-action"
+          :class="{ spin: downloadingPath === item.path }"
           title="下载"
           @click.stop="$emit('download', item.path)"
-        >📥</span>
+        >{{ downloadingPath === item.path ? '⏳' : '📥' }}</span>
       </a>
     </div>
   </div>
@@ -134,4 +136,7 @@ function icon(name: string): string {
   white-space: nowrap;
 }
 .deliverable-action { font-size: 14px; opacity: .8; flex-shrink: 0; }
+.item-busy .deliverable-action { opacity: .6; }
+.deliverable-item.item-busy .deliverable-action.spin { animation: dl-pulse 1s ease-in-out infinite; }
+@keyframes dl-pulse { 0%,100% { opacity: .5; } 50% { opacity: 1; } }
 </style>

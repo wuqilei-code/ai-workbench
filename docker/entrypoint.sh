@@ -45,10 +45,11 @@ fi
 if [ ! -f "$TEMPLATE_DIR/agents/chat.md" ]; then
   cp /opt/aiworkbench/agents/chat.md "$TEMPLATE_DIR/agents/chat.md"
 fi
-# chat.md 与 skills 是静态内置资源,以镜像版为准:每次启动覆盖模板,
+# agents 与 skills 是静态内置资源,以镜像版为准:每次启动覆盖模板,
 # 确保提示/技能升级后能传播(否则首次 seed 后永不更新)。
 # opencode.json/opencode.env 是 admin apply 的 live 配置,上面保留 if [ ! -f ] 不覆盖。
-cp /opt/aiworkbench/agents/chat.md "$TEMPLATE_DIR/agents/chat.md"
+mkdir -p "$TEMPLATE_DIR/agents"
+cp /opt/aiworkbench/agents/*.md "$TEMPLATE_DIR/agents/"
 if [ -d /opt/aiworkbench/skills ]; then
   mkdir -p "$TEMPLATE_DIR/skills"
   cp -r /opt/aiworkbench/skills/. "$TEMPLATE_DIR/skills/"

@@ -18,4 +18,8 @@ public class TemplateRequest {
     @NotBlank
     @Size(max = 8000)
     private String content;
+
+    /** emoji 图标(可空,默认 📋) */
+    @Size(max = 8)
+    private String icon;
 }

@@ -29,7 +29,6 @@ mybatis-plus:
 
 # opencode 集成
 opencode:
-  base-url: ${OPENCODE_BASE_URL:http://127.0.0.1:4096}
   username: ${OPENCODE_SERVER_USERNAME:opencode}
   password: ${OPENCODE_SERVER_PASSWORD:changeme}
   workspace-root: ${OPENWORK_WORKSPACE:/workspace}
@@ -61,9 +60,9 @@ app:
     # AES-256 密钥,Base64 编码的 32 字节;留空时用内置 dev key(仅开发,生产必须注入)
     aes-key: ${APP_AES_KEY:}
   rate-limit:
-    # 令牌桶:每用户/IP 每 refill-period-seconds 秒 refill-tokens 个令牌,桶容量 capacity
-    capacity: 60
-    refill-tokens: 60
+    # 令牌桶:每用户/IP 在 refill-period-seconds 内 refill-tokens 个令牌,桶容量 capacity
+    capacity: 200
+    refill-tokens: 120
     refill-period-seconds: 60
 
 logging:

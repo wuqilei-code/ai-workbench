@@ -10,6 +10,10 @@ const msg = useMessage()
 const loading = ref(false)
 const users = ref<AdminUserVo[]>([])
 const keyword = ref('')
+/** 行级操作进行中的用户 id(启停/角色) */
+const rowBusyId = ref<number | null>(null)
+/** 重置密码提交中 */
+const resetting = ref(false)
 
 const resetVisible = ref(false)
 const resetUser = ref<AdminUserVo | null>(null)
@@ -27,9 +31,14 @@ async function load() {
 }
 
 async function toggleStatus(u: AdminUserVo) {
+  if (rowBusyId.value !== null) return
+  rowBusyId.value = u.id
   const target = u.status === 1 ? 0 : 1
   const action = target === 0 ? '禁用' : '启用'
-  if (target === 0 && !confirm(`确定禁用用户「${u.username}」？禁用后其 agent 实例将被停止，无法登录。`)) return
+  if (target === 0 && !confirm(`确定禁用用户「${u.username}」？禁用后其 agent 实例将被停止，无法登录。`)) {
+    rowBusyId.value = null
+    return
+  }
   try {
     await adminApi.updateUserStatus(u.id, target)
     msg.success(`已${action}「${u.username}」`)
@@ -37,13 +46,20 @@ async function toggleStatus(u: AdminUserVo) {
   } catch (e: any) {
     msg.error(e.message)
     await load()
+  } finally {
+    rowBusyId.value = null
   }
 }
 
 async function toggleRole(u: AdminUserVo) {
+  if (rowBusyId.value !== null) return
+  rowBusyId.value = u.id
   const target = u.role === 'admin' ? 'user' : 'admin'
   const action = target === 'admin' ? '设为管理员' : '降为普通用户'
-  if (target === 'user' && !confirm(`确定将「${u.username}」降为普通用户？`)) return
+  if (target === 'user' && !confirm(`确定将「${u.username}」降为普通用户？`)) {
+    rowBusyId.value = null
+    return
+  }
   try {
     await adminApi.updateUserRole(u.id, target)
     msg.success(`已将「${u.username}」${action}`)
@@ -51,6 +67,8 @@ async function toggleRole(u: AdminUserVo) {
   } catch (e: any) {
     msg.error(e.message)
     await load()
+  } finally {
+    rowBusyId.value = null
   }
 }
 
@@ -66,12 +84,15 @@ async function submitReset() {
     msg.warning('新密码至少 6 位')
     return
   }
+  resetting.value = true
   try {
     await adminApi.resetUserPassword(resetUser.value.id, resetPwd.value)
     msg.success(`已重置「${resetUser.value.username}」的密码`)
     resetVisible.value = false
   } catch (e: any) {
     msg.error(e.message)
+  } finally {
+    resetting.value = false
   }
 }
 
@@ -131,7 +152,8 @@ onMounted(load)
               <td>
                 <n-switch
                   :value="u.status === 1"
-                  :disabled="u.role === 'admin'"
+                  :disabled="u.role === 'admin' || rowBusyId !== null"
+                  :loading="rowBusyId === u.id"
                   @update:value="toggleStatus(u)"
                 />
               </td>
@@ -139,10 +161,10 @@ onMounted(load)
               <td>{{ fmtTime(u.createdAt) }}</td>
               <td>
                 <n-space size="small">
-                  <n-button size="tiny" quaternary @click="toggleRole(u)">
+                  <n-button size="tiny" quaternary :loading="rowBusyId === u.id" :disabled="rowBusyId !== null" @click="toggleRole(u)">
                     {{ u.role === 'admin' ? '取消管理' : '设为管理' }}
                   </n-button>
-                  <n-button size="tiny" quaternary type="error" @click="openReset(u)">重置密码</n-button>
+                  <n-button size="tiny" quaternary type="error" :disabled="rowBusyId !== null" @click="openReset(u)">重置密码</n-button>
                 </n-space>
               </td>
             </tr>
@@ -169,7 +191,7 @@ onMounted(load)
       <template #footer>
         <div style="display: flex; justify-content: flex-end; gap: 8px">
           <n-button @click="resetVisible = false">取消</n-button>
-          <n-button type="primary" @click="submitReset">确认重置</n-button>
+          <n-button type="primary" :loading="resetting" :disabled="resetting" @click="submitReset">确认重置</n-button>
         </div>
       </template>
     </n-modal>

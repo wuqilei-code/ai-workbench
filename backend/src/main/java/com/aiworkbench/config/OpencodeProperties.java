@@ -6,8 +6,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @Data
 @ConfigurationProperties(prefix = "opencode")
 public class OpencodeProperties {
-    /** opencode serve 的 HTTP 地址 */
-    private String baseUrl;
     /** HTTP Basic 认证用户名(对应 OPENCODE_SERVER_USERNAME) */
     private String username;
     /** HTTP Basic 认证密码(对应 OPENCODE_SERVER_PASSWORD) */
@@ -61,6 +59,8 @@ public class OpencodeProperties {
     private long stuckSweepMs = 5_000;
     /** 同一用户连续 abort 的最小间隔(ms),避免误杀后立刻再杀 */
     private long stuckCooldownMs = 120_000;
+    /** 未回答的权限/问题请求超过该时长(ms)自动拒绝(需 < 容器 idle 回收,让拒绝先于回收生效;0=禁用) */
+    private long stuckPermissionTimeoutMs = 300_000;
 
     /** uid = uidBase + userId(确定性,免协调;与 UserProvisioningService 一致) */
     public int uidOf(Long userId) {

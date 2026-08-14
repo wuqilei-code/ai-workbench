@@ -22,7 +22,8 @@ public class WebConfig implements WebMvcConfigurer {
                 .allowedOriginPatterns("*")
                 .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
-                .allowCredentials(true)
+                // 同源部署,不携带凭据跨域(与 SecurityConfig 一致)
+                .allowCredentials(false)
                 .maxAge(3600);
     }
 
@@ -30,6 +31,9 @@ public class WebConfig implements WebMvcConfigurer {
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(rateLimitInterceptor)
                 .addPathPatterns("/api/**")
-                .excludePathPatterns("/api/health", "/api/health/**");
+                .excludePathPatterns(
+                        "/api/health", "/api/health/**",
+                        // SSE 长连接:不限流(刷新/切会话会重建连接,避免被 429 打断)
+                        "/api/chat/sessions/*/events");
     }
 }

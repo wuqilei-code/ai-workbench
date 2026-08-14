@@ -96,6 +96,11 @@ public class OpencodeInstanceEventConsumer {
     /** messageID → 上次思维链落库时间戳(毫秒) */
     private final ConcurrentHashMap<String, Long> lastReasoningPersistAt = new ConcurrentHashMap<>();
 
+    /** 已推送过 session.compacting 的 compaction 消息 id(压缩中提示去重,每个压缩会话只提示一次) */
+    private final java.util.Set<String> compactNotified = ConcurrentHashMap.newKeySet();
+    /** 正在压缩的会话(opencode sessionId):压缩期间其 message.* 内容事件不转发前端(只落库) */
+    private final java.util.Set<String> compactingSessions = ConcurrentHashMap.newKeySet();
+
     private record TextBuffer(String sessionID, String text) {}
 
 public OpencodeInstanceEventConsumer(WebClient instanceClient, OpencodeEventRouter router,
@@ -215,13 +220,44 @@ public OpencodeInstanceEventConsumer(WebClient instanceClient, OpencodeEventRout
                     chatMessageService.upsertFromEvent(sessionID, properties);
                     // 消息定稿 → 强制 flush 该消息尚未落库的节流文本(最终文本以 message.updated 为准收口)
                     flushTextForMessage(sessionID, properties);
+                    // 压缩完成信号:compaction 总结消息定稿(finish 非空)→ 压缩结束。
+                    // 状态机统一以 compactingSessions 为准:compaction part 事件负责"开始",
+                    // 这里负责"结束",opencode 自身的 session.compacted 事件也走兜底清理,避免重复/乱序。
+                    JsonNode info = properties.has("info") ? properties.get("info") : properties;
+                    boolean compactionMsg = info != null && (
+                            "compaction".equals(info.path("type").asText(null))
+                            || ("assistant".equals(info.path("role").asText(null))
+                                && ("compaction".equals(info.path("mode").asText(null))
+                                    || info.path("summary").asBoolean(false))));
+                    if (compactionMsg && info.hasNonNull("finish")
+                            && compactingSessions.remove(sessionID)) {
+                        // 压缩完成:把该会话压缩点标记记录更新为 completed(前端渲染"已压缩"分割线)
+                        completeCompactionForSession(sessionID);
+                        router.dispatch(sessionID, "session.compacted",
+                                objectMapper.writeValueAsString(properties));
+                    }
                 } catch (Exception persistErr) {
                     log.warn("persist message.updated failed: {}", persistErr.toString());
                 }
             }
+            // opencode 自身的 session.compacted 事件:兜底清理压缩状态(即使上面的总结消息 finish 未被检测到)
+            if ("session.compacted".equals(resolvedType) && sessionID != null
+                    && compactingSessions.remove(sessionID)) {
+                completeCompactionForSession(sessionID);
+                router.dispatch(sessionID, "session.compacted",
+                        objectMapper.writeValueAsString(properties));
+            }
             if ("message.part.updated".equals(resolvedType) && sessionID != null) {
                 try {
                     JsonNode part = properties.has("part") ? properties.get("part") : null;
+                    // 压缩开始的即时信号:compaction part(type="compaction")出现在占位 user 消息里,
+                    // 先于任何总结文本。立即标记"压缩中",保证随后的总结文本事件不再转发前端。
+                    if (part != null && "compaction".equals(part.path("type").asText(null))) {
+                        if (compactingSessions.add(sessionID)) {
+                            router.dispatch(sessionID, "session.compacting",
+                                    objectMapper.writeValueAsString(properties));
+                        }
+                    }
                     if (part != null && "text".equals(part.path("type").asText("")) && part.has("messageID")) {
                         // 文本 part:节流落库(中间态进内存,超间隔写一次),而非每条重写整段 content
                         bufferText(sessionID, part.get("messageID").asText(), part.path("text").asText(""));
@@ -268,8 +304,12 @@ public OpencodeInstanceEventConsumer(WebClient instanceClient, OpencodeEventRout
                     log.warn("clear pendingPermission on {} failed: {}", resolvedType, persistErr.toString());
                 }
             }
-            // 转发给前端
-            if (sessionID != null) {
+            // 转发给前端。压缩期间:跳过该会话的 message.* 内容事件(压缩 agent 的总结文本不推前端,
+            // 避免"压缩中闪现总结内容";DB 已落库,压缩完成后前端经 listMessages 刷新拿干净列表)。
+            boolean compactingNow = sessionID != null && compactingSessions.contains(sessionID)
+                    && resolvedType != null
+                    && (resolvedType.startsWith("message."));
+            if (sessionID != null && !compactingNow) {
                 router.dispatch(sessionID, resolvedType, objectMapper.writeValueAsString(properties));
             }
         } catch (Exception e) {
@@ -285,6 +325,15 @@ public OpencodeInstanceEventConsumer(WebClient instanceClient, OpencodeEventRout
             if (info.has("sessionID")) sessionID = info.get("sessionID").asText();
         }
         return sessionID;
+    }
+
+    /** 压缩完成:把 opencode session 对应 chat 会话的压缩点标记记录更新为 completed。 */
+    private void completeCompactionForSession(String opencodeSessionId) {
+        try {
+            chatMessageService.completeCompactionByOpencodeSession(opencodeSessionId);
+        } catch (Exception e) {
+            log.debug("completeCompaction failed for {}: {}", opencodeSessionId, e.toString());
+        }
     }
 
     /**
@@ -312,11 +361,13 @@ public OpencodeInstanceEventConsumer(WebClient instanceClient, OpencodeEventRout
         }
     }
 
-    /** 每轮对话结束:异步快照,成功后对本次快照生成 AI 变更总结;异步且静默,避免阻塞事件流。 */
+    /** 每轮对话结束:回填真实 token 用量 + 异步快照,成功后对本次快照生成 AI 变更总结;异步且静默,避免阻塞事件流。 */
     private void asyncSnapshot(String sessionID) {
         final long uid = userId;
         final String sid = sessionID;
         CompletableFuture.runAsync(() -> {
+            // 进度环数据源:把本轮 assistant 消息的真实 token 用量回填到 DB
+            chatMessageService.backfillTokens(sid);
             String sha = snapshotService.snapshot(uid, "AI 对话结束");
             if (sha != null) {
                 changeSummaryService.summarizeAfterSnapshot(uid, sid, sha);

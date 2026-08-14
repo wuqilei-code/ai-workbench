@@ -12,6 +12,8 @@ const error = ref('')
 const expandedId = ref<string | null>(null)
 const detailLogs = ref<Record<string, string>>({})
 const detailLoading = ref<Record<string, boolean>>({})
+/** 正在清理运行文件的任务 id(行内按钮 loading、防重复点击) */
+const cleaningId = ref<string | null>(null)
 
 /** 当前是否还有运行/等待中的任务(决定轮询节奏) */
 const hasActive = computed(() => tasks.value.some((t) => t.status === 'running' || t.status === 'pending'))
@@ -103,6 +105,8 @@ function statusType(t: TaskInfo): 'default' | 'primary' | 'success' | 'warning' 
 }
 
 async function onCleanup(t: TaskInfo) {
+  if (cleaningId.value !== null) return
+  cleaningId.value = t.id
   try {
     await chatApi.cleanupTask(t.id)
     msg.success(`已清理任务「${t.id}」的运行文件`)
@@ -111,6 +115,8 @@ async function onCleanup(t: TaskInfo) {
     await refresh()
   } catch (e: any) {
     msg.error(e?.message || '清理失败')
+  } finally {
+    cleaningId.value = null
   }
 }
 
@@ -166,8 +172,8 @@ onBeforeUnmount(stopPolling)
               <pre v-else-if="detailLogs[t.id] !== undefined" class="log-text">{{ detailLogs[t.id] || '(日志为空)' }}</pre>
             </div>
             <div class="task-actions">
-              <n-button size="tiny" quaternary @click="loadLog(t.id)">刷新日志</n-button>
-              <n-button size="tiny" quaternary type="error" @click="onCleanup(t)">清理</n-button>
+              <n-button size="tiny" quaternary :disabled="cleaningId !== null" @click="loadLog(t.id)">刷新日志</n-button>
+              <n-button size="tiny" quaternary type="error" :loading="cleaningId === t.id" :disabled="cleaningId !== null" @click="onCleanup(t)">清理</n-button>
             </div>
           </div>
         </div>

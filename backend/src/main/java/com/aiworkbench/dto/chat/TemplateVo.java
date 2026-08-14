@@ -13,7 +13,11 @@ public class TemplateVo {
     private String title;
     private String category;
     private String content;
-    /** true=系统内置(只读) */
+    /** emoji 图标 */
+    private String icon;
+    /** true=系统内置(只读,但可启停) */
     private boolean builtin;
+    /** 当前用户是否已启用(在首页展示) */
+    private boolean enabled;
     private LocalDateTime updatedAt;
 }

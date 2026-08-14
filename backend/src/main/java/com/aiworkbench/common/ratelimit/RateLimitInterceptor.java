@@ -59,12 +59,14 @@ public class RateLimitInterceptor implements HandlerInterceptor {
     }
 
     private String clientIp(HttpServletRequest req) {
+        // 优先信任 nginx 注入的 X-Real-IP(真实客户端 IP,不可被请求头伪造)。
+        // X-Forwarded-For 可由客户端随意构造,仅作无 nginx 环境(直连后端)的 fallback。
+        String real = req.getHeader("X-Real-IP");
+        if (real != null && !real.isEmpty()) return real;
         String xff = req.getHeader("X-Forwarded-For");
         if (xff != null && !xff.isEmpty()) {
             return xff.split(",")[0].trim();
         }
-        String real = req.getHeader("X-Real-IP");
-        if (real != null && !real.isEmpty()) return real;
         return req.getRemoteAddr();
     }
 

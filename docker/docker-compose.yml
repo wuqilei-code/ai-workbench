@@ -16,7 +16,6 @@ services:
       # --- opencode 内部认证(网关 -> opencode) ---
       OPENCODE_SERVER_USERNAME: opencode
       OPENCODE_SERVER_PASSWORD: ${OPENCODE_SERVER_PASSWORD:?set in .env}
-      OPENCODE_BASE_URL: http://127.0.0.1:4096
       # --- Phase 3 每用户 agent 容器隔离(容器模式) ---
       OPENCODE_CONTAINER_MODE: "${OPENCODE_CONTAINER_MODE:-true}"
       AGENT_IMAGE: "${AGENT_IMAGE:-ai-workbench-agent}"
@@ -27,12 +26,13 @@ services:
       # --- JWT ---
       JWT_SECRET: ${JWT_SECRET:?set in .env}
       JWT_TTL_MINUTES: "1440"
-      # --- 注册开关 ---
-      APP_REGISTRATION_ENABLED: "true"
+      # --- 注册开关(生产默认关,防批量滥用;需要开放时设 true) ---
+      APP_REGISTRATION_ENABLED: "${APP_REGISTRATION_ENABLED:-false}"
       # --- AES 加密密钥(Base64 编码 32 字节);生产务必替换为随机密钥 ---
       APP_AES_KEY: ${APP_AES_KEY:?set in .env}
-      # --- MySQL ---
-      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/ai_workbench?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+      # --- MySQL(本机服务,非容器) ---
+      # 本机 MySQL 局域网 IP;app 在容器内不能用 localhost,须用宿主可达 IP
+      SPRING_DATASOURCE_URL: jdbc:mysql://${MYSQL_HOST:-192.168.0.161}:3306/ai_workbench?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8&useUnicode=true
       SPRING_DATASOURCE_USERNAME: aiworkbench
       SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:?set in .env}
       # --- 工作区 ---
@@ -46,9 +46,6 @@ services:
     networks:
       - default
       - agents
-    depends_on:
-      mysql:
-        condition: service_healthy
     restart: unless-stopped
 
   # 仅构建 agent 专用精简镜像(容器模式每用户 agent 容器用);profile=build 不随默认 up 启动,
@@ -65,7 +62,10 @@ services:
     restart: "no"
     command: ["true"]
 
+  # 本机 MySQL 服务已接入后不再使用容器 MySQL;保留定义便于回退。
+  # 需要重新启用时:去掉下面 profiles 行,并恢复 app 的 depends_on。
   mysql:
+    profiles: ["legacy-mysql"]
     image: docker.m.daocloud.io/mysql:8.0
     command: --default-authentication-plugin=mysql_native_password
     ports:

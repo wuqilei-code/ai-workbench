@@ -10,6 +10,7 @@ import com.aiworkbench.mapper.ChatMessageMapper;
 import com.aiworkbench.service.opencode.OpencodeClient;
 import com.aiworkbench.service.opencode.OpencodeEventRouter;
 import com.aiworkbench.service.opencode.dto.CreateSessionBody;
+import com.aiworkbench.service.opencode.dto.OpencodeMessageDto;
 import com.aiworkbench.service.opencode.dto.OpencodeSessionDto;
 import com.aiworkbench.service.opencode.dto.PromptAsyncBody;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -330,6 +331,11 @@ public class ChatMessageService {
     public void sendUserMessage(Long sessionId, Long userId, SendMessageRequest req) {
         ChatSession s = chatSessionService.getOwned(sessionId, userId);
 
+        // 压缩中禁止发送:压缩期间上下文正被改写,新消息会破坏压缩结果(前端已禁用,后端兜底)。
+        if (isCompacting(sessionId)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "会话正在压缩中,请稍候再发送");
+        }
+
         // 基线快照:每轮对话开始前把工作区已存在的未提交变更(如用户手动删改文件)固化为
         // 独立 commit,使本轮结束时的变更总结只覆盖本会话真实产生的改动,避免把无关变更
         // 错误归因到当前会话(问题:会话 106 仅执行只读 ls,总结却出现"删除了模拟流水 Excel")。
@@ -393,6 +399,63 @@ public class ChatMessageService {
         return ok;
     }
 
+    /** 主动触发会话压缩(项目侧检测到会话接近预算时调用)。
+     *  auto=false:压缩完成后不自动继续(不注入 Continue),会话停在压缩总结处,由用户自行继续。
+     *  压缩点会落库为一条 role=compaction 记录(status=compacting),前端直接渲染该记录
+     *  为"正在压缩/已压缩"分割线,不再需要前端锚点推断;压缩完成时由事件消费者更新为 completed。 */
+    public boolean summarize(Long sessionId, Long userId) {
+        ChatSession s = chatSessionService.getOwned(sessionId, userId);
+        insertCompactionMarker(s.getId(), s.getUserId());
+        return opencodeClient.summarize(userId, s.getOpencodeSessionId(),
+                s.getProviderId(), s.getModelId(), false);
+    }
+
+    /** 插入一条压缩点标记消息:role=compaction,status=compacting。
+     *  前端把该记录渲染为"正在压缩…"占位;压缩完成时 {@link #completeCompaction} 更新为 completed。 */
+    public void insertCompactionMarker(Long sessionId, Long userId) {
+        ChatMessage m = new ChatMessage();
+        m.setSessionId(sessionId);
+        m.setUserId(userId);
+        m.setRole("compaction");
+        m.setContent(null);
+        m.setCompactionSummary(1);
+        m.setStatus("compacting");
+        chatMessageMapper.insert(m);
+    }
+
+    /** 压缩完成:把该会话最新一条压缩中标记更新为 completed。 */
+    public void completeCompaction(Long sessionId) {
+        if (sessionId == null) return;
+        ChatMessage latest = chatMessageMapper.selectOne(new LambdaQueryWrapper<ChatMessage>()
+                .eq(ChatMessage::getSessionId, sessionId)
+                .eq(ChatMessage::getRole, "compaction")
+                .eq(ChatMessage::getStatus, "compacting")
+                .orderByDesc(ChatMessage::getId)
+                .last("limit 1"));
+        if (latest != null) {
+            latest.setStatus("completed");
+            chatMessageMapper.updateById(latest);
+        }
+    }
+
+    /** 压缩完成(按 opencode session 定位 chat 会话):见 {@link #completeCompaction(Long)}。 */
+    public void completeCompactionByOpencodeSession(String opencodeSessionId) {
+        if (opencodeSessionId == null) return;
+        ChatSession s = chatSessionService.findByOpencodeSessionId(opencodeSessionId);
+        if (s != null) {
+            completeCompaction(s.getId());
+        }
+    }
+
+    /** 会话当前是否正在压缩(存在未完成的 compaction 标记记录)。 */
+    public boolean isCompacting(Long sessionId) {
+        if (sessionId == null) return false;
+        return chatMessageMapper.selectCount(new LambdaQueryWrapper<ChatMessage>()
+                .eq(ChatMessage::getSessionId, sessionId)
+                .eq(ChatMessage::getRole, "compaction")
+                .eq(ChatMessage::getStatus, "compacting")) > 0;
+    }
+
     /**
      * 每轮 AI 对话开始前的"基线快照":把工作区里对话开始前就已存在的未提交变更
      * (如用户手动删改文件、上一轮遗留的改动)提交为一个独立 commit。
@@ -435,11 +498,38 @@ public class ChatMessageService {
                 : (info.has("parts") ? info.get("parts") : null);
         String text = extractText(parts);
         String status = resolveStatus(info, role);
+        // opencode message.updated 的 info 是完整 AssistantMessage(顶层带 tokens)
+        JsonNode tokens = info.has("tokens") && info.get("tokens").isObject() ? info.get("tokens") : null;
+        String tokensJson = tokens != null ? tokens.toString() : null;
 
         ChatMessage existing = chatMessageMapper.selectOne(new LambdaQueryWrapper<ChatMessage>()
                 .eq(ChatMessage::getSessionId, session.getId())
                 .eq(ChatMessage::getOpencodeMessageId, opencodeMessageId)
                 .last("limit 1"));
+
+        // 压缩产生的消息(前端不展示,仅标记占位):
+        //  - opencode 压缩消息(type="compaction",schema Session.Message.Compaction)
+        //  - compaction agent 的总结消息(assistant, mode=compaction / summary=true)
+        //  - 压缩占位 user 消息(空内容)
+        //  - auto 注入的 Continue user 消息(opencode 压缩后自动继续用)
+        boolean compactionSummary;
+        String msgType = info.path("type").asText(null);
+        if ("compaction".equals(msgType)) {
+            compactionSummary = true;
+        } else if ("assistant".equals(role)) {
+            compactionSummary = "compaction".equals(info.path("mode").asText(null))
+                    || info.path("summary").asBoolean(false);
+        } else {
+            // user 消息:文本为空且 DB 也无内容 → 压缩占位;否则是真实消息(不隐藏)。
+            // 注意 message.updated 可能只带 info 不带 parts,text 提取为空,须用 DB 已有 content 兜底,
+            // 否则用户真实消息会被误判为压缩占位而隐藏。
+            String trimmed = text != null ? text.trim() : "";
+            boolean dbHasContent = existing != null && existing.getContent() != null
+                    && !existing.getContent().isBlank();
+            compactionSummary = trimmed.isEmpty() && !dbHasContent
+                    || (trimmed.startsWith("Continue if you have next steps") && !dbHasContent);
+        }
+        int compactionFlag = compactionSummary ? 1 : 0;
 
         if (existing != null) {
             existing.setRole(role);
@@ -447,6 +537,10 @@ public class ChatMessageService {
             if (text != null && !text.isEmpty()) {
                 existing.setContent(text);
             }
+            if (tokensJson != null) {
+                existing.setTokens(tokensJson);
+            }
+            existing.setCompactionSummary(compactionFlag);
             existing.setStatus(status);
             chatMessageMapper.updateById(existing);
         } else {
@@ -456,6 +550,8 @@ public class ChatMessageService {
             m.setOpencodeMessageId(opencodeMessageId);
             m.setRole(role);
             m.setContent(text);
+            m.setTokens(tokensJson);
+            m.setCompactionSummary(compactionFlag);
             m.setStatus(status);
             chatMessageMapper.insert(m);
         }
@@ -581,11 +677,78 @@ public class ChatMessageService {
 
     /** 新消息 insert,已有消息 updateById。 */
     private void persistMessage(ChatMessage m) {
+        // 防御:user 消息一旦有真实内容就不是压缩占位(压缩占位始终为空);避免误标导致前端隐藏真实对话
+        if ("user".equals(m.getRole()) && m.getContent() != null && !m.getContent().isBlank()) {
+            m.setCompactionSummary(0);
+        }
         if (m.getId() != null) {
             chatMessageMapper.updateById(m);
         } else {
             chatMessageMapper.insert(m);
         }
+    }
+
+    /**
+     * 会话一轮结束后从 opencode 拉最近消息,把 assistant 消息的真实 token 用量回填到 DB。
+     * 进度环以该数据为准;只在 tokens 为空时写,避免反复覆盖。异步调用,失败静默。
+     * 同时按 opencode 消息的 mode/summary/占位特征回填 compaction_summary 标记(前端隐藏压缩过程消息)。
+     */
+    public void backfillTokens(String opencodeSessionId) {
+        try {
+            ChatSession s = chatSessionService.findByOpencodeSessionId(opencodeSessionId);
+            if (s == null) {
+                return;
+            }
+            List<OpencodeMessageDto> msgs = opencodeClient.listMessages(s.getUserId(), opencodeSessionId, 30);
+            for (OpencodeMessageDto m : msgs) {
+                if (m.getId() == null) {
+                    continue;
+                }
+                ChatMessage db = chatMessageMapper.selectOne(new LambdaQueryWrapper<ChatMessage>()
+                        .eq(ChatMessage::getSessionId, s.getId())
+                        .eq(ChatMessage::getOpencodeMessageId, m.getId())
+                        .last("limit 1"));
+                if (db == null) {
+                    continue;
+                }
+                boolean changed = false;
+                if (m.getTokens() != null && db.getTokens() == null) {
+                    String json = objectMapper.writeValueAsString(m.getTokens());
+                    db.setTokens(json);
+                    changed = true;
+                }
+                boolean isHidden = isCompactionMessage(m);
+                if (isHidden && (db.getCompactionSummary() == null || db.getCompactionSummary() != 1)) {
+                    db.setCompactionSummary(1);
+                    changed = true;
+                }
+                if (changed) {
+                    chatMessageMapper.updateById(db);
+                }
+            }
+        } catch (Exception e) {
+            log.debug("backfillTokens failed for session {}: {}", opencodeSessionId, e.toString());
+        }
+    }
+
+    /** 判断 opencode 消息是否属压缩过程产物(前端隐藏):compaction agent 总结 / 空 user 占位 / Continue 注入。 */
+    private boolean isCompactionMessage(OpencodeMessageDto m) {
+        if (m.getMode() != null && "compaction".equals(m.getMode())) {
+            return true;
+        }
+        if (Boolean.TRUE.equals(m.getSummary())) {
+            return true;
+        }
+        String role = m.getRole();
+        if (role == null) {
+            return false;
+        }
+        String text = extractText(m.getParts());
+        String trimmed = text != null ? text.trim() : "";
+        if ("user".equals(role)) {
+            return trimmed.isEmpty() || trimmed.startsWith("Continue if you have next steps");
+        }
+        return false;
     }
 
     /**
@@ -708,6 +871,18 @@ public class ChatMessageService {
             return objectMapper.readTree(partsJson);
         } catch (Exception e) {
             log.warn("parse parts json for VO failed: {}", e.toString());
+            return null;
+        }
+    }
+
+    private JsonNode parseTokens(String tokensJson) {
+        if (tokensJson == null || tokensJson.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode node = objectMapper.readTree(tokensJson);
+            return node != null && node.isObject() ? node : null;
+        } catch (Exception e) {
             return null;
         }
     }
@@ -1087,14 +1262,47 @@ public class ChatMessageService {
         return false;
     }
 
+    /** 未回答且超时的 pending 请求(permission/question):看门狗超时自动拒绝用。
+     *  返回 {sessionId, requestId, kind(permission/question)}。 */
+    public java.util.List<StalePending> findStalePendingRequests(java.time.LocalDateTime threshold) {
+        java.util.List<StalePending> out = new java.util.ArrayList<>();
+        List<ChatMessage> candidates = chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
+                .eq(ChatMessage::getRole, "assistant")
+                .isNotNull(ChatMessage::getParts)
+                .like(ChatMessage::getParts, "pending")
+                .lt(ChatMessage::getCreatedAt, threshold)
+                .orderByDesc(ChatMessage::getId)
+                .last("limit 200"));
+        for (ChatMessage m : candidates) {
+            try {
+                JsonNode parts = objectMapper.readTree(m.getParts());
+                if (parts == null) continue;
+                if (parts.has("pendingPermission") && parts.get("pendingPermission").has("requestId")) {
+                    out.add(new StalePending(m.getSessionId(), m.getOpencodeMessageId(),
+                            parts.get("pendingPermission").get("requestId").asText(), "permission"));
+                }
+                if (parts.has("pendingQuestion") && parts.get("pendingQuestion").has("requestId")) {
+                    out.add(new StalePending(m.getSessionId(), m.getOpencodeMessageId(),
+                            parts.get("pendingQuestion").get("requestId").asText(), "question"));
+                }
+            } catch (Exception ignored) {}
+        }
+        return out;
+    }
+
+    public record StalePending(Long sessionId, String opencodeMessageId, String requestId, String kind) {}
+
     private MessageVo toVo(ChatMessage m) {
         JsonNode parts = parseParts(m.getParts());
+        JsonNode tokens = parseTokens(m.getTokens());
         return MessageVo.builder()
                 .id(m.getId())
                 .opencodeMessageId(m.getOpencodeMessageId())
                 .role(m.getRole())
                 .content(m.getContent())
                 .parts(parts)
+                .tokens(tokens)
+                .compactionSummary(m.getCompactionSummary() != null && m.getCompactionSummary() == 1)
                 .status(m.getStatus())
                 .createdAt(m.getCreatedAt())
                 .summarySha("summary".equals(m.getRole()) && parts != null ? parts.path("summarySha").asText(null) : null)

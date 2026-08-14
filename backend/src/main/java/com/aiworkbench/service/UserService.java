@@ -36,6 +36,12 @@ public class UserService {
     @Value("${app.registration.enabled:true}")
     private boolean registrationEnabled;
 
+    // ---- 登录失败锁定:连续失败超过阈值后锁定一段时间,防暴力破解 ----
+    private static final int LOGIN_FAIL_MAX = 5;
+    private static final long LOGIN_LOCK_MS = 10 * 60_000L; // 10 分钟
+    private final java.util.concurrent.ConcurrentHashMap<String, LoginFailInfo> loginFails = new java.util.concurrent.ConcurrentHashMap<>();
+    private record LoginFailInfo(int count, long lockUntil) {}
+
     public AuthResponse register(RegisterRequest req) {
         if (!registrationEnabled) {
             throw new BusinessException(ResultCode.REGISTRATION_DISABLED);
@@ -67,15 +73,33 @@ public class UserService {
     }
 
     public AuthResponse login(LoginRequest req) {
+        String key = (req.getUsernameOrEmail() == null ? "" : req.getUsernameOrEmail()).toLowerCase().trim();
+        // 锁定检查:锁定期内直接拒绝
+        LoginFailInfo current = loginFails.get(key);
+        if (current != null && System.currentTimeMillis() < current.lockUntil()) {
+            long remainMin = (current.lockUntil() - System.currentTimeMillis()) / 60_000 + 1;
+            throw new BusinessException(ResultCode.FORBIDDEN.getCode(),
+                    "登录失败次数过多,已锁定 " + remainMin + " 分钟,请稍后再试");
+        }
         User user = userMapper.selectOne(new LambdaQueryWrapper<User>()
                 .eq(User::getUsername, req.getUsernameOrEmail())
                 .or().eq(User::getEmail, req.getUsernameOrEmail()));
         if (user == null || !passwordEncoder.matches(req.getPassword(), user.getPassword())) {
+            // 失败计数:达到阈值锁定
+            int next = (current == null ? 0 : current.count()) + 1;
+            if (next >= LOGIN_FAIL_MAX) {
+                loginFails.put(key, new LoginFailInfo(0, System.currentTimeMillis() + LOGIN_LOCK_MS));
+                throw new BusinessException(ResultCode.FORBIDDEN.getCode(),
+                        "登录失败次数过多,已锁定 " + (LOGIN_LOCK_MS / 60_000) + " 分钟");
+            }
+            loginFails.put(key, new LoginFailInfo(next, 0));
             throw new BusinessException(ResultCode.BAD_CREDENTIALS);
         }
         if (user.getStatus() != null && user.getStatus() == 0) {
             throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "账号已禁用");
         }
+        // 成功:清除失败记录
+        loginFails.remove(key);
         // Phase 1:确保 uid 隔离 provisioning(迁移/重建后兼容,老用户登录回填 uid)
         userProvisioningService.ensureProvisioned(user.getId());
         return buildAuthResponse(user);

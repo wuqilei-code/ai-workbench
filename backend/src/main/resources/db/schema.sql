@@ -53,6 +53,8 @@ CREATE TABLE IF NOT EXISTS chat_message (
     role                VARCHAR(16)  NOT NULL,
     content             MEDIUMTEXT   NULL,
     parts               JSON         NULL,
+    tokens              JSON         NULL COMMENT 'opencode assistant 消息真实 token 用量 {input,output,reasoning,cache:{read,write}}',
+    compaction_summary  TINYINT      NOT NULL DEFAULT 0 COMMENT '1=压缩产生的总结消息(前端不显示,仅占位)',
     status              VARCHAR(16)  NOT NULL DEFAULT 'completed',
     created_at          DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     PRIMARY KEY (id),
@@ -77,14 +79,15 @@ CREATE TABLE IF NOT EXISTS provider_config (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS model_config (
-    id          BIGINT       NOT NULL AUTO_INCREMENT,
-    provider_id VARCHAR(64)  NOT NULL,
-    model_id    VARCHAR(128) NOT NULL,
-    name        VARCHAR(128) NOT NULL,
-    enabled     TINYINT      NOT NULL DEFAULT 1,
-    sort_order  INT          NOT NULL DEFAULT 0,
-    created_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    id            BIGINT       NOT NULL AUTO_INCREMENT,
+    provider_id   VARCHAR(64)  NOT NULL,
+    model_id      VARCHAR(128) NOT NULL,
+    name          VARCHAR(128) NOT NULL,
+    enabled       TINYINT      NOT NULL DEFAULT 1,
+    context_limit INT          NULL COMMENT '模型上下文窗口 token 上限(进度环用;缺省用估算兜底)',
+    sort_order    INT          NOT NULL DEFAULT 0,
+    created_at    DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at    DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (id),
     UNIQUE KEY uk_model (provider_id, model_id),
     KEY idx_model_provider (provider_id)
@@ -124,19 +127,34 @@ CREATE TABLE IF NOT EXISTS prompt_template (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 内置模板种子(幂等:重复主键冲突被 continue-on-error 忽略)
-INSERT IGNORE INTO prompt_template (id, user_id, title, category, content, sort_order) VALUES
-  (1, NULL, '写周报', '办公', '请帮我把我的工作内容整理成一份周报,包含:本周完成、下周计划、风险与求助三部分。下面是这周我做的事情:\n\n', 10),
-  (2, NULL, '会议纪要', '办公', '请把下面这段讨论整理成会议纪要,包含:会议主题、参会人、讨论要点、结论、待办事项(注明负责人与截止时间)。\n\n', 20),
-  (3, NULL, '写邮件', '办公', '请帮我写一封邮件。我会告诉你收件人、目的和要点,请用专业得体的语气组织成完整邮件,主题清晰、正文分段、结尾礼貌。\n\n', 30),
-  (4, NULL, '总结文档', '办公', '请总结我上传的文档:①核心要点 ②关键数据/结论 ③需要我关注的行动项。保留原始信息,不要编造内容。\n\n', 40),
-  (5, NULL, '数据分析', '办公', '我会给你一份数据文件,请帮我分析并输出:①关键指标 ②主要趋势与结论 ③值得关注的风险点。分析要条理清晰,便于汇报。\n\n', 50),
-  (6, NULL, '调试代码', '开发', '我有一段代码出了问题,请帮我:先定位报错根因,再给出修复方案,最后给出修改后的完整代码。下面是我的代码和报错:\n\n', 60),
-  (7, NULL, '解读报错', '开发', '下面是我的报错信息,请解读:①发生了什么 ②可能的原因 ③具体的修复步骤。回答请通俗易懂,分步说明。\n\n', 70),
-  (8, NULL, '代码审查', '开发', '请审查下面这段代码:指出潜在 bug、性能问题、可读性问题,并给出改进建议和修改后的代码。\n\n', 80),
-  (9, NULL, 'SQL 优化', '开发', '请优化下面这条 SQL:分析执行计划中的潜在问题(如全表扫描、索引缺失、隐式转换),给出优化后的 SQL 和建索引建议。\n\n', 90),
-  (10, NULL, '需求拆解', '开发', '请把下面这个需求拆解成可执行的开发任务:包括模块划分、接口设计要点、表结构建议、测试要点。\n\n', 100),
-  (11, NULL, '头脑风暴', '其他', '请围绕我下面提出的问题做头脑风暴:给出多个有创意的方案,并从可行性、成本、效果三个维度做简要点评,最后给一个推荐。\n\n', 110),
-  (12, NULL, '翻译润色', '其他', '请把下面的文字翻译成[目标语言],注意保持语气自然、专业。如有更好的表达请同时给出润色建议。\n\n', 120);
+INSERT IGNORE INTO prompt_template (id, user_id, title, category, content, icon, sort_order) VALUES
+  (1, NULL, '写周报', '办公', '请帮我把我的工作内容整理成一份周报,包含:本周完成、下周计划、风险与求助三部分。下面是这周我做的事情:\n\n', '🗓️', 10),
+  (2, NULL, '会议纪要', '办公', '请把下面这段讨论整理成会议纪要,包含:会议主题、参会人、讨论要点、结论、待办事项(注明负责人与截止时间)。\n\n', '📝', 20),
+  (3, NULL, '写邮件', '办公', '请帮我写一封邮件。我会告诉你收件人、目的和要点,请用专业得体的语气组织成完整邮件,主题清晰、正文分段、结尾礼貌。\n\n', '📧', 30),
+  (4, NULL, '总结文档', '办公', '请总结我上传的文档:①核心要点 ②关键数据/结论 ③需要我关注的行动项。保留原始信息,不要编造内容。\n\n', '📚', 40),
+  (5, NULL, '数据分析', '办公', '我会给你一份数据文件,请帮我分析并输出:①关键指标 ②主要趋势与结论 ③值得关注的风险点。分析要条理清晰,便于汇报。\n\n', '📊', 50),
+  (6, NULL, '调试代码', '开发', '我有一段代码出了问题,请帮我:先定位报错根因,再给出修复方案,最后给出修改后的完整代码。下面是我的代码和报错:\n\n', '🐛', 60),
+  (7, NULL, '解读报错', '开发', '下面是我的报错信息,请解读:①发生了什么 ②可能的原因 ③具体的修复步骤。回答请通俗易懂,分步说明。\n\n', '🔍', 70),
+  (8, NULL, '代码审查', '开发', '请审查下面这段代码:指出潜在 bug、性能问题、可读性问题,并给出改进建议和修改后的代码。\n\n', '🛠️', 80),
+  (9, NULL, 'SQL 优化', '开发', '请优化下面这条 SQL:分析执行计划中的潜在问题(如全表扫描、索引缺失、隐式转换),给出优化后的 SQL 和建索引建议。\n\n', '💾', 90),
+  (10, NULL, '需求拆解', '开发', '请把下面这个需求拆解成可执行的开发任务:包括模块划分、接口设计要点、表结构建议、测试要点。\n\n', '🧩', 100),
+  (11, NULL, '头脑风暴', '其他', '请围绕我下面提出的问题做头脑风暴:给出多个有创意的方案,并从可行性、成本、效果三个维度做简要点评,最后给一个推荐。\n\n', '💡', 110),
+  (12, NULL, '翻译润色', '其他', '请把下面的文字翻译成[目标语言],注意保持语气自然、专业。如有更好的表达请同时给出润色建议。\n\n', '✍️', 120),
+  (13, NULL, '源码测试分析', '开发', '我上传了一个项目源码压缩包,请用 test-analysis 技能对源码做静态分析:①生成测试点清单 ②生成测试用例 ③生成测试脚本(通过语法校验) ④输出测试报告。沙箱无法安装依赖,不要运行项目,只做静态分析与语法校验。\n\n', '🧪', 130);
+
+-- 模板 icon(兼容已有表:ALTER 幂等,列已存在则忽略)
+ALTER TABLE prompt_template ADD COLUMN IF NOT EXISTS icon VARCHAR(8) NULL DEFAULT '📋';
+
+-- 用户模板启用关系:用户把系统内置模板(或自建)添加到自己的首页
+CREATE TABLE IF NOT EXISTS user_template (
+    user_id     BIGINT       NOT NULL,
+    template_id BIGINT       NOT NULL,
+    enabled     TINYINT      NOT NULL DEFAULT 1 COMMENT '是否在首页展示',
+    sort_order  INT          NOT NULL DEFAULT 0,
+    created_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (user_id, template_id),
+    KEY idx_ut_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 技能广场:用户发布技能到广场供他人安装
 CREATE TABLE IF NOT EXISTS skill_marketplace (
@@ -163,6 +181,33 @@ CREATE TABLE IF NOT EXISTS skill_marketplace (
 ALTER TABLE skill_marketplace ADD COLUMN category VARCHAR(32) NOT NULL DEFAULT 'other';
 ALTER TABLE skill_marketplace ADD COLUMN icon VARCHAR(32) NOT NULL DEFAULT '';
 ALTER TABLE skill_marketplace ADD COLUMN files MEDIUMTEXT NULL;
+
+-- MCP Server 配置:管理员接入公共 MCP server(user_id=0),每个用户也可配置自己的私有 MCP(user_id>0)。
+-- 仅支持 remote(HTTP/SSE URL)类型;local(命令进程)已废弃,不再渲染。
+CREATE TABLE IF NOT EXISTS mcp_config (
+    id          BIGINT       NOT NULL AUTO_INCREMENT,
+    user_id     BIGINT       NOT NULL DEFAULT 0 COMMENT '0=管理员公共配置,>0=用户私有配置',
+    name        VARCHAR(64)  NOT NULL COMMENT 'MCP server 标识(小写 kebab-case,如 mysql/filesystem/context7)',
+    type        VARCHAR(16)  NOT NULL DEFAULT 'remote' COMMENT 'remote(HTTP/SSE URL);local 已废弃',
+    command     VARCHAR(1024) NULL COMMENT '已废弃(local 用),仅保留兼容',
+    url         VARCHAR(512) NULL COMMENT 'remote:server 端点 URL',
+    headers     TEXT         NULL COMMENT 'remote:HTTP 请求头(JSON:{key:value}),如 Authorization',
+    environment TEXT         NULL COMMENT '已废弃(local 用),仅保留兼容',
+    enabled     TINYINT      NOT NULL DEFAULT 1,
+    sort_order  INT          NOT NULL DEFAULT 0,
+    created_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_mcp_user_name (user_id, name),
+    KEY idx_mcp_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 迁移:老库补齐 user_id 列(默认 0=公共)并改唯一键为主键 user_id+name。
+-- 幂等性:依赖 spring.sql.init.continue-on-error=true(1060 重复列 / 1091 删除不存在索引 报错被忽略)。
+ALTER TABLE mcp_config ADD COLUMN user_id BIGINT NOT NULL DEFAULT 0 COMMENT '0=管理员公共配置,>0=用户私有配置';
+ALTER TABLE mcp_config DROP INDEX uk_mcp_name;
+ALTER TABLE mcp_config ADD UNIQUE INDEX uk_mcp_user_name (user_id, name);
+ALTER TABLE mcp_config ADD INDEX idx_mcp_user (user_id);
 
 -- 技能安装记录:同一用户不可重复安装同名技能(唯一约束)
 CREATE TABLE IF NOT EXISTS skill_install (

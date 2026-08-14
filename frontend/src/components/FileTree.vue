@@ -2,6 +2,7 @@
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import { fileApi } from '@/api/files'
 import { useMessage, useDialog } from 'naive-ui'
+import { useChatStore } from '@/stores/chat'
 import type { FileNode, FileHistoryEntry, FileDiffResult } from '@/types'
 
 /**
@@ -28,6 +29,7 @@ const emit = defineEmits<{ (e: 'askAI', path: string): void }>()
 
 const msg = useMessage()
 const dialog = useDialog()
+const chat = useChatStore()
 const nodes = ref<FileNode[]>([])
 const currentPath = ref('')
 const selectedFile = ref<string | null>(null)
@@ -296,6 +298,8 @@ async function copyPath(node: FileNode) {
 
 /** 右键「问 AI」:把文件路径交给上层填入输入框,用户补充问题后发送 */
 function askAIMenu(node: FileNode) {
+  // 经 store 中转(绕开组件事件名匹配),ChatInput 监听后挂附件并填提示词
+  chat.attachFile(node.path)
   emit('askAI', node.path)
   msg.success(`已把 ${node.path} 填入输入框,补充问题后发送即可`)
 }

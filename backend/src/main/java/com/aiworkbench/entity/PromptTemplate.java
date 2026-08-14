@@ -24,6 +24,8 @@ public class PromptTemplate {
     private String title;
     private String category;
     private String content;
+    /** emoji 图标(首页卡片展示) */
+    private String icon;
     private Integer sortOrder;
 
     @TableField(value = "created_at", updateStrategy = FieldStrategy.NEVER)

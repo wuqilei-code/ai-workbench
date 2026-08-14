@@ -41,6 +41,8 @@ public class PreviewController {
 
     /** 请求端口上限(65535) */
     private static final int MAX_PORT = 65535;
+    /** 预览转发请求体上限(10MB,防并发大 body DoS) */
+    private static final int MAX_BODY_BYTES = 10 * 1024 * 1024;
 
     private final OpencodeProperties props;
     private final OpencodeProcessManager processManager;
@@ -182,7 +184,11 @@ public class PreviewController {
 
     private byte[] readBody(HttpServletRequest request) {
         try (InputStream in = request.getInputStream()) {
-            byte[] raw = in.readAllBytes();
+            // 防 DoS:body 上限 10MB,超限直接拒绝(避免并发大请求打满内存)
+            byte[] raw = in.readNBytes(MAX_BODY_BYTES + 1);
+            if (raw.length > MAX_BODY_BYTES) {
+                throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "请求体过大(上限 10MB)");
+            }
             // Spring FormContentFilter 会消费 application/x-www-form-urlencoded 的 body,
             // 导致 getInputStream() 读到 0 字节。此时从 getParameterMap 重建原始 body。
             if (raw.length == 0 && request.getParameterMap() != null && !request.getParameterMap().isEmpty()) {

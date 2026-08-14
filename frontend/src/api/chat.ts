@@ -12,12 +12,16 @@ export const chatApi = {
   cleanupTask: (id: string) => http.delete(`/chat/tasks/${encodeURIComponent(id)}`),
   createSession: (data: { title?: string; providerId?: string; modelId?: string; agent?: string }) =>
     http.post<SessionVo>('/chat/sessions', data).then(unwrap),
+  /** 导入会话:上传导出的 JSON,返回新建会话 */
+  importSession: (json: string) => http.post<SessionVo>('/chat/sessions/import', { json }).then(unwrap),
   listAgents: () => http.get<AgentItem[]>('/chat/sessions/agents').then(unwrap),
   getSession: (id: number) => http.get<SessionVo>(`/chat/sessions/${id}`).then(unwrap),
   updateSession: (id: number, data: Partial<{ title: string; providerId: string; modelId: string; archived: number; pinned: number; agent: string }>) =>
     http.patch<SessionVo>(`/chat/sessions/${id}`, data).then(unwrap),
   deleteSession: (id: number) => http.delete(`/chat/sessions/${id}`),
   warmup: (id: number) => http.post(`/chat/sessions/${id}/warmup`),
+  /** 按当前用户预热 agent(无需会话)。登录/进主页时调用,提前拉起实例避免新建会话冷启动等待 */
+  warmupMine: () => http.post('/chat/sessions/warmup'),
   listMessages: (id: number, limit = 200) =>
     http.get<MessageVo[]>(`/chat/sessions/${id}/messages`, { params: { limit } }).then(unwrap),
   clearMessages: (id: number) => http.delete(`/chat/sessions/${id}/messages`),
@@ -26,6 +30,8 @@ export const chatApi = {
   sendMessage: (id: number, data: { text: string; providerId?: string; modelId?: string }) =>
     http.post(`/chat/sessions/${id}/messages`, data),
   abort: (id: number) => http.post<boolean>(`/chat/sessions/${id}/abort`).then(unwrap),
+  /** 主动压缩会话(opencode summarize) */
+  summarizeSession: (id: number) => http.post<boolean>(`/chat/sessions/${id}/summarize`).then(unwrap),
   replyQuestion: (sessionId: number, requestId: string, answers: string[][]) =>
     http.post(`/chat/sessions/${sessionId}/question/${requestId}/reply`, { answers }),
   rejectQuestion: (sessionId: number, requestId: string) =>
@@ -37,9 +43,14 @@ export const chatApi = {
   runCommand: (sessionId: number, data: { command: string; arguments?: string }) =>
     http.post(`/chat/sessions/${sessionId}/commands`, data),
   listTemplates: () => http.get<TemplateVo[]>('/chat/templates').then(unwrap),
-  createTemplate: (data: { title: string; category: string; content: string }) =>
+  /** 首页展示的模板(用户启用的) */
+  homeTemplates: () => http.get<TemplateVo[]>('/chat/templates/home').then(unwrap),
+  /** 启用/停用模板 */
+  setTemplateEnabled: (id: number, enabled: boolean) =>
+    http.post(`/chat/templates/${id}/enabled`, { enabled }),
+  createTemplate: (data: { title: string; category: string; content: string; icon?: string }) =>
     http.post<TemplateVo>('/chat/templates', data).then(unwrap),
-  updateTemplate: (id: number, data: { title: string; category: string; content: string }) =>
+  updateTemplate: (id: number, data: { title: string; category: string; content: string; icon?: string }) =>
     http.put<TemplateVo>(`/chat/templates/${id}`, data).then(unwrap),
   deleteTemplate: (id: number) => http.delete(`/chat/templates/${id}`),
   listMarketplaceSkills: () => http.get<MarketplaceSkillVo[]>('/chat/skills/marketplace').then(unwrap),

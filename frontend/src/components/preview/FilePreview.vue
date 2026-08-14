@@ -27,6 +27,9 @@ const blob = ref<Blob | null>(null)
 const localText = ref('')
 const editMode = ref(false)
 const editableText = ref('')
+/** 保存/下载进行中 */
+const saving = ref(false)
+const downloading = ref(false)
 
 const displayText = computed(() => props.textContent ?? localText.value)
 const safeBlobUrl = computed(() => blobUrl.value ?? '')
@@ -68,6 +71,7 @@ function toggleEdit() {
 }
 
 async function save() {
+  saving.value = true
   try {
     await fileApi.write(props.path, editableText.value)
     localText.value = editableText.value
@@ -75,14 +79,19 @@ async function save() {
     editMode.value = false
   } catch (e: any) {
     msg.error(e?.message || '保存失败')
+  } finally {
+    saving.value = false
   }
 }
 
 async function download() {
+  downloading.value = true
   try {
     await fileApi.download(props.path)
   } catch (e: any) {
     msg.error(e?.message || '下载失败')
+  } finally {
+    downloading.value = false
   }
 }
 
@@ -106,10 +115,10 @@ onBeforeUnmount(() => {
       <span v-if="size" class="fp-size">{{ fmtSize(size) }}</span>
       <div class="fp-spacer" />
       <template v-if="editable && !error">
-        <n-button v-if="editMode" size="tiny" type="primary" @click="save">保存</n-button>
+        <n-button v-if="editMode" size="tiny" type="primary" :loading="saving" @click="save">保存</n-button>
         <n-button size="tiny" quaternary @click="toggleEdit">{{ editMode ? '预览' : '编辑' }}</n-button>
       </template>
-      <n-button size="tiny" quaternary @click="download">下载</n-button>
+      <n-button size="tiny" quaternary :loading="downloading" @click="download">下载</n-button>
     </div>
 
     <n-spin :show="loading" class="fp-body">

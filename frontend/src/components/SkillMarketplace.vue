@@ -109,6 +109,7 @@ async function collectFiles(dir: string): Promise<SkillFileVo[]> {
 }
 
 async function importSkill(name: string) {
+  importingSkill.value = true
   try {
     const root = `.opencode/skills/${name}`
     const md = await fileApi.content(`${root}/SKILL.md`)
@@ -130,6 +131,8 @@ async function importSkill(name: string) {
     msg.success(`已导入技能「${name}」,共 ${pubFiles.value.length} 个附加文件`)
   } catch (e: any) {
     msg.error(e?.message || '导入失败')
+  } finally {
+    importingSkill.value = false
   }
 }
 
@@ -138,6 +141,46 @@ function addFile() {
 }
 function removeFile(i: number) {
   pubFiles.value.splice(i, 1)
+}
+
+/** 根据技能名/描述生成 SKILL.md 骨架,预填内容区,减少手写 frontmatter 的负担。 */
+function generateTemplate() {
+  const name = (pubName.value || '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '-')
+  const desc = pubDesc.value.trim()
+  if (!name) {
+    msg.warning('请先填写技能名称')
+    return
+  }
+  if (!desc) {
+    msg.warning('请先填写技能描述')
+    return
+  }
+  pubContent.value = `---
+name: ${name}
+description: ${desc}
+license: MIT
+compatibility: opencode
+metadata:
+  audience: all-users
+---
+
+# ${name}
+
+(在此描述技能的目标:用户何时会用到它、它解决什么问题。Use when ...)
+
+## 使用场景
+
+- 
+
+## 执行步骤
+
+1. 
+
+## 注意事项
+
+- 
+`
+  msg.success('已生成 SKILL.md 模板,请完善正文')
 }
 
 function openPublish() {
@@ -187,6 +230,10 @@ const detail = ref<MarketplaceSkillVo | null>(null)
 const detailLoading = ref(false)
 const installing = ref(false)
 const activeFile = ref<string>('SKILL.md')
+/** 从工作区导入技能进行中(遍历文件系统) */
+const importingSkill = ref(false)
+/** 列表行级操作进行中的技能 id(安装/下架) */
+const rowBusyId = ref<number | null>(null)
 
 async function openDetail(s: MarketplaceSkillVo) {
   detail.value = null
@@ -236,6 +283,8 @@ async function install() {
 
 /** 列表内直接安装(不再弹详情) */
 async function installDirect(s: MarketplaceSkillVo) {
+  if (rowBusyId.value !== null) return
+  rowBusyId.value = s.id
   try {
     await chatApi.installSkill(s.id)
     msg.success(`技能「${s.name}」已安装到工作区`)
@@ -243,16 +292,22 @@ async function installDirect(s: MarketplaceSkillVo) {
     await load()
   } catch (e: any) {
     msg.error(e?.message || '安装失败')
+  } finally {
+    rowBusyId.value = null
   }
 }
 
 async function removeOwn(s: MarketplaceSkillVo) {
+  if (rowBusyId.value !== null) return
+  rowBusyId.value = s.id
   try {
     await chatApi.deleteMarketplaceSkill(s.id)
     msg.success('已下架')
     await load()
   } catch (e: any) {
     msg.error(e?.message || '删除失败')
+  } finally {
+    rowBusyId.value = null
   }
 }
 
@@ -323,8 +378,8 @@ onMounted(() => {
             </div>
           </div>
           <div class="mp-actions" @click.stop>
-            <n-button v-if="!s.installed" size="small" type="primary" secondary @click="installDirect(s)">安装</n-button>
-            <n-button v-if="s.mine" size="small" type="error" quaternary @click="removeOwn(s)">下架</n-button>
+            <n-button v-if="!s.installed" size="small" type="primary" secondary :loading="rowBusyId === s.id" :disabled="rowBusyId !== null" @click="installDirect(s)">安装</n-button>
+            <n-button v-if="s.mine" size="small" type="error" quaternary :loading="rowBusyId === s.id" :disabled="rowBusyId !== null" @click="removeOwn(s)">下架</n-button>
           </div>
         </div>
       </div>
@@ -344,9 +399,11 @@ onMounted(() => {
           v-for="s in importSkills"
           :key="s.path"
           class="mp-import-chip"
+          :class="{ busy: importingSkill }"
           @click="importSkill(s.name)"
         >{{ s.name }}</span>
         <span v-if="importLoading" class="mp-import-loading">加载中…</span>
+        <span v-else-if="importingSkill" class="mp-import-loading">导入中…</span>
       </div>
       <div class="pub-form">
         <n-input v-model:value="pubName" maxlength="64" size="small" placeholder="技能名(小写字母/数字,连字符分隔,如 data-cleaner)" />
@@ -369,6 +426,10 @@ onMounted(() => {
             :class="{ active: pubIcon === e }"
             @click="pubIcon = e"
           >{{ e }}</span>
+        </div>
+        <div class="content-head">
+          <span class="content-title">SKILL.md 内容</span>
+          <n-button size="tiny" type="primary" quaternary :disabled="!pubName.trim() || !pubDesc.trim()" @click="generateTemplate">✨ 生成模板</n-button>
         </div>
         <n-input
           v-model:value="pubContent"
@@ -515,6 +576,7 @@ onMounted(() => {
 .mp-import { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--accent-soft); }
 .mp-import-label { font-size: 12px; color: var(--accent-text); }
 .mp-import-chip { font-size: 12px; color: var(--text-2); background: var(--surface); border: 1px solid var(--border-soft); border-radius: 10px; padding: 2px 8px; cursor: pointer; }
+.mp-import-chip.busy { opacity: .5; pointer-events: none; cursor: default; }
 .mp-import-chip:hover { border-color: var(--accent-text); color: var(--accent-text); }
 .mp-import-loading { font-size: 12px; color: var(--text-3); }
 .pub-form { display: flex; flex-direction: column; gap: 10px; }
@@ -531,6 +593,8 @@ onMounted(() => {
 
 /* 附加文件编辑 */
 .files-head { display: flex; align-items: center; gap: 8px; margin: 14px 0 8px; }
+.content-head { display: flex; align-items: center; gap: 8px; margin: 14px 0 8px; }
+.content-title { font-size: 13px; font-weight: 600; color: var(--text); }
 .files-title { font-size: 13px; font-weight: 600; color: var(--text); }
 .files-note { font-size: 11px; color: var(--text-3); flex: 1; min-width: 0; }
 .files-list { display: flex; flex-direction: column; gap: 8px; max-height: 34vh; overflow-y: auto; padding-right: 2px; }

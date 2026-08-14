@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/chat/sessions")
@@ -34,6 +35,18 @@ public class ChatSessionController {
     @AuditLog(action = "创建会话")
     public R<SessionVo> create(@Valid @RequestBody CreateSessionRequest req) {
         return R.ok(chatSessionService.create(req, SecurityUtil.currentUserId()));
+    }
+
+    /** 导入会话:body 为导出的 JSON(含 sessionTitle + messages) */
+    @PostMapping("/import")
+    @AuditLog(action = "导入会话")
+    public R<SessionVo> importSession(@RequestBody Map<String, String> body) {
+        String json = body != null ? body.get("json") : null;
+        if (json == null || json.isBlank()) {
+            throw new com.aiworkbench.common.BusinessException(
+                    com.aiworkbench.common.ResultCode.BAD_REQUEST.getCode(), "json 不能为空");
+        }
+        return R.ok(chatSessionService.importSession(SecurityUtil.currentUserId(), json));
     }
 
     /**
@@ -64,6 +77,14 @@ public class ChatSessionController {
         Long userId = SecurityUtil.currentUserId();
         chatSessionService.getOwned(id, userId);
         opencodeClient.warmup(userId);
+        return R.ok();
+    }
+
+    /** 按当前用户预热 agent(无需指定会话)。登录/进入主页时调用,提前拉起该用户 opencode
+     *  实例,避免点「新建会话」时才冷启动容器而等待数秒。高频,不审计。 */
+    @PostMapping("/warmup")
+    public R<Void> warmupMine() {
+        opencodeClient.warmup(SecurityUtil.currentUserId());
         return R.ok();
     }
 

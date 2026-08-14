@@ -52,12 +52,60 @@ export const useChatStore = defineStore('chat', () => {
   const messages = ref<MessageVo[]>([])
   /** 最近一次 AI 变更总结(role=summary 的消息与 SSE 事件聚合) */
   const summaries = ref<ChangeSummary[]>([])
+  /** 会话最近一次自动压缩时间(触发后前端展示「已压缩」提示) */
+  const compactedAt = ref<number | null>(null)
+  /** 压缩进行中(后端检测到 compaction agent 消息后推送 session.compacting;完成/session.compacted 后清) */
+  const compacting = ref(false)
+  /** 压缩中提示的兜底超时(防止 session.compacted 丢失时提示一直挂着) */
+  let _compactingTimer: ReturnType<typeof setTimeout> | null = null
+  /** 压缩点:压缩(主动或自动)成功后设为当时最大消息 id;会话 token 环只统计其后的消息。
+   *  opencode compaction 只总结历史不删消息,历史字符仍在,需用该点把旧消息从估算中排除。 */
+  const compactCutoffId = ref(0)
+
+  /**
+   * 标记会话已压缩:刷新消息列表,并把 token 环的统计起点推到当前最后一条消息。
+   * 主动压缩(summarize 接口)与 opencode 推送 session.compacted 事件都走这里。
+   * 注意:主动压缩请求返回时压缩仍在后台异步进行,但此时上下文已确定要释放,
+   * 直接把 cutoff 设成现有最后一条 id 即可让圆环立即回落;若之后又收到
+   * session.compacted 事件会再次刷新,幂等。
+   */
+  function markCompacted() {
+    compactedAt.value = Date.now()
+    if (!currentSessionId.value) return
+    chatApi.listMessages(currentSessionId.value)
+      .then((fresh) => {
+        // 合并而非直接覆盖:刷新是异步的,期间用户可能已发新消息(乐观气泡/AI 流式回复),
+        // 直接赋值会把它们清掉(表现为"切换后新对话消失")。保留本地比 fresh 更新的消息:
+        //  - 乐观气泡(_pending)与本地临时 id(id<0)
+        //  - fresh 中不存在、但本地 id 又比 fresh 最大 id 更大的消息(刷新期间新产生、fresh 未及返回)
+        //    按 id 去重,避免本地与 fresh 重叠(如 role=compaction 记录无 opencodeMessageId 时的重复)。
+        const freshMaxId = fresh.length ? Math.max(...fresh.map((m) => m.id ?? 0)) : 0
+        const freshIds = new Set(fresh.map((m) => m.opencodeMessageId).filter(Boolean))
+        const freshLocalIds = new Set(fresh.map((m) => m.id))
+        const localNewer = messages.value.filter(
+          (m) =>
+            (m._pending || (m.id != null && m.id < 0) || !m.opencodeMessageId || !freshIds.has(m.opencodeMessageId)) &&
+            !freshLocalIds.has(m.id),
+        )
+        messages.value = [...fresh, ...localNewer]
+        hydrateSummaries(); hydratePendingState()
+        compactCutoffId.value = fresh.length ? fresh[fresh.length - 1].id : 0
+      })
+      .catch((e) => console.warn('[chat] refresh after compact failed', e))
+  }
 
   /** 建议追问/外部注入的待填提示词:ChatInput 监听后填入输入框(仅消费一次) */
   const pendingFill = ref('')
 
   function fillInput(prompt: string) {
     pendingFill.value = prompt
+  }
+
+  /** 待挂载到输入框的文件路径(文件树右键「问 AI」等触发;ChatInput 消费后清空) */
+  const pendingAttachPath = ref('')
+
+  function attachFile(path: string) {
+    pendingAttachPath.value = path
   }
   const streamingText = ref('')
   const streamingMessageId = ref<string | null>(null)
@@ -68,6 +116,22 @@ export const useChatStore = defineStore('chat', () => {
   const streamingReasoningMsgId = ref<string | null>(null)
   /** agent 实例冷启动中(后端 dispatch session.starting):首个真实事件到来即清除 */
   const agentStarting = ref(false)
+  /**
+   * 前端兜底定时器:发消息后若后端冷启动事件(session.starting)未及时到达(如容器已热、
+   * isReady 返回 true 不 dispatch),在 1.5s 后仍无任何真实事件时也置 agentStarting=true,
+   * 避免冷启动期空白无提示;首个真实事件(session.starting / part.delta / part.updated / message.updated / session.status)到来即清除。
+   */
+  let _agentStartTimer: ReturnType<typeof setTimeout> | null = null
+  function armAgentStartingFallback() {
+    if (_agentStartTimer) return
+    _agentStartTimer = setTimeout(() => {
+      _agentStartTimer = null
+      if (isStreaming.value) agentStarting.value = true
+    }, 1500)
+  }
+  function clearAgentStartingFallback() {
+    if (_agentStartTimer) { clearTimeout(_agentStartTimer); _agentStartTimer = null }
+  }
   const connected = ref(false)
   /** 连接断开且正在自动重连(UI 提示用) */
   const reconnecting = ref(false)
@@ -101,6 +165,9 @@ export const useChatStore = defineStore('chat', () => {
       _watchdogTick.value++ // 触发 streamingStuckSeconds 重新计算,让"运行中"banner 秒数刷新
     }, 5_000)
   }
+  function stopWatchdog() {
+    if (_watchdogTimer) { clearInterval(_watchdogTimer); _watchdogTimer = null }
+  }
   /** 显式释放流式阻塞:用于"卡住"时,用户点击"解除阻塞并发送"。
    *  会先调用 abort(向 opencode 发送终止信号)再兜底 finishStreaming,确保不会产生竞争。 */
   async function forceReleaseStreaming() {
@@ -130,8 +197,8 @@ export const useChatStore = defineStore('chat', () => {
     sessions.value.find((s) => s.id === currentSessionId.value) || null,
   )
 
-  /** 由 messages 派生的 Turn 列表(只依赖 messages,不依赖流式文本) */
-  const turns = computed(() => buildTurns(messages.value))
+  /** 由 messages 派生的 Turn 列表(只依赖 messages,不依赖流式文本)。压缩/占位/Continue 消息不参与渲染。 */
+  const turns = computed(() => buildTurns(messages.value.filter((m) => !isHiddenMessage(m))))
 
   /** 轮 + 变更总结按时间交错的有序渲染流:让总结卡片紧跟所属轮,而非堆到底部 */
   const flow = computed(() => buildFlow(turns.value, summaries.value))
@@ -144,6 +211,10 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   let stream: StreamHandle | null = null
+  /** 是否主动关闭(切换会话/停止);主动关闭触发的 onerror 不应计入重连状态 */
+  let _manualClose = false
+  /** 会话加载序号:快速切换 A→B 时,丢弃过期的 listMessages 返回,防止旧数据覆盖新会话 */
+  let _loadSeq = 0
 
   // ---------- 模型 ----------
 
@@ -238,6 +309,7 @@ export const useChatStore = defineStore('chat', () => {
 
   async function selectSession(id: number) {
     if (currentSessionId.value === id && stream) return
+    const seq = ++_loadSeq
     closeStream()
     currentSessionId.value = id
     messages.value = []
@@ -245,17 +317,26 @@ export const useChatStore = defineStore('chat', () => {
     streamingText.value = ''
     streamingMessageId.value = null
     isStreaming.value = false
+    clearAgentStartingFallback()
+    agentStarting.value = false
     authExpired.value = false
     switching.value = true
     manualCollapseOverride.value = {}
+    compactCutoffId.value = 0
+    compacting.value = false
+    if (_compactingTimer) { clearTimeout(_compactingTimer); _compactingTimer = null }
     try {
-      messages.value = await chatApi.listMessages(id)
+      const list = await chatApi.listMessages(id)
+      // 若期间又切换了会话,丢弃本次结果,避免旧数据覆盖新会话
+      if (seq !== _loadSeq) return
+      messages.value = list
       hydrateSummaries()
       hydratePendingState()
     } catch (e) {
+      if (seq !== _loadSeq) return
       messages.value = []
     } finally {
-      switching.value = false
+      if (seq === _loadSeq) switching.value = false
     }
     subscribe()
     startWatchdog()
@@ -272,6 +353,13 @@ export const useChatStore = defineStore('chat', () => {
       currentSessionId.value = null
       messages.value = []
     }
+  }
+
+  /** 导入会话(从导出的 JSON):创建新会话并恢复消息,插入会话列表最前 */
+  async function importSession(jsonText: string) {
+    const s = await chatApi.importSession(jsonText)
+    sessions.value.unshift(s)
+    return s
   }
 
   /** 置顶/取消置顶 */
@@ -393,6 +481,7 @@ export const useChatStore = defineStore('chat', () => {
   function subscribe() {
     if (!currentSessionId.value) return
     const auth = useAuthStore()
+    _manualClose = false
     connected.value = false
     reconnecting.value = false
     lastEventAt.value = Date.now()
@@ -409,6 +498,8 @@ export const useChatStore = defineStore('chat', () => {
         handleEvent(type, data)
       },
       onError: () => {
+        // 主动关闭(closeStream)触发的 abort 不计入重连状态
+        if (_manualClose) return
         connected.value = false
         reconnecting.value = true
         reconnectCount.value++
@@ -425,9 +516,11 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function closeStream() {
+    _manualClose = true
     if (stream) { stream.close(); stream = null }
     connected.value = false
     stopHeartbeat()
+    stopWatchdog()
   }
 
   /** 心跳看门狗:连接"健在"但流式中长时间无事件(>45s)→ 视为僵尸连接,强制重连。
@@ -454,6 +547,11 @@ export const useChatStore = defineStore('chat', () => {
 
   async function sendMessage(text: string) {
     if (!currentSessionId.value || !text.trim() || isStreaming.value) return
+    // 用户开始新一轮对话 → 压缩必然已结束;清掉"正在压缩"状态,避免后续消息事件被吞
+    if (compacting.value) {
+      compacting.value = false
+      if (_compactingTimer) { clearTimeout(_compactingTimer); _compactingTimer = null }
+    }
     const isFirstMessage = messages.value.length === 0
     // 乐观显示用户消息
     const optimistic: MessageVo = {
@@ -470,6 +568,7 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming.value = true
     touchStreamActivity()
     streamStartAt.value = Date.now()
+    armAgentStartingFallback()
 
     // 首条用户消息:并行更新标题(不依赖 sendMessage 的 await,
     // 避免 sendMessage 异常/超时/lazy-rebind 阻断标题更新)
@@ -493,6 +592,7 @@ export const useChatStore = defineStore('chat', () => {
       })
     } catch (e: any) {
       isStreaming.value = false
+      clearAgentStartingFallback()
       agentStarting.value = false
       optimistic.status = 'error'
       throw e
@@ -517,6 +617,7 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming.value = true
     touchStreamActivity()
     streamStartAt.value = Date.now()
+    armAgentStartingFallback()
     try {
       await chatApi.runCommand(currentSessionId.value, { command, arguments: args })
     } catch (e: any) {
@@ -559,12 +660,16 @@ export const useChatStore = defineStore('chat', () => {
 
       // agent 实例冷启动中(后端在 sendUserMessage 检测到未就绪时 dispatch)
       case 'session.starting':
+        clearAgentStartingFallback()
         agentStarting.value = true
         break
 
       // 流式增量文本(token by token)
       case 'message.part.delta': {
+        clearAgentStartingFallback()
         agentStarting.value = false
+        // 压缩中:忽略压缩 agent 的内容流(不展示在对话里;完成由 session.compacted 刷新)
+        if (compacting.value) break
         if (data.field === 'text' && data.delta) {
           // 思维链增量:不进正文 streamingText,而是累积到对应消息的 parts.reasoning
           if (data.partID && reasoningPartIds.has(data.partID)) {
@@ -584,8 +689,11 @@ export const useChatStore = defineStore('chat', () => {
 
       // part 定稿:text 携带完整文本;tool/step-finish 携带工具调用与步骤结束标记
       case 'message.part.updated': {
+        clearAgentStartingFallback()
         agentStarting.value = false
         touchStreamActivity()
+        // 压缩中:忽略压缩 agent 的 part 内容(不建壳/不落文本)
+        if (compacting.value) break
         const part = data.part || {}
         if (!part.messageID) break
         if (part.type === 'text') {
@@ -606,14 +714,17 @@ export const useChatStore = defineStore('chat', () => {
 
       // 消息元信息(id/role/status),不含文本 → 只建壳/更新状态
       case 'message.updated': {
+        clearAgentStartingFallback()
         agentStarting.value = false
         touchStreamActivity()
+        if (compacting.value) break
         const info = data.info || {}
         upsertMessageMeta(info)
         break
       }
 
       case 'session.status':
+        clearAgentStartingFallback()
         agentStarting.value = false
         if (data.status?.type === 'idle') finishStreaming()
         else if (data.status?.type === 'busy') {
@@ -625,6 +736,26 @@ export const useChatStore = defineStore('chat', () => {
       case 'session.idle':
         finishStreaming()
         break
+
+      // 压缩进行中:compaction agent 开始生成 summary 消息 → 显示"正在压缩"提示
+      case 'session.compacting': {
+        // 压缩完成(compacted)后短时间内迟到的 compacting 事件(同一次压缩的多个 part 触发)忽略,
+        // 避免"压缩中"状态被反复拉起、永不结束。
+        if (compactedAt.value && Date.now() - compactedAt.value < 5000) break
+        compacting.value = true
+        if (_compactingTimer) clearTimeout(_compactingTimer)
+        _compactingTimer = setTimeout(() => { compacting.value = false }, 120_000)
+        break
+      }
+
+      // 会话被压缩(自动超限,或主动点「压缩会话」后 opencode 推送):提示用户 + 刷新消息列表
+      case 'session.compacted': {
+        compacting.value = false
+        console.log('[chat] compacting: OFF (compacted)')
+        if (_compactingTimer) { clearTimeout(_compactingTimer); _compactingTimer = null }
+        markCompacted()
+        break
+      }
 
       // AI 变更总结卡片(由后端在快照后异步生成推送)
       case 'change.summary':
@@ -767,7 +898,10 @@ export const useChatStore = defineStore('chat', () => {
 
     const existIdx = messages.value.findIndex((m) => m.opencodeMessageId === opencodeMessageId)
     if (existIdx >= 0) {
-      messages.value[existIdx] = { ...messages.value[existIdx], role, status }
+      messages.value[existIdx] = {
+        ...messages.value[existIdx], role, status,
+        compactionSummary: isCompactionMsg(info) ? true : messages.value[existIdx].compactionSummary,
+      }
     } else {
       // 建壳:content 暂为空,等待 message.part.updated 填充
       messages.value.push({
@@ -777,12 +911,34 @@ export const useChatStore = defineStore('chat', () => {
         content: '',
         status,
         createdAt: info.time?.created ? new Date(info.time.created).toISOString() : new Date().toISOString(),
+        compactionSummary: isCompactionMsg(info) ? true : undefined,
       })
-      // assistant 壳出现 → 标记为当前流式目标(思考中状态)
-      if (role === 'assistant' && !completed) {
+      // assistant 壳出现 → 标记为当前流式目标(思考中状态);压缩总结消息除外(不渲染)
+      if (role === 'assistant' && !completed && !isCompactionMsg(info)) {
         streamingMessageId.value = opencodeMessageId
       }
     }
+  }
+
+  /** 压缩产生的消息不展示:compaction agent 总结 / 压缩占位空 user 消息 / auto 注入的 Continue。
+   *  compactionSummary 为后端标记;但 user 消息若已有真实内容(压缩占位被填充为真实对话)
+   *  则不再隐藏——避免误杀压缩后用户发的新消息。 */
+  function isHiddenMessage(m: { compactionSummary?: boolean; role?: string; content?: string }): boolean {
+    const text = (m.content || '').trim()
+    if (m.role === 'user' && text) {
+      // 有真实内容的用户消息永远展示(即使被标记为压缩相关)
+      return false
+    }
+    if (m.compactionSummary) return true
+    if (m.role === 'user' && !text) return true
+    if (text.startsWith('Continue if you have next steps')) return true
+    return false
+  }
+
+  /** opencode compaction agent 生成的总结消息(mode=compaction 或 summary 标记):不展示 */
+  function isCompactionMsg(info: any): boolean {
+    if (!info || info.role !== 'assistant') return false
+    return info.mode === 'compaction' || info.summary === true
   }
 
   /** 把一段完整文本落到对应消息(以 opencodeMessageId 去重 upsert) */
@@ -935,10 +1091,14 @@ export const useChatStore = defineStore('chat', () => {
         if (msg.parts?.pendingQuestion) {
           const parts: StepParts = { ...msg.parts, pendingQuestion: { ...msg.parts.pendingQuestion, _replied: true } }
           messages.value[idx] = { ...msg, parts }
+          const targetId = toolMessageID
           setTimeout(() => {
-            const m = messages.value[idx]
+            // 会话可能已切换:按 messageId 重新定位,避免用旧 index 误改新会话消息
+            const mi = messages.value.findIndex((m) => m.opencodeMessageId === targetId)
+            if (mi < 0) return
+            const m = messages.value[mi]
             if (m?.parts?.pendingQuestion) {
-              messages.value[idx] = { ...m, parts: { ...m.parts, pendingQuestion: null } }
+              messages.value[mi] = { ...m, parts: { ...m.parts, pendingQuestion: null } }
             }
           }, 100)
         }
@@ -950,11 +1110,17 @@ export const useChatStore = defineStore('chat', () => {
       if (msg.role === 'assistant' && msg.parts?.pendingQuestion && !msg.parts.pendingQuestion._replied) {
         const parts: StepParts = { ...msg.parts, pendingQuestion: { ...msg.parts.pendingQuestion, _replied: true } }
         messages.value[i] = { ...msg, parts }
-        const capturedIdx = i
+        const targetId = msg.opencodeMessageId
+        const targetIdx = i
         setTimeout(() => {
-          const m = messages.value[capturedIdx]
+          // 同样按 messageId 定位,防会话切换误伤
+          const mi = targetId
+            ? messages.value.findIndex((m) => m.opencodeMessageId === targetId)
+            : (messages.value[targetIdx]?.opencodeMessageId === targetId ? targetIdx : -1)
+          if (mi < 0) return
+          const m = messages.value[mi]
           if (m?.parts?.pendingQuestion) {
-            messages.value[capturedIdx] = { ...m, parts: { ...m.parts, pendingQuestion: null } }
+            messages.value[mi] = { ...m, parts: { ...m.parts, pendingQuestion: null } }
           }
         }, 100)
         return
@@ -981,10 +1147,13 @@ export const useChatStore = defineStore('chat', () => {
             pendingPermission: { ...msg.parts.pendingPermission, _replied: true },
           }
           messages.value[idx] = { ...msg, parts }
+          const targetId = toolMessageID
           setTimeout(() => {
-            const m = messages.value[idx]
+            const mi = messages.value.findIndex((m) => m.opencodeMessageId === targetId)
+            if (mi < 0) return
+            const m = messages.value[mi]
             if (m?.parts?.pendingPermission) {
-              messages.value[idx] = { ...m, parts: { ...m.parts, pendingPermission: null } }
+              messages.value[mi] = { ...m, parts: { ...m.parts, pendingPermission: null } }
             }
           }, 100)
         }
@@ -999,11 +1168,16 @@ export const useChatStore = defineStore('chat', () => {
           pendingPermission: { ...msg.parts.pendingPermission, _replied: true },
         }
         messages.value[i] = { ...msg, parts }
-        const capturedIdx = i
+        const targetId = msg.opencodeMessageId
+        const targetIdx = i
         setTimeout(() => {
-          const m = messages.value[capturedIdx]
+          const mi = targetId
+            ? messages.value.findIndex((m) => m.opencodeMessageId === targetId)
+            : (messages.value[targetIdx]?.opencodeMessageId === targetId ? targetIdx : -1)
+          if (mi < 0) return
+          const m = messages.value[mi]
           if (m?.parts?.pendingPermission) {
-            messages.value[capturedIdx] = { ...m, parts: { ...m.parts, pendingPermission: null } }
+            messages.value[mi] = { ...m, parts: { ...m.parts, pendingPermission: null } }
           }
         }, 100)
         return
@@ -1023,11 +1197,17 @@ export const useChatStore = defineStore('chat', () => {
       if (msg.role === 'assistant' && msg.parts?.pendingPermission?.requestId === requestId) {
         const parts: StepParts = { ...msg.parts, pendingPermission: { ...msg.parts.pendingPermission, _replied: true } }
         messages.value[i] = { ...msg, parts }
-        const capturedIdx = i
+        const targetId = msg.opencodeMessageId
+        const targetRequestId = requestId
+        const targetIdx = i
         setTimeout(() => {
-          const m = messages.value[capturedIdx]
-          if (m?.parts?.pendingPermission) {
-            messages.value[capturedIdx] = { ...m, parts: { ...m.parts, pendingPermission: null } }
+          const mi = targetId
+            ? messages.value.findIndex((m) => m.opencodeMessageId === targetId)
+            : (messages.value[targetIdx]?.opencodeMessageId === targetId ? targetIdx : -1)
+          if (mi < 0) return
+          const m = messages.value[mi]
+          if (m?.parts?.pendingPermission && m.parts.pendingPermission.requestId === targetRequestId) {
+            messages.value[mi] = { ...m, parts: { ...m.parts, pendingPermission: null } }
           }
         }, 100)
         return
@@ -1069,6 +1249,8 @@ export const useChatStore = defineStore('chat', () => {
     }
     isStreaming.value = false
     streamStartAt.value = 0
+    // 本轮结束:清理 reasoning partID 集合,避免长会话中无限增长
+    reasoningPartIds.clear()
   }
 
   /** 生成出错:把目标 assistant 消息标记为 error 并展示错误文案;找不到目标时追加一条错误气泡。 */
@@ -1182,18 +1364,19 @@ export const useChatStore = defineStore('chat', () => {
   })
 
   return {
-    sessions, archivedSessions, agents, currentSessionId, currentSession, messages, turns, flow, summaries, streamingText,
+    sessions, archivedSessions, agents, currentSessionId, currentSession, messages, turns, flow, summaries, compactedAt, compactCutoffId, compacting, streamingText,
     streamingMessageId, isStreaming, streamingStuckSeconds, streamingElapsedSeconds, runningActivity,
     streamingReasoningMsgId,
     hasPendingInteraction, connected, reconnecting, forceReconnect, agentStarting,
     authExpired, switching, changedFilePaths,
     searchResults, searching, searchSessions,
     availableModels, selectedProviderId, selectedModelId,
-    pendingFill, fillInput,
+    pendingFill, fillInput, pendingAttachPath, attachFile,
     manualCollapseOverride, setCollapse,
     loadModels, selectModel, loadSessions, loadArchivedSessions, loadAgents, createSession, switchAgent, selectSession,
     deleteSession, pinSession, archiveSession, unarchiveSession, renameSession, clearSession, exportSession,
-    summarizeSession,
+    importSession,
+    summarizeSession, markCompacted,
     sendMessage, runCommand, abort, closeStream, forceReleaseStreaming, resumeStreaming,
     reconcileAfterReconnect,
   }

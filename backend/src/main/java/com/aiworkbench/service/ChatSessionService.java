@@ -26,6 +26,8 @@ public class ChatSessionService {
     private final ChatSessionMapper chatSessionMapper;
     private final OpencodeClient opencodeClient;
     private final WorkspaceService workspaceService;
+    private final com.aiworkbench.mapper.ChatMessageMapper chatMessageMapper;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     /**
      * opencodeSessionId → ChatSession 进程内缓存(访问序 LRU,容量 512)。
@@ -73,6 +75,47 @@ public class ChatSessionService {
         return toVo(s);
     }
 
+    /** 导入会话:解析导出的 JSON,创建新会话并批量恢复历史消息。 */
+    public SessionVo importSession(Long userId, String jsonText) {
+        try {
+            com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(jsonText);
+            String title = root.path("sessionTitle").asText("导入的会话");
+            // 复用 create 会话逻辑(建 opencode 会话 + 落库 chat_session)
+            com.aiworkbench.dto.chat.CreateSessionRequest req = new com.aiworkbench.dto.chat.CreateSessionRequest();
+            req.setTitle(title);
+            req.setAgent("chat");
+            SessionVo vo = create(req, userId);
+
+            com.fasterxml.jackson.databind.JsonNode msgs = root.path("messages");
+            if (msgs.isArray()) {
+                for (com.fasterxml.jackson.databind.JsonNode m : msgs) {
+                    com.aiworkbench.entity.ChatMessage cm = new com.aiworkbench.entity.ChatMessage();
+                    cm.setSessionId(vo.getId());
+                    cm.setUserId(userId);
+                    cm.setRole(m.path("role").asText("assistant"));
+                    cm.setContent(m.path("content").asText(""));
+                    cm.setStatus(m.path("status").asText("completed"));
+                    if (m.hasNonNull("opencodeMessageId")) {
+                        cm.setOpencodeMessageId(m.path("opencodeMessageId").asText(null));
+                    }
+                    if (m.hasNonNull("parts")) {
+                        cm.setParts(m.get("parts").toString());
+                    }
+                    if (m.hasNonNull("createdAt")) {
+                        try {
+                            cm.setCreatedAt(java.time.LocalDateTime.parse(m.path("createdAt").asText()));
+                        } catch (Exception ignore) {}
+                    }
+                    chatMessageMapper.insert(cm);
+                }
+            }
+            return vo;
+        } catch (Exception e) {
+            log.warn("import session failed: {}", e.toString());
+            throw new BusinessException(ResultCode.INTERNAL_ERROR.getCode(), "导入会话失败: " + e.getMessage());
+        }
+    }
+
     public List<SessionVo> list(Long userId) {
         List<ChatSession> list = chatSessionMapper.selectList(new LambdaQueryWrapper<ChatSession>()
                 .eq(ChatSession::getUserId, userId)
@@ -117,10 +160,14 @@ public class ChatSessionService {
         return s;
     }
 
+    /** 按 DB id 取会话(不限用户,内部服务用;外部调用须自行校验归属)。 */
+    public ChatSession findById(Long sessionId) {
+        return sessionId == null ? null : chatSessionMapper.selectById(sessionId);
+    }
+
     /** 用户最近活跃(未归档)的会话;用于事件缺少 opencodeSessionId 时的归属兜底。无则 null。 */
     public ChatSession findMostRecentByUserId(Long userId) {
-        return chatSessionMapper.selectOne(new LambdaQueryWrapper<ChatSession>()
-                .eq(ChatSession::getUserId, userId)
+        return chatSessionMapper.selectOne(new LambdaQueryWrapper<ChatSession>()                .eq(ChatSession::getUserId, userId)
                 .eq(ChatSession::getArchived, 0)
                 .orderByDesc(ChatSession::getUpdatedAt)
                 .last("limit 1"));

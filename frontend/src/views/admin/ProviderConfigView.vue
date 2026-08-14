@@ -10,6 +10,10 @@ const msg = useMessage()
 const providers = ref<ProviderVo[]>([])
 const loading = ref(false)
 const applying = ref(false)
+const savingProvider = ref(false)
+const savingModel = ref(false)
+/** 行级操作进行中(provider 删除/启停,model 删除):以字符串标识,如 'p-1' / 'm-3' */
+const rowBusy = ref<string | null>(null)
 
 const showProvider = ref(false)
 const newProvider = ref({ providerId: '', name: '', baseUrl: '', npm: '', apiKey: '', envVarName: '', enabled: 1 })
@@ -31,6 +35,8 @@ async function load() {
 }
 
 async function addProvider() {
+  if (savingProvider.value) return
+  savingProvider.value = true
   try {
     await adminApi.createProvider({ ...newProvider.value })
     msg.success('已添加')
@@ -38,10 +44,12 @@ async function addProvider() {
     newProvider.value = { providerId: '', name: '', baseUrl: '', npm: '', apiKey: '', envVarName: '', enabled: 1 }
     await load()
   } catch (e: any) { msg.error(e.message) }
+  finally { savingProvider.value = false }
 }
 
 async function addModel() {
-  if (!showModelFor.value) return
+  if (!showModelFor.value || savingModel.value) return
+  savingModel.value = true
   try {
     await adminApi.createModel({ providerId: showModelFor.value, modelId: newModel.value.modelId, name: newModel.value.name })
     msg.success('已添加模型')
@@ -49,25 +57,35 @@ async function addModel() {
     newModel.value = { providerId: '', modelId: '', name: '' }
     await load()
   } catch (e: any) { msg.error(e.message) }
+  finally { savingModel.value = false }
 }
 
 async function removeProvider(id: number) {
+  if (rowBusy.value !== null) return
   if (!confirm('删除该 provider 及其所有模型？')) return
+  rowBusy.value = 'p-' + id
   try { await adminApi.deleteProvider(id); msg.success('已删除'); await load() }
   catch (e: any) { msg.error(e.message) }
+  finally { rowBusy.value = null }
 }
 
 async function removeModel(id: number) {
+  if (rowBusy.value !== null) return
+  rowBusy.value = 'm-' + id
   try { await adminApi.deleteModel(id); msg.success('已删除'); await load() }
   catch (e: any) { msg.error(e.message) }
+  finally { rowBusy.value = null }
 }
 
 async function toggleEnabled(p: ProviderVo) {
+  if (rowBusy.value !== null) return
+  rowBusy.value = 'p-' + p.id
   try {
     // 传 npm 保持原值(后端 null=不修改,这里显式传当前值)
     await adminApi.updateProvider(p.id, { providerId: p.providerId, name: p.name, baseUrl: p.baseUrl || '', npm: p.npm || '', enabled: p.enabled ? 0 : 1 })
     await load()
   } catch (e: any) { msg.error(e.message) }
+  finally { rowBusy.value = null }
 }
 
 async function apply() {
@@ -95,9 +113,9 @@ onMounted(load)
     <n-spin :show="loading">
       <n-card v-for="p in providers" :key="p.id" class="provider-card" :title="`${p.name} (${p.providerId})`">
         <template #header-extra>
-          <n-switch :value="!!p.enabled" @update:value="toggleEnabled(p)" />
-          <n-button size="small" quaternary @click="showModelFor = p.providerId; newModel = { providerId: p.providerId, modelId: '', name: '' }">+ 模型</n-button>
-          <n-button size="small" quaternary type="error" @click="removeProvider(p.id)">删除</n-button>
+          <n-switch :value="!!p.enabled" :disabled="rowBusy !== null" :loading="rowBusy === 'p-' + p.id" @update:value="toggleEnabled(p)" />
+          <n-button size="small" quaternary :disabled="rowBusy !== null" @click="showModelFor = p.providerId; newModel = { providerId: p.providerId, modelId: '', name: '' }">+ 模型</n-button>
+          <n-button size="small" quaternary type="error" :loading="rowBusy === 'p-' + p.id" :disabled="rowBusy !== null" @click="removeProvider(p.id)">删除</n-button>
         </template>
         <div class="meta">
           <span>Base URL: {{ p.baseUrl || '—' }}</span>
@@ -112,7 +130,7 @@ onMounted(load)
               <td><code>{{ m.modelId }}</code></td>
               <td>{{ m.name }}</td>
               <td><n-tag :type="m.enabled ? 'success' : 'default'" size="tiny">{{ m.enabled ? '启用' : '禁用' }}</n-tag></td>
-              <td><n-button size="tiny" quaternary type="error" @click="removeModel(m.id)">删除</n-button></td>
+              <td><n-button size="tiny" quaternary type="error" :loading="rowBusy === 'm-' + m.id" :disabled="rowBusy !== null" @click="removeModel(m.id)">删除</n-button></td>
             </tr>
           </tbody>
         </n-table>
@@ -130,7 +148,7 @@ onMounted(load)
         <n-form-item label="NPM 包名（自定义 provider 的 AI SDK 包，如 @ai-sdk/openai-compatible；内置 provider 可留空）"><n-input v-model:value="newProvider.npm" placeholder="@ai-sdk/openai-compatible" /></n-form-item>
         <n-form-item label="API Key"><n-input v-model:value="newProvider.apiKey" type="password" /></n-form-item>
         <n-form-item label="Env 变量名（留空自动生成 <PROVIDER>_API_KEY）"><n-input v-model:value="newProvider.envVarName" placeholder="OPENAI_API_KEY" /></n-form-item>
-        <n-button type="primary" @click="addProvider">添加</n-button>
+        <n-button type="primary" :loading="savingProvider" :disabled="savingProvider" @click="addProvider">添加</n-button>
       </n-form>
     </n-modal>
 
@@ -139,7 +157,7 @@ onMounted(load)
       <n-form label-placement="top">
         <n-form-item label="Model ID"><n-input v-model:value="newModel.modelId" placeholder="gpt-4o-mini" /></n-form-item>
         <n-form-item label="显示名称"><n-input v-model:value="newModel.name" placeholder="GPT-4o mini" /></n-form-item>
-        <n-button type="primary" @click="addModel">添加</n-button>
+        <n-button type="primary" :loading="savingModel" :disabled="savingModel" @click="addModel">添加</n-button>
       </n-form>
     </n-modal>
   </div>

@@ -18,6 +18,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -53,6 +55,7 @@ public class ProviderConfigService {
     private final ObjectMapper objectMapper;
     private final CryptoService crypto;
     private final OpencodeProcessManager processManager;
+    private final McpConfigService mcpConfigService;
 
     // ---------- 查询 ----------
 
@@ -152,6 +155,7 @@ public class ProviderConfigService {
         m.setName(req.getName());
         m.setEnabled(req.getEnabled() != null ? req.getEnabled() : 1);
         m.setSortOrder(req.getSortOrder() != null ? req.getSortOrder() : 0);
+        m.setContextLimit(req.getContextLimit());
         modelConfigMapper.insert(m);
         return toModelVo(m);
     }
@@ -173,8 +177,7 @@ public class ProviderConfigService {
     public void applyConfig() {
         List<ProviderConfig> providers = providerConfigMapper.selectList(
                 new LambdaQueryWrapper<ProviderConfig>()
-                        .eq(ProviderConfig::getEnabled, 1)
-                        .orderByAsc(ProviderConfig::getSortOrder));
+                        .eq(ProviderConfig::getEnabled, 1)                        .orderByAsc(ProviderConfig::getSortOrder));
 
         Map<String, Object> providerMap = new LinkedHashMap<>();
         StringBuilder envBuilder = new StringBuilder();
@@ -224,6 +227,12 @@ public class ProviderConfigService {
         Map<String, Object> experimental = new LinkedHashMap<>();
         experimental.put("continue_loop_on_deny", true);
         root.put("experimental", experimental);
+        // 会话自动压缩:上下文接近满时由 opencode 自动总结早期内容(官方 schema:auto/prune/reserved)
+        Map<String, Object> compaction = new LinkedHashMap<>();
+        compaction.put("auto", true);
+        compaction.put("prune", false);           // 不裁剪旧工具输出(保留完整历史便于回滚)
+        compaction.put("reserved", 10000);        // 压缩预留 token 缓冲,避免压缩期间上下文溢出
+        root.put("compaction", compaction);
         // build agent 约束:用户拒绝/跳过问题时不要反复问(否则选择框重复弹出,体验差)
         Map<String, Object> buildAgent = new LinkedHashMap<>();
         buildAgent.put("prompt", "When the user rejects or skips a question you asked (they chose 拒绝/跳过), "
@@ -233,6 +242,24 @@ public class ProviderConfigService {
         Map<String, Object> agentConfig = new LinkedHashMap<>();
         agentConfig.put("build", buildAgent);
         root.put("agent", agentConfig);
+        // MCP servers:从 mcp_config 表渲染(local 命令进程 / remote HTTP/SSE URL)。
+        // 旧版本硬编码的 mysql MCP 已废弃,由管理员在「MCP Server 管理」配置。
+        root.put("mcp", mcpConfigService.renderMcpSection());
+        // 内置 slash 命令(前端从 opencode 拉取,source=command)
+        Map<String, Object> cmdConfig = new LinkedHashMap<>();
+        cmdConfig.put("test", Map.of(
+                "description", "源码测试分析:对工作区项目生成测试点/用例/脚本/报告",
+                "template", "请对工作区里的项目源码做测试分析(用 test-analysis 技能):①生成测试点清单 ②生成测试用例 ③生成测试脚本(通过语法校验) ④输出测试报告。沙箱无法安装依赖,不要运行项目,只做静态分析与语法校验。$ARGUMENTS"));
+        cmdConfig.put("summarize", Map.of(
+                "description", "总结当前会话要点",
+                "template", "请总结当前会话的要点:①本次讨论的核心内容 ②已确定的结论/决策 ③遗留的待办事项。条理清晰,便于回顾。"));
+        cmdConfig.put("review", Map.of(
+                "description", "代码审查:检查工作区指定文件或改动",
+                "template", "请审查代码$ARGUMENTS:①代码质量与可读性 ②潜在 bug 与边界情况 ③安全问题 ④改进建议。"));
+        cmdConfig.put("analyze-data", Map.of(
+                "description", "数据分析:上传数据文件后分析",
+                "template", "请分析数据文件$ARGUMENTS:①数据结构概览 ②关键指标 ③趋势与结论 ④值得关注的风险。"));
+        root.put("command", cmdConfig);
         root.put("provider", providerMap);
 
         // 写模板真相源
@@ -287,6 +314,18 @@ public class ProviderConfigService {
             log.warn("applyConfig fan-out interrupted");
         } finally {
             pool.shutdown();
+        }
+    }
+
+    /** 应用就绪后自动渲染一次模板真相源(无需等 admin 手动点「应用配置」)。
+     *  启动时通常无活跃用户进程,只写模板;用户首启时由 PerUserConfigWriter seed 最新配置。 */
+    @EventListener(ApplicationReadyEvent.class)
+    public void onApplicationReady() {
+        try {
+            applyConfig();
+            log.info("applyConfig: auto-rendered template on startup");
+        } catch (Exception e) {
+            log.warn("applyConfig on startup failed (will be retried on next admin apply): {}", e.toString());
         }
     }
 
@@ -358,6 +397,7 @@ public class ProviderConfigService {
                 .name(m.getName())
                 .enabled(m.getEnabled())
                 .sortOrder(m.getSortOrder())
+                .contextLimit(m.getContextLimit())
                 .build();
     }
 

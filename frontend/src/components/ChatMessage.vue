@@ -63,11 +63,19 @@ const parsed = computed(() => {
 
 const html = computed(() => renderMarkdown(parsed.value.text))
 
+/** 附件下载中(以 path 为 key),行内 loading 并防重复点。 */
+const downloading = ref<string | null>(null)
+
 async function downloadAttachment(path: string) {
+  if (downloading.value !== null) return
+  downloading.value = path
   try {
     await fileApi.download(path)
   } catch (e: any) {
     console.error('[ChatMessage] download attachment failed', e)
+    msg.error('附件下载失败,请重试')
+  } finally {
+    downloading.value = null
   }
 }
 
@@ -166,9 +174,10 @@ async function submitEdit() {
             v-for="a in parsed.attachments"
             :key="a.path"
             class="att-link"
+            :class="{ busy: downloading !== null }"
             :title="`下载 ${a.path}`"
             @click="downloadAttachment(a.path)"
-          >📎 {{ a.name }}</a>
+          >{{ downloading === a.path ? '⏳ ' : '📎 ' }}{{ a.name }}</a>
         </div>
         <span v-if="streaming" class="cursor">▋</span>
       </template>
@@ -256,4 +265,5 @@ async function submitEdit() {
   text-overflow: ellipsis; white-space: nowrap;
 }
 .att-link:hover { background: rgba(0, 0, 0, 0.35); }
+.att-link.busy { opacity: .55; pointer-events: none; }
 </style>

@@ -87,7 +87,9 @@ public class SecurityConfig {
         cfg.setAllowedOriginPatterns(List.of("*"));
         cfg.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         cfg.setAllowedHeaders(List.of("*"));
-        cfg.setAllowCredentials(true);
+        // 生产同源部署(nginx),token 走 Authorization header,不需携带凭据;
+        // 关闭 allowCredentials 避免任意源可带凭据跨域(预览同源已用 HttpOnly cookie,依赖 SameSite=Lax 防跨站)。
+        cfg.setAllowCredentials(false);
         cfg.setMaxAge(3600L);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", cfg);

@@ -71,7 +71,15 @@ public class OpencodeEventRouter {
     public void dispatch(String opencodeSessionId, String type, String dataJson) {
         List<SseEmitter> list = subscribers.get(opencodeSessionId);
         if (list == null || list.isEmpty()) {
+            // 诊断:压缩事件无人订阅也要可观测
+            if ("session.compacting".equals(type) || "session.compacted".equals(type)) {
+                log.info("dispatch {} to session {}: NO subscribers", type, opencodeSessionId);
+            }
             return;
+        }
+        if ("session.compacting".equals(type) || "session.compacted".equals(type)
+                || type.startsWith("message.")) {
+            log.info("dispatch {} to session {} ({} subscribers)", type, opencodeSessionId, list.size());
         }
         for (SseEmitter emitter : list) {
             try {

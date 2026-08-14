@@ -10,25 +10,10 @@ export const fileApi = {
   write: (path: string, content: string) => http.post('/files', { path, content }),
   delete: (path: string) => http.delete('/files', { params: { path } }),
 
-  /** 获取文件 Blob(带 JWT),不触发下载,供预览组件使用。后端异常以 JSON Blob 返回,解析后抛出。 */
+  /** 获取文件 Blob(带 JWT),不触发下载,供预览组件使用。后端异常以 JSON Blob 返回,response interceptor 解析后抛出。 */
   fetchBlob: async (path: string): Promise<Blob> => {
     const res = await http.get('/files/download', { params: { path }, responseType: 'blob' })
-    const blob: Blob = res.data
-    if (blob.type && blob.type.includes('application/json')) {
-      let text = ''
-      try {
-        text = await blob.text()
-      } catch {
-        /* ignore */
-      }
-      try {
-        const j = JSON.parse(text)
-        throw new Error(j.message || 'download failed')
-      } catch (e) {
-        throw e instanceof Error ? e : new Error('download failed')
-      }
-    }
-    return blob
+    return res.data as Blob
   },
 
   /** 下载文件(带 JWT),经 Blob URL 触发浏览器下载 */

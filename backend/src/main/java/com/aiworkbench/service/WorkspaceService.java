@@ -274,9 +274,8 @@ public class WorkspaceService {
     private Path safeResolve(Long userId, String relativePath) {
         Path base = Paths.get(userDir(userId)).toAbsolutePath().normalize();
         String rel = relativePath == null ? "" : relativePath;
-        if (rel.contains("..")) {
-            throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "path traversal denied");
-        }
+        // 只做 normalize 后前缀校验:不因文件名含 ".."(如 foo..bar.txt)误伤合法文件;
+        // 真正的目录逃逸(../ 跨出 base)由 startsWith(base) 拦截。
         Path resolved = base.resolve(rel).normalize();
         if (!resolved.startsWith(base)) {
             throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "path traversal denied");

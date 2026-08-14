@@ -34,6 +34,8 @@ const docGenShow = ref(false)
 const errorDiagnoseShow = ref(false)
 const marketplaceShow = ref(false)
 const skillTreeKey = ref(0)
+/** 消息定位轮询中(从任务/收藏跳转后等待消息加载) */
+const locating = ref(false)
 /** 安装技能后刷新技能目录树 */
 function onSkillInstalled() {
   skillTreeKey.value++
@@ -58,8 +60,10 @@ function onErrorGenerate(prompt: string) {
   chatInputRef.value?.fill(prompt)
 }
 
-/** 文件树右键「问 AI」:把文件路径填入输入框,引导用户补充问题后发送 */
+/** 文件树右键「问 AI」:把文件挂到输入框附件,并填入引导提示词,用户补充后发送 */
 function onAskAIFile(path: string) {
+  console.log('[ChatView] onAskAIFile', path, 'inputRef=', !!chatInputRef.value)
+  chatInputRef.value?.attachFilePath(path)
   chatInputRef.value?.fill(`请看看工作区里的这个文件:${path}\n\n我需要你:`)
 }
 
@@ -74,20 +78,18 @@ function onTestAnalysis() {
 
 const builtinSkills = ref<SkillInfo[]>([])
 const builtinLoading = ref(false)
-let _builtinLoaded = false
 async function loadBuiltinSkills() {
-  if (_builtinLoaded) return
   builtinLoading.value = true
   try {
     builtinSkills.value = await chatApi.builtinSkills()
-    _builtinLoaded = true
   } catch (e) {
     console.warn('[skills] load builtin failed', e)
   } finally {
     builtinLoading.value = false
   }
 }
-watch(showFiles, (v) => { if (v) loadBuiltinSkills() })
+// immediate:刷新后即使 showFiles 已是 true 也加载一次;之后每次打开也刷新
+watch(showFiles, (v) => { if (v) loadBuiltinSkills() }, { immediate: true })
 
 // ---------- 会话内查找(Ctrl+F)----------
 
@@ -199,16 +201,21 @@ async function onOpenFavorite(target: { sessionId: number; turnId?: string }) {
 /** 定位到指定用户消息所在 turn 并闪亮(消息加载是异步的,轮询等待)。 */
 async function flashToMessage(messageId?: number) {
   if (!messageId) return
+  locating.value = true
   const flash = (turnId: string) => {
     locateTurn(turnId)
   }
-  for (let i = 0; i < 40; i++) {
-    const turn = chat.turns.find((t) => t.userMessage?.id === messageId)
-    if (turn) {
-      flash(turn.id)
-      return
+  try {
+    for (let i = 0; i < 40; i++) {
+      const turn = chat.turns.find((t) => t.userMessage?.id === messageId)
+      if (turn) {
+        flash(turn.id)
+        return
+      }
+      await new Promise((r) => setTimeout(r, 200))
     }
-    await new Promise((r) => setTimeout(r, 200))
+  } finally {
+    locating.value = false
   }
 }
 
@@ -244,7 +251,12 @@ function scrollToBottom() {
     vl.scrollTo({ position: 'bottom' })
   })
 }
-watch(() => chat.messages.length, scrollToBottom)
+watch(() => chat.messages.length, () => {
+  // 打开历史会话 / 压缩后刷新:等虚拟列表渲染后再滚到底(内容高度异步实测,需延迟多次)
+  scrollToBottom()
+  setTimeout(scrollToBottom, 150)
+  setTimeout(scrollToBottom, 400)
+})
 watch(() => chat.turns.length, scrollToBottom)
 
 /** 用户提交/拒绝权限或问题后(resumeStreaming 置 isStreaming=true),agent 会继续输出。
@@ -269,10 +281,6 @@ function handleVirtualScroll() {
 // 仅当贴底时才在流式时跟随底部,交给 vueuc 内置 ResizeObserver 跟随(避免与强制滚动竞争抖动)
 watch(() => chat.streamingText, () => {
   if (stickToBottom.value) scrollToBottom()
-})
-
-onBeforeUnmount(() => {
-  chat.closeStream()
 })
 
 /** 当前流式目标消息是否已落入某个 turn(step/finalAnswer) */
@@ -312,21 +320,75 @@ type VirtualListItem =
   | { key: string; kind: 'summary'; summary: SummaryItem }
   | { key: string; kind: 'streaming'; text: string }
   | { key: string; kind: 'thinking' }
+  | { key: string; kind: 'connecting' }
+  | { key: string; kind: 'compact-divider' }
+  | { key: string; kind: 'compact-progress' }
 
 const virtualItems = computed<VirtualListItem[]>(() => {
-  const items: VirtualListItem[] = chat.flow.map((it) => {
-    if (it.kind === 'turn') return { key: 't-' + it.turn.id, kind: 'turn', turn: it.turn }
-    const s = it.summary
-    return {
-      key: 's-' + (s.sha || '') + '-' + (s.at || '') + '-' + s.summary.length,
-      kind: 'summary',
-      summary: s,
-    }
+  const items: VirtualListItem[] = []
+  const msgs = chat.messages
+  // 压缩点现在由后端落库为一条 role='compaction' 记录(见 ChatMessageService.summarize)。
+  // 该记录有自增 id,天然位于消息流正确位置,前端直接按 id 归并渲染,
+  // 不再需要 anchor 推断(旧方案在 opencode 注入 Continue 占位消息时锚点会失配)。
+  // 记录 status=compacting → 显示"正在压缩…";completed → 显示"已压缩"分割线。
+  const compactionMarks = msgs
+    .filter((m) => m.role === 'compaction')
+    .map((m) => ({ id: m.id, status: m.status }))
+  // flow 每项的锚点消息 id:turn 用其 user 消息 id;summary 按 sha/at 反查 messages 里的 id。
+  const summaryIdOf = (sha: string | undefined, at: string | undefined): number => {
+    if (!sha && !at) return -1
+    return (
+      msgs.find(
+        (m) =>
+          m.role === 'summary' &&
+          (sha ? m.summarySha === sha : true) &&
+          (at ? m.createdAt === at : true),
+      )?.id ?? -1
+    )
+  }
+  const flowKeyById = chat.flow.map((it) => {
+    if (it.kind === 'turn') return it.turn.userMessage?.id ?? it.turn.steps[0]?.message?.id ?? -1
+    return summaryIdOf(it.summary.sha, it.summary.at)
   })
-  if (showStreamingBubble.value) {
-    items.push({ key: '__streaming__', kind: 'streaming', text: chat.streamingText })
-  } else if (showThinkingFallback.value) {
-    items.push({ key: '__thinking__', kind: 'thinking' })
+  const flowItems: VirtualListItem[] = chat.flow.map((it) =>
+    it.kind === 'turn'
+      ? { key: 't-' + it.turn.id, kind: 'turn', turn: it.turn }
+      : {
+          key: 's-' + (it.summary.sha || '') + '-' + (it.summary.at || '') + '-' + it.summary.summary.length,
+          kind: 'summary',
+          summary: it.summary,
+        },
+  )
+  // 双指针归并:compaction 记录按 id 插到对应 flow 项之前
+  let fi = 0
+  let ci = 0
+  while (fi < flowItems.length || ci < compactionMarks.length) {
+    const cm = compactionMarks[ci]
+    const nextFlowId = flowKeyById[fi] ?? Number.MAX_SAFE_INTEGER
+    if (cm && (fi >= flowItems.length || cm.id < nextFlowId)) {
+      items.push({
+        key: '__compact__-' + cm.id,
+        kind: cm.status === 'compacting' ? 'compact-progress' : 'compact-divider',
+      })
+      ci++
+    } else {
+      items.push(flowItems[fi])
+      fi++
+    }
+  }
+  // 压缩进行中且尚无落库记录(事件先于 DB 落库):追加"正在压缩…"占位
+  if (chat.compacting && compactionMarks.length === 0) {
+    items.push({ key: '__compact-progress__', kind: 'compact-progress' })
+  } else if (!chat.compacting && compactionMarks.length === 0) {
+    // agent 冷启动(空闲回收后发首条消息):后端已经 SSE dispatch session.starting,
+    // 在流式内容出现前固定显示「正在连接智能体…」,首个流式事件到达即消失
+    if (chat.agentStarting && !chat.streamingText && !activeTurnExists.value) {
+      items.push({ key: '__connecting__', kind: 'connecting' })
+    } else if (showStreamingBubble.value) {
+      items.push({ key: '__streaming__', kind: 'streaming', text: chat.streamingText })
+    } else if (showThinkingFallback.value) {
+      items.push({ key: '__thinking__', kind: 'thinking' })
+    }
   }
   return items
 })
@@ -394,6 +456,12 @@ const itemSize = 120
               <span>正在加载会话…</span>
             </div>
           </template>
+          <template v-else-if="locating">
+            <div class="switching-mask">
+              <n-spin size="small" />
+              <span>正在定位消息…</span>
+            </div>
+          </template>
           <template v-else-if="chat.currentSessionId && !isNewSession">
             <n-virtual-list
               ref="virtualListRef"
@@ -424,6 +492,21 @@ const itemSize = 120
                 <div v-else-if="item.kind === 'thinking'" class="thinking">
                   <n-spin size="small" /> AI 思考中…
                 </div>
+                <!-- agent 冷启动连接中:空闲回收后发消息,先拉起容器再回复;有流式内容即消失 -->
+                <div v-else-if="item.kind === 'connecting'" class="connecting-dock">
+                  <span class="connecting">正在连接智能体,请稍候…</span>
+                </div>
+                <!-- 压缩分割线:此前的早期内容已总结,不展示在对话里(文案固定,压缩中状态由底部占位单独表示) -->
+                <div v-else-if="item.kind === 'compact-divider'" class="compact-divider">
+                  <span class="cd-line"></span>
+                  <span class="cd-label">📦 会话已压缩:早期内容已总结</span>
+                  <span class="cd-line"></span>
+                </div>
+                <!-- 压缩进行中:消息流末尾的状态占位(当前可视区域可见) -->
+                <div v-else-if="item.kind === 'compact-progress'" class="compact-progress">
+                  <span class="spinner"></span>
+                  <span>正在压缩会话,总结早期内容…</span>
+                </div>
               </template>
             </n-virtual-list>
           </template>
@@ -431,7 +514,7 @@ const itemSize = 120
           <n-empty v-else description="选择左侧会话或点击「新会话」开始" style="margin-top: 80px" />
         </div>
 
-        <ChatInput v-if="chat.currentSessionId" ref="chatInputRef" @open-doc-gen="docGenShow = true" @open-error-diagnose="errorDiagnoseShow = true" />
+        <ChatInput v-if="chat.currentSessionId" ref="chatInputRef" @open-doc-gen="docGenShow = true" @open-error-diagnose="errorDiagnoseShow = true" @open-test-analysis="onTestAnalysis" />
       </div>
 
       <!-- 工作区:常驻右侧面板,可向右收起 -->
@@ -522,6 +605,22 @@ const itemSize = 120
 .chat-virtual { height: 100%; }
 .thinking { display: flex; align-items: center; gap: 8px; color: var(--text-3); padding: 8px 0; }
 
+/* agent 冷启动连接中占位:居中 + 呼吸点动画,与 thinking 区分 */
+.connecting-dock {
+  display: flex; align-items: center; justify-content: center;
+  padding: 18px 0; color: var(--text-3); font-size: 13px;
+}
+.connecting-dock .connecting::before {
+  content: ''; display: inline-block; width: 8px; height: 8px;
+  border-radius: 50%; background: var(--warn, #f0a020);
+  margin-right: 8px; vertical-align: -1px;
+  animation: connecting-pulse 1.2s ease-in-out infinite;
+}
+@keyframes connecting-pulse {
+  0%, 100% { opacity: .35; }
+  50% { opacity: 1; }
+}
+
 /* 会话切换加载遮罩 */
 .switching-mask {
   height: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;
@@ -569,6 +668,36 @@ const itemSize = 120
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 8px 18px; font-size: 13px; color: var(--warn);
   background: rgba(232, 178, 107, 0.08); border-bottom: 1px solid rgba(232, 178, 107, 0.2);
+}
+
+/* 压缩分割线:早期内容已总结,不展示在对话里 */
+.compact-divider {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 0; color: var(--text-3); font-size: 12px;
+}
+.compact-divider .cd-line {
+  flex: 1; height: 1px; background: var(--border-soft);
+}
+.compact-divider .cd-label {
+  display: inline-flex; align-items: center; gap: 6px;
+  white-space: nowrap;
+}
+.compact-divider .spinner {
+  width: 11px; height: 11px; border: 2px solid rgba(250, 173, 20, 0.3);
+  border-top-color: var(--warn); border-radius: 50%;
+  animation: compact-spin 0.8s linear infinite;
+}
+@keyframes compact-spin { to { transform: rotate(360deg) } }
+
+/* 压缩进行中:消息流末尾占位 */
+.compact-progress {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 16px 0; font-size: 13px; color: var(--warn);
+}
+.compact-progress .spinner {
+  width: 12px; height: 12px; border: 2px solid rgba(250, 173, 20, 0.3);
+  border-top-color: var(--warn); border-radius: 50%;
+  animation: compact-spin 0.8s linear infinite;
 }
 
 /* 会话内查找栏 */
