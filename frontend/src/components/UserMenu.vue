@@ -12,11 +12,10 @@ const auth = useAuthStore()
 const theme = useThemeStore()
 const msg = useMessage()
 
-/** 头像悬浮下拉:导入 / 主题 / 管理(管理员) / 退出登录 */
+/** 头像悬浮下拉:导入 / 管理(管理员) / 退出登录 */
 const userMenuOptions = computed(() => {
   const opts: any[] = [
     { label: '导入会话', key: 'import' },
-    { label: theme.mode === 'dark' ? '切换浅色主题' : '切换深色主题', key: 'theme' },
   ]
   if (auth.isAdmin) {
     opts.push({
@@ -38,7 +37,6 @@ const userMenuOptions = computed(() => {
 function onUserMenuSelect(key: string) {
   if (key === 'logout') { auth.logout(); return }
   if (key === 'import') { importFileRef.value?.click(); return }
-  if (key === 'theme') { theme.toggle(); return }
   if (key.startsWith('/admin/')) router.push(key)
 }
 
@@ -67,6 +65,11 @@ async function importSessionFile(e: Event) {
 
 <template>
   <div class="user-menu">
+    <n-button size="small" quaternary :title="theme.mode === 'dark' ? '切换到浅色主题' : '切换到深色主题'" @click="theme.toggle()">
+      <svg v-if="theme.mode === 'dark'" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+      <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </n-button>
+
     <n-dropdown :options="userMenuOptions" trigger="hover" placement="bottom-end" @select="onUserMenuSelect">
       <div class="user-chip" :title="auth.user?.username">
         <span class="avatar">

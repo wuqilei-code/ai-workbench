@@ -114,7 +114,7 @@ const features = [
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  background: linear-gradient(150deg, #101218 0%, #161924 45%, #1b1e2e 100%);
+  background: var(--auth-bg);
 }
 .glow {
   position: absolute;
@@ -125,18 +125,18 @@ const features = [
 .glow-1 {
   width: 480px; height: 480px;
   top: -120px; left: -80px;
-  background: rgba(139, 92, 246, 0.16);
+  background: var(--auth-glow-1);
 }
 .glow-2 {
   width: 420px; height: 420px;
   bottom: -120px; right: -60px;
-  background: rgba(139, 92, 246, 0.10);
+  background: var(--auth-glow-2);
 }
 .grid-bg {
   position: absolute; inset: 0;
   background-image:
-    linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+    linear-gradient(var(--auth-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--auth-grid) 1px, transparent 1px);
   background-size: 44px 44px;
   mask-image: radial-gradient(ellipse at 50% 40%, #000 30%, transparent 75%);
   -webkit-mask-image: radial-gradient(ellipse at 50% 40%, #000 30%, transparent 75%);
@@ -151,9 +151,9 @@ const features = [
   min-height: 600px;
   border-radius: 20px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+  background: var(--auth-shell-bg);
+  border: 1px solid var(--auth-shell-border);
+  box-shadow: var(--auth-shell-shadow);
   backdrop-filter: blur(8px);
 }
 
@@ -195,8 +195,8 @@ const features = [
   display: flex; gap: 10px;
   padding: 12px 14px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--auth-card-bg);
+  border: 1px solid var(--auth-card-border);
   transition: border-color .15s, background .15s, transform .15s;
 }
 .feature-card:hover {
@@ -215,8 +215,8 @@ const features = [
   align-items: center;
   justify-content: center;
   padding: 40px 36px;
-  background: rgba(13, 15, 20, 0.45);
-  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--auth-panel-bg);
+  border-left: 1px solid var(--auth-panel-border);
 }
 .form-card { width: 100%; max-width: 340px; }
 .form-title {
@@ -237,8 +237,6 @@ const features = [
 .footer-text { color: var(--text-3); }
 
 :deep(.n-form-item-label) { color: var(--text-2); font-size: 13px; }
-:deep(.n-input) { background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.10); }
-:deep(.n-input .n-input__border) { border-color: rgba(255,255,255,0.10); }
 :deep(.n-input .n-input__prefix) { color: var(--text-3); }
 
 @media (max-width: 860px) {

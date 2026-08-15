@@ -840,11 +840,11 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
 }
 .bubble {
   position: relative;
-  max-width: 70%;
+  max-width: 92%;
   min-width: 0;
-  padding: 10px 14px; border-radius: 12px 12px 12px 2px;
+  padding: 14px 16px; border-radius: 12px;
   background: var(--ai-bubble-bg); line-height: 1.6; word-break: break-word;
-  border: none;
+  border: 1px solid var(--border-soft);
   box-shadow: none;
   overflow: hidden;
 }

@@ -261,7 +261,10 @@ async function submitEdit() {
 }
 .msg.assistant .bubble {
   background: var(--ai-bubble-bg);
-  border-radius: 12px 12px 12px 2px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  max-width: 92%;
+  padding: 12px 14px;
 }
 .content :deep(p) { margin: 6px 0; }
 .content :deep(a.preview-link) {

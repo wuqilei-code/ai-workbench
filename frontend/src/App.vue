@@ -134,7 +134,19 @@ const lightOverrides: GlobalThemeOverrides = {
   --input-bg: #20242b;
   --input-border: rgba(255, 255, 255, 0.12);
   --user-bubble-bg: #2b3445;
-  --ai-bubble-bg: transparent;
+  --ai-bubble-bg: #20242b;
+  /* 登录/注册页两版主题 */
+  --auth-bg: linear-gradient(150deg, #101218 0%, #161924 45%, #1b1e2e 100%);
+  --auth-shell-bg: rgba(255, 255, 255, 0.035);
+  --auth-shell-border: rgba(255, 255, 255, 0.08);
+  --auth-shell-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+  --auth-panel-bg: rgba(13, 15, 20, 0.45);
+  --auth-panel-border: rgba(255, 255, 255, 0.06);
+  --auth-card-bg: rgba(255, 255, 255, 0.04);
+  --auth-card-border: rgba(255, 255, 255, 0.06);
+  --auth-glow-1: rgba(139, 92, 246, 0.16);
+  --auth-glow-2: rgba(139, 92, 246, 0.10);
+  --auth-grid: rgba(255, 255, 255, 0.025);
 }
 
 /* 浅色 */
@@ -166,7 +178,19 @@ const lightOverrides: GlobalThemeOverrides = {
   --input-bg: #FFFFFF;
   --input-border: rgba(0, 0, 0, 0.12);
   --user-bubble-bg: #f0f0f0;
-  --ai-bubble-bg: transparent;
+  --ai-bubble-bg: #f5f5f5;
+  /* 登录/注册页两版主题 */
+  --auth-bg: linear-gradient(150deg, #f6f7fb 0%, #f1f2f9 45%, #eceef7 100%);
+  --auth-shell-bg: rgba(255, 255, 255, 0.75);
+  --auth-shell-border: rgba(0, 0, 0, 0.08);
+  --auth-shell-shadow: 0 24px 80px rgba(80, 70, 120, 0.18);
+  --auth-panel-bg: rgba(255, 255, 255, 0.65);
+  --auth-panel-border: rgba(0, 0, 0, 0.06);
+  --auth-card-bg: rgba(255, 255, 255, 0.72);
+  --auth-card-border: rgba(0, 0, 0, 0.06);
+  --auth-glow-1: rgba(139, 92, 246, 0.14);
+  --auth-glow-2: rgba(139, 92, 246, 0.08);
+  --auth-grid: rgba(0, 0, 0, 0.04);
 }
 
 /* 全局背景氛围:纯色背景,干净简洁 */
