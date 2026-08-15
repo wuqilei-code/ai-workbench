@@ -44,11 +44,19 @@ public class ChatMessageController {
     private final OpencodeEventRouter router;
     private final OpencodeClient opencodeClient;
 
-    /** 消息历史(从 MySQL 镜像加载) */
+    /**
+     * 消息历史(从 MySQL 镜像加载),游标分页:
+     *  - 不传游标:取最新 limit 条(会话通常很长,进会话先看最近内容);
+     *  - beforeId:取 id < beforeId 的最近 limit 条(向上翻页加载更早);
+     *  - afterId:取 id > afterId 的最早 limit 条(增量追平/断线对账)。
+     */
     @GetMapping("/messages")
     public R<List<MessageVo>> messages(@PathVariable Long id,
-                                       @RequestParam(defaultValue = "200") int limit) {
-        return R.ok(chatMessageService.listBySession(id, SecurityUtil.currentUserId(), limit));
+                                       @RequestParam(defaultValue = "200") int limit,
+                                       @RequestParam(required = false) Long beforeId,
+                                       @RequestParam(required = false) Long afterId) {
+        return R.ok(chatMessageService.listBySession(id, SecurityUtil.currentUserId(),
+                limit, beforeId, afterId));
     }
 
     /** 发送用户消息(立即返回,流式回复走 /events) */

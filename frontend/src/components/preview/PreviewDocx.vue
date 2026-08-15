@@ -8,10 +8,11 @@ const error = ref<string | null>(null)
 const rendering = ref(false)
 
 async function render(blob: Blob) {
-  if (!container.value || !blob) return
+  // blob 未加载完成时为空 Blob,跳过,等真实数据到达再渲染
+  if (!container.value || !blob || blob.size === 0) return
   error.value = null
   rendering.value = true
-  container.value.innerHTML = ''
+  if (container.value) container.value.innerHTML = ''
   try {
     await renderAsync(blob, container.value, undefined, {
       className: 'docx',
@@ -35,22 +36,26 @@ onBeforeUnmount(() => { if (container.value) container.value.innerHTML = '' })
 
 <template>
   <div class="docx-scroll">
+    <div ref="container" class="docx-container" />
     <div v-if="rendering" class="docx-rendering">
       <span class="spinner"></span>
       <span>正在渲染文档…</span>
     </div>
-    <template v-else>
-      <div v-if="error" class="docx-error">docx 渲染失败:{{ error }}</div>
-      <div ref="container" class="docx-container" />
-    </template>
+    <div v-if="error && !rendering" class="docx-error">docx 渲染失败:{{ error }}</div>
   </div>
 </template>
 
 <style scoped>
-.docx-scroll { overflow: auto; height: 100%; background: #f0f0f0; padding: 16px; }
+.docx-scroll {
+  position: relative;
+  overflow: auto; height: 100%;
+  background: #f0f0f0; padding: 16px;
+}
 .docx-rendering {
+  position: absolute; inset: 0; z-index: 2;
   display: flex; align-items: center; justify-content: center; gap: 10px;
-  height: 100%; color: #888; font-size: 13px;
+  background: rgba(240, 240, 240, 0.9);
+  color: #666; font-size: 13px;
 }
 .spinner {
   width: 16px; height: 16px; border: 2px solid #ccc; border-top-color: #555;

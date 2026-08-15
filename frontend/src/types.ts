@@ -333,3 +333,51 @@ export interface UsageStats {
   daily: { date: string; messages: number; users: number }[]
   topUsers: { userId: number; username: string; sessions: number; messages: number }[]
 }
+
+/** 系统消息中心项(右上角铃铛) */
+export interface NotificationInfo {
+  id: number
+  type: string
+  title: string
+  content?: string | null
+  link?: string | null
+  read: boolean
+  createdAt?: string | null
+}
+
+/** 定时任务项 */
+export interface JobTaskInfo {
+  id: number
+  userId: number
+  name: string
+  prompt: string
+  cron?: string | null
+  agent: string
+  autoApprove: boolean
+  enabled: boolean
+  status: 'pending' | 'queued' | 'running' | 'success' | 'failed' | 'timeout' | 'cancelled'
+  statusText: string
+  nextRunAt?: string | null
+  queuedAt?: string | null
+  startedAt?: string | null
+  finishedAt?: string | null
+  lastResult?: string | null
+  lastError?: string | null
+  runningSeconds?: number | null
+}
+
+/** 定时任务单次运行历史 */
+export interface JobTaskRunInfo {
+  id: number
+  jobId: number
+  status: 'running' | 'success' | 'failed' | 'timeout' | 'cancelled'
+  statusText: string
+  startedAt?: string | null
+  finishedAt?: string | null
+  exitCode?: number | null
+  changedFiles?: number | null
+  result?: string | null
+  error?: string | null
+  runLogPath?: string | null
+  runningSeconds?: number | null
+}

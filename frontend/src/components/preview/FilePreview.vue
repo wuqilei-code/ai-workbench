@@ -10,6 +10,7 @@ import PreviewImage from './PreviewImage.vue'
 import PreviewPdf from './PreviewPdf.vue'
 import PreviewDocx from './PreviewDocx.vue'
 import PreviewXlsx from './PreviewXlsx.vue'
+import PreviewPptx from './PreviewPptx.vue'
 import PreviewUnsupported from './PreviewUnsupported.vue'
 
 const props = defineProps<{ path: string; textContent?: string; size?: number }>()
@@ -138,6 +139,7 @@ onBeforeUnmount(() => {
         <PreviewPdf          v-else-if="kind === 'pdf'"      :src="safeBlobUrl" />
         <PreviewDocx         v-else-if="kind === 'docx'"     :blob="safeBlob" />
         <PreviewXlsx         v-else-if="kind === 'xlsx'"     :blob="safeBlob" />
+        <PreviewPptx         v-else-if="kind === 'pptx'"     :blob="safeBlob" />
         <div v-else-if="kind === 'audio'" class="media-wrap">
           <audio :src="safeBlobUrl" controls class="fp-audio" />
         </div>
@@ -158,25 +160,25 @@ onBeforeUnmount(() => {
 }
 .fp-toolbar {
   display: flex; align-items: center; gap: 8px;
-  padding: 6px 12px; border-bottom: 1px solid #2a2a2e;
+  padding: 6px 12px; border-bottom: 1px solid var(--border);
   flex-shrink: 0; font-size: 12px;
 }
-.fp-path { color: #aaa; word-break: break-all; font-family: ui-monospace, monospace; }
-.fp-size { color: #666; flex-shrink: 0; }
+.fp-path { color: var(--text-3); word-break: break-all; font-family: ui-monospace, monospace; }
+.fp-size { color: var(--text-3); flex-shrink: 0; }
 .fp-spacer { flex: 1; }
 .fp-body { flex: 1; overflow: hidden; }
 .fp-body :deep(.n-spin-content) { height: 100%; }
 .fp-error-wrap { height: 100%; }
 .fp-editor {
   width: 100%; height: 100%;
-  background: #18181c; color: #e0e0e0;
+  background: var(--input-bg); color: var(--text);
   border: 0; padding: 12px;
   font-family: ui-monospace, monospace; font-size: 13px; line-height: 1.6;
   resize: none; outline: none;
 }
 .media-wrap {
   display: flex; align-items: center; justify-content: center;
-  height: 100%; background: #18181c;
+  height: 100%; background: var(--bg-elev);
 }
 .fp-audio { width: 90%; }
 .fp-video { max-width: 100%; max-height: 100%; }

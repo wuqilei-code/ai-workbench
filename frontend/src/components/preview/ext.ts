@@ -2,7 +2,7 @@
 
 export type PreviewKind =
   | 'image' | 'pdf' | 'markdown' | 'code' | 'text'
-  | 'docx' | 'xlsx' | 'audio' | 'video' | 'unsupported'
+  | 'docx' | 'xlsx' | 'pptx' | 'audio' | 'video' | 'unsupported'
 
 const EXT_MAP: Record<string, PreviewKind> = {
   // 图片
@@ -15,7 +15,8 @@ const EXT_MAP: Record<string, PreviewKind> = {
   // Office
   docx: 'docx', doc: 'docx',
   xlsx: 'xlsx', xls: 'xlsx', csv: 'xlsx',
-  pptx: 'unsupported', ppt: 'unsupported',
+  // pptx 为 zip 格式,可用浏览器端渲染器预览;ppt 为旧版 OLE 二进制,暂不支持
+  pptx: 'pptx', ppt: 'unsupported',
   // 音视频
   mp3: 'audio', wav: 'audio', ogg: 'audio', flac: 'audio', m4a: 'audio',
   mp4: 'video', webm: 'video', mov: 'video', avi: 'video', mkv: 'video',
@@ -60,7 +61,7 @@ export const EDITABLE_KINDS: Set<PreviewKind> = new Set(['markdown', 'code', 'te
 
 /** 二进制类型(需通过 fetchBlob 获取,不能用 content API) */
 export const BINARY_KINDS: Set<PreviewKind> = new Set([
-  'image', 'pdf', 'docx', 'xlsx', 'audio', 'video',
+  'image', 'pdf', 'docx', 'xlsx', 'pptx', 'audio', 'video',
 ])
 
 export function fmtSize(n: number): string {

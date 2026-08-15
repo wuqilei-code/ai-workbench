@@ -2,8 +2,6 @@
 import { computed, nextTick, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
-import { useAuthStore } from '@/stores/auth'
-import { useThemeStore } from '@/stores/theme'
 import { useDialog, useMessage } from 'naive-ui'
 import type { SessionVo } from '@/types'
 
@@ -11,29 +9,24 @@ const props = withDefaults(defineProps<{ collapsed?: boolean; narrow?: boolean }
   collapsed: false,
   narrow: false,
 })
-const emit = defineEmits<{ 'update:collapsed': [v: boolean] }>()
+const emit = defineEmits<{
+  'update:collapsed': [v: boolean]
+  'open-plugin-market': []
+  'open-template-lib': []
+  'open-my-files': []
+  'open-automation': []
+  'open-find': []
+  'open-my-mcp': []
+}>()
 
 const router = useRouter()
 const chat = useChatStore()
-const auth = useAuthStore()
-const theme = useThemeStore()
 const dialog = useDialog()
 const msg = useMessage()
 
 /** 汉堡按钮:窄屏可手动收起/展开侧边栏 */
 function toggleCollapsed() {
   emit('update:collapsed', !props.collapsed)
-}
-
-/** 管理员入口菜单:用户管理 / 模型管理 / 用量统计 */
-const adminMenuOptions = [
-  { label: '👥 用户管理', key: '/admin/users' },
-  { label: '🧩 模型管理', key: '/admin/providers' },
-  { label: '🔌 MCP 服务', key: '/admin/mcps' },
-  { label: '📊 用量统计', key: '/admin/usage' },
-]
-function onAdminSelect(key: string) {
-  router.push(key)
 }
 
 /** 归档视图开关:false=主列表, true=已归档列表 */
@@ -46,26 +39,6 @@ const busy = ref('')
 function withBusy<T>(label: string, fn: () => Promise<T>): Promise<T> {
   busy.value = label
   return fn().finally(() => { busy.value = '' })
-}
-/** 导入会话的文件 input */
-const importFileRef = ref<HTMLInputElement | null>(null)
-
-/** 选择导出的 JSON 文件并导入为新会话 */
-async function importSessionFile(e: Event) {
-  const input = e.target as HTMLInputElement
-  const file = input.files?.[0]
-  input.value = ''
-  if (!file) return
-  try {
-    await withBusy('正在导入会话…', async () => {
-      const text = await file.text()
-      const s = await chat.importSession(text)
-      msg.success(`已导入会话「${s.title}」`)
-      router.push(`/session/${s.id}`)
-    })
-  } catch (err: any) {
-    msg.error(err?.message || '导入失败,请确认是导出的 JSON 文件')
-  }
 }
 
 /** 会话搜索:输入即搜(标题/消息内容),命中含归档;非空时展示搜索结果视图 */
@@ -131,9 +104,13 @@ async function newChat() {
 
 /** 源码测试分析入口:新建会话并预填提示词,引导用户上传项目 zip */
 async function startTestAnalysis() {
+  activeMode.value = 'test'
   if (chat.isStreaming) {
     const go = await confirmSwitch('测试分析')
-    if (!go) return
+    if (!go) {
+      activeMode.value = 'work'
+      return
+    }
   }
   try {
     const s = await withBusy('正在新建会话…', () => chat.createSession('源码测试分析'))
@@ -142,9 +119,13 @@ async function startTestAnalysis() {
     msg.info('已进入测试分析会话,请在下方上传项目源码 ZIP 包后发送')
     window.dispatchEvent(new CustomEvent('aiwb:test-analysis'))
   } catch (e: any) {
+    activeMode.value = 'work'
     msg.error(e?.message || '新建会话失败')
   }
 }
+
+/** 顶部模式切换:work=主工作区,test=源码测试分析 */
+const activeMode = ref<'work' | 'test'>('work')
 
 async function openSession(id: number) {
   if (id === chat.currentSessionId) {
@@ -316,23 +297,50 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
     case 'delete': remove(s.id); break
   }
 }
-
-function logout() {
-  auth.logout()
-}
 </script>
 
 <template>
-  <n-layout-sider bordered :width="260" :collapsed-width="0" collapsible :collapsed="props.collapsed" show-trigger="bar" collapse-mode="width" content-style="display:flex; flex-direction:column" @update:collapsed="emit('update:collapsed', $event)">
-    <div class="side-head">
-      <div class="head-left">
-        <button v-if="props.narrow" class="hamburger" title="收起/展开侧边栏" @click="toggleCollapsed">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-        </button>
-        <span class="logo">AI Workbench</span>
+  <n-layout-sider :width="260" :collapsed-width="0" collapsible :collapsed="props.collapsed" :show-trigger="false" collapse-mode="width" content-style="display:flex; flex-direction:column; background: var(--sidebar-bg); overflow:hidden" @update:collapsed="emit('update:collapsed', $event)">
+    <div class="mode-tabs">
+      <span class="mode-toggle" title="收起侧边栏" @click="toggleCollapsed">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/></svg>
+      </span>
+      <span class="mode-tab" :class="{ active: activeMode === 'work' }" @click="activeMode = 'work'">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        Work
+      </span>
+      <span class="mode-tab" :class="{ active: activeMode === 'test' }" title="源码测试分析" @click="startTestAnalysis">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 2v6"/><path d="M15 2v6"/><path d="M3 8h18"/><path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/><path d="M12 12v4"/><path d="M10 14h4"/></svg>
+        Test
+      </span>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-item" @click="newChat">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        <span>新建任务</span>
       </div>
-      <div class="head-actions">
-        <n-button size="small" type="primary" @click="newChat" title="新建默认会话">+ 新会话</n-button>
+      <div class="nav-item" @click="emit('open-plugin-market')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+        <span>插件市场</span>
+      </div>
+      <div class="nav-item" @click="emit('open-automation')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+        <span>自动化</span>
+      </div>
+      <div class="nav-item" @click="emit('open-template-lib')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        <span>模板库</span>
+      </div>
+      <div class="nav-item" @click="emit('open-my-mcp')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>
+        <span>我的MCP</span>
+      </div>
+    </div>
+
+    <div class="session-section">
+      <div class="section-header">
+        <span class="section-title">任务列表</span>
         <n-dropdown
           :options="agentOptions"
           :show="agentMenuOpen"
@@ -340,84 +348,58 @@ function logout() {
           @update:show="onAgentMenuShow"
           @select="onAgentSelect"
         >
-          <n-button size="small" quaternary title="选择 agent 新建会话">▾</n-button>
+          <n-button size="tiny" quaternary circle title="选择 agent 新建会话">+</n-button>
         </n-dropdown>
       </div>
-    </div>
-    <div class="list-tabs">
-      <span
-        class="tab"
-        :class="{ active: !viewArchived }"
-        @click="onViewArchived(false)"
-      >会话</span>
-      <span
-        class="tab"
-        :class="{ active: viewArchived }"
-        @click="onViewArchived(true)"
-      >归档{{ chat.archivedSessions.length ? ` (${chat.archivedSessions.length})` : '' }}</span>
-    </div>
-    <div class="search-box">
-      <n-input
-        v-model:value="searchQuery"
-        size="small"
-        clearable
-        placeholder="搜索会话/消息…"
-        @update:value="onSearchInput"
-        @clear="clearSearch"
-      >
-        <template #prefix>🔍</template>
-      </n-input>
-    </div>
-    <div class="session-list">
-      <div
-        v-for="s in displayed"
-        :key="s.id"
-        class="session-item"
-        :class="{ active: s.id === chat.currentSessionId }"
-        @click="openSession(s.id)"
-      >
-        <span v-if="!viewArchived && s.pinned" class="pin-mark" title="已置顶">📌</span>
-        <span class="title" :title="s.agent ? `agent: ${s.agent}` : undefined">{{ s.title }}</span>
-        <n-tag v-if="searchActive && s.archived" size="tiny" :bordered="false" class="arch-tag">归档</n-tag>
-        <n-tag v-if="s.agent" size="tiny" :bordered="false" class="agent-tag">{{ s.agent }}</n-tag>
-        <n-dropdown
-          :options="menuOptions(s)"
-          trigger="click"
-          size="small"
-          placement="bottom-end"
-          @select="(k: string) => onMenuSelect(k, s)"
+
+      <div class="list-tabs">
+        <span
+          class="tab"
+          :class="{ active: !viewArchived }"
+          @click="onViewArchived(false)"
+        >会话</span>
+        <span
+          class="tab"
+          :class="{ active: viewArchived }"
+          @click="onViewArchived(true)"
+        >归档{{ chat.archivedSessions.length ? ` (${chat.archivedSessions.length})` : '' }}</span>
+      </div>
+
+      <div class="session-list">
+        <div
+          v-for="s in displayed"
+          :key="s.id"
+          class="session-item"
+          :class="{ active: s.id === chat.currentSessionId }"
+          @click="openSession(s.id)"
         >
-          <n-button quaternary circle size="tiny" @click.stop>⋯</n-button>
-        </n-dropdown>
-      </div>
-      <n-spin v-if="searchActive && searching" size="small" style="margin: 24px auto; display: block" />
-      <n-empty
-        v-else-if="!displayed.length"
-        :description="searchActive ? '未找到匹配的会话' : (viewArchived ? '暂无归档会话' : '暂无会话')"
-        style="margin-top: 40px"
-      />
-      <transition name="sidebusy-fade">
-        <div v-if="busy" class="side-busy">
-          <n-spin size="small" />
-          <span class="side-busy-text">{{ busy }}</span>
+          <span v-if="!viewArchived && s.pinned" class="pin-mark" title="已置顶">📌</span>
+          <span class="title" :title="s.agent ? `agent: ${s.agent}` : undefined">{{ s.title }}</span>
+          <n-tag v-if="searchActive && s.archived" size="tiny" :bordered="false" class="arch-tag">归档</n-tag>
+          <n-tag v-if="s.agent" size="tiny" :bordered="false" class="agent-tag">{{ s.agent }}</n-tag>
+          <n-dropdown
+            :options="menuOptions(s)"
+            trigger="click"
+            size="small"
+            placement="bottom-end"
+            @select="(k: string) => onMenuSelect(k, s)"
+          >
+            <n-button quaternary circle size="tiny" @click.stop>⋯</n-button>
+          </n-dropdown>
         </div>
-      </transition>
-    </div>
-    <div class="side-foot">
-      <div class="user-info">
-        <n-avatar round size="small">{{ auth.user?.username?.[0]?.toUpperCase() }}</n-avatar>
-        <span class="name">{{ auth.user?.username }}</span>
-        <n-tag v-if="auth.isAdmin" size="tiny" type="warning">admin</n-tag>
+        <n-spin v-if="searchActive && searching" size="small" style="margin: 24px auto; display: block" />
+        <n-empty
+          v-else-if="!displayed.length"
+          :description="searchActive ? '未找到匹配的会话' : (viewArchived ? '暂无归档会话' : '暂无会话')"
+          style="margin-top: 40px"
+        />
+        <transition name="sidebusy-fade">
+          <div v-if="busy" class="side-busy">
+            <n-spin size="small" />
+            <span class="side-busy-text">{{ busy }}</span>
+          </div>
+        </transition>
       </div>
-      <div class="foot-actions">
-        <n-button size="small" quaternary title="导入会话(JSON 文件)" @click="importFileRef?.click()">↩️ 导入</n-button>
-        <n-button size="small" quaternary :title="theme.mode === 'dark' ? '切换到浅色主题' : '切换到深色主题'" @click="theme.toggle()">{{ theme.mode === 'dark' ? '☀️' : '🌙' }}</n-button>
-        <n-dropdown v-if="auth.isAdmin" :options="adminMenuOptions" trigger="click" placement="top-end" @select="onAdminSelect">
-          <n-button size="small" quaternary>⚙️ 管理</n-button>
-        </n-dropdown>
-        <n-button size="small" quaternary @click="logout">退出</n-button>
-      </div>
-      <input ref="importFileRef" type="file" accept=".json,application/json" class="hidden-import" @change="importSessionFile" />
     </div>
 
     <n-modal
@@ -445,64 +427,192 @@ function logout() {
 </template>
 
 <style scoped>
-.side-head {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 12px; border-bottom: 1px solid var(--border-soft);
+.mode-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-soft);
 }
-.head-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.hamburger {
-  display: inline-flex; align-items: center; justify-content: center;
-  background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm);
-  color: var(--text-3); cursor: pointer; padding: 4px; flex-shrink: 0;
+.mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px; height: 28px;
+  border-radius: 6px;
+  margin-right: 2px;
+  flex-shrink: 0;
+  cursor: pointer;
+  color: var(--text-3);
+  transition: color .15s, background .15s;
 }
-.hamburger:hover { background: var(--surface-hover); color: var(--text-2); }
-.head-actions { display: flex; align-items: center; gap: 4px; }
-.logo {
-  font-weight: 700; font-size: 15px;
-  background: linear-gradient(135deg, var(--accent-text), #9d8dff);
-  -webkit-background-clip: text; background-clip: text; color: transparent;
-  letter-spacing: .3px;
+.mode-toggle:hover { color: var(--accent); background: var(--surface-hover); }
+.mode-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-3);
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
 }
-.agent-tag { flex-shrink: 0; margin-right: 4px; }
-.session-list { flex: 1; overflow-y: auto; padding: 8px; position: relative; }
+.mode-tab:hover {
+  background: var(--surface-hover);
+  color: var(--text-2);
+}
+.mode-tab.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+.nav-section {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--text-2);
+  font-size: 14px;
+  transition: all 0.15s;
+}
+.nav-item:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.nav-item svg {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+.session-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px 8px;
+}
+.section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.list-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 16px 8px;
+}
+.list-tabs .tab {
+  font-size: 12px;
+  color: var(--text-3);
+  padding: 4px 10px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.list-tabs .tab:hover {
+  background: var(--surface-hover);
+  color: var(--text-2);
+}
+.list-tabs .tab.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+.session-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 8px;
+  position: relative;
+}
 .side-busy {
-  position: absolute; inset: 0; z-index: 5;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   background: color-mix(in srgb, var(--bg, #fff) 70%, transparent);
   backdrop-filter: blur(2px);
 }
-.side-busy-text { font-size: 12px; color: var(--text-2); }
-.sidebusy-fade-enter-active, .sidebusy-fade-leave-active { transition: opacity .2s ease; }
-.sidebusy-fade-enter-from, .sidebusy-fade-leave-to { opacity: 0; }
-.list-tabs { display: flex; gap: 4px; padding: 10px 12px 8px; }
-.list-tabs .tab {
-  font-size: 12px; color: var(--text-3); padding: 4px 12px; border-radius: 14px; cursor: pointer;
-  transition: background .15s, color .15s;
+.side-busy-text {
+  font-size: 12px;
+  color: var(--text-2);
 }
-.list-tabs .tab:hover { background: var(--surface-hover); color: var(--text-2); }
-.list-tabs .tab.active { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
-.search-box { padding: 8px 12px 12px; }
-.arch-tag { flex-shrink: 0; margin-right: 4px; }
-.pin-mark { font-size: 11px; margin-right: 2px; flex-shrink: 0; }
+.sidebusy-fade-enter-active,
+.sidebusy-fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+.sidebusy-fade-enter-from,
+.sidebusy-fade-leave-to {
+  opacity: 0;
+}
+.arch-tag {
+  flex-shrink: 0;
+  margin-right: 4px;
+}
+.agent-tag {
+  flex-shrink: 0;
+  margin-right: 4px;
+}
+.pin-mark {
+  font-size: 11px;
+  margin-right: 2px;
+  flex-shrink: 0;
+}
 .session-item {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 9px 12px; border-radius: var(--radius-sm); cursor: pointer; margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  margin-bottom: 2px;
   position: relative;
-  transition: background .15s, transform .15s;
+  transition: all 0.15s;
 }
-.session-item:hover { background: var(--surface-hover); }
-.session-item:active { transform: scale(0.99); }
-.session-item.active { background: var(--accent-soft); }
+.session-item:hover {
+  background: var(--surface-hover);
+}
+.session-item:active {
+  transform: scale(0.99);
+}
+.session-item.active {
+  background: var(--accent-soft);
+}
 .session-item.active::before {
   content: '';
-  position: absolute; left: 0; top: 22%; bottom: 22%; width: 3px;
-  border-radius: 2px; background: var(--accent);
+  position: absolute;
+  left: 0;
+  top: 20%;
+  bottom: 20%;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
 }
-.session-item.active .title { color: var(--accent-text); }
-.session-item .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; color: var(--text-2); }
-.side-foot { border-top: 1px solid var(--border-soft); padding: 10px 12px 12px; }
-.user-info { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-.user-info .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
-.foot-actions { display: flex; align-items: center; gap: 4px; justify-content: space-between; }
-.hidden-import { display: none; }
+.session-item.active .title {
+  color: var(--accent);
+}
+.session-item .title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  color: var(--text-2);
+  font-size: 13px;
+}
 </style>

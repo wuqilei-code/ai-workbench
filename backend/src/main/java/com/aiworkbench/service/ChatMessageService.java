@@ -29,7 +29,6 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 
 import java.io.ByteArrayOutputStream;
 import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.util.List;
 
 /**
@@ -53,7 +52,8 @@ public class ChatMessageService {
 
     /**
      * 找该会话在 beforeEpochMs(含)之前最近的一条用户消息,作为后台任务的"触发消息"。
-     * DB 存 UTC 墙上时间(MySQL 容器 SYSTEM=UTC,DATETIME 读回 LocalDateTime 不做偏移),与 epoch ms 直接按 UTC 对齐。
+     * DB 存北京时间墙上时间(MySQL SYSTEM=UTC+8,DATETIME 读回 LocalDateTime 不做偏移),
+     * 需按 Asia/Shanghai 转成 epoch 毫秒再与 beforeEpochMs 比较。
      */
     public ChatMessage findTriggerUserMessage(Long sessionId, Long userId, long beforeEpochMs) {
         List<ChatMessage> list = chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
@@ -64,20 +64,42 @@ public class ChatMessageService {
                 .last("limit 50"));
         for (ChatMessage m : list) {
             if (m.getCreatedAt() != null
-                    && m.getCreatedAt().toEpochSecond(ZoneOffset.UTC) * 1000L <= beforeEpochMs) {
+                    && m.getCreatedAt().atZone(java.time.ZoneId.of("Asia/Shanghai")).toInstant().toEpochMilli() <= beforeEpochMs) {
                 return m;
             }
         }
         return null;
     }
 
-    /** 历史从 MySQL 加载(由事件镜像填充) */
-    public List<MessageVo> listBySession(Long sessionId, Long userId, int limit) {
+    /** 历史从 MySQL 加载(由事件镜像填充)。游标分页见 {@link com.aiworkbench.controller.ChatMessageController#messages}。 */
+    public List<MessageVo> listBySession(Long sessionId, Long userId, int limit,
+                                         Long beforeId, Long afterId) {
         chatSessionService.getOwned(sessionId, userId); // 越权校验
-        List<ChatMessage> list = chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
-                .eq(ChatMessage::getSessionId, sessionId)
-                .orderByAsc(ChatMessage::getId)
-                .last("limit " + Math.max(1, Math.min(limit, 500))));
+        int capped = Math.max(1, Math.min(limit, 500));
+        List<ChatMessage> list;
+        if (beforeId != null) {
+            // 加载更早:取 id < beforeId 的最近 capped 条,再反转为升序
+            list = chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
+                    .eq(ChatMessage::getSessionId, sessionId)
+                    .lt(ChatMessage::getId, beforeId)
+                    .orderByDesc(ChatMessage::getId)
+                    .last("limit " + capped));
+            java.util.Collections.reverse(list);
+        } else if (afterId != null) {
+            // 增量追平:取 id > afterId 的最早 capped 条(升序)
+            list = chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
+                    .eq(ChatMessage::getSessionId, sessionId)
+                    .gt(ChatMessage::getId, afterId)
+                    .orderByAsc(ChatMessage::getId)
+                    .last("limit " + capped));
+        } else {
+            // 初载/默认:取最新 capped 条(id 降序取再反转,让前端直接看到会话尾部)
+            list = chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
+                    .eq(ChatMessage::getSessionId, sessionId)
+                    .orderByDesc(ChatMessage::getId)
+                    .last("limit " + capped));
+            java.util.Collections.reverse(list);
+        }
         return list.stream().map(m -> {
             sanitizeStalePending(m);
             return toVo(m);

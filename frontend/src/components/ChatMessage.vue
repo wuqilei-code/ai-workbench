@@ -6,6 +6,7 @@ import { downloadMarkdown } from '@/utils/exportMarkdown'
 import { useFavoritesStore } from '@/stores/favorites'
 import { useChatStore } from '@/stores/chat'
 import { fileApi } from '@/api/files'
+import { fmtMessageTime } from '@/utils/time'
 import type { MessageVo } from '@/types'
 
 const props = defineProps<{
@@ -21,6 +22,9 @@ const fav = useFavoritesStore()
 const chat = useChatStore()
 
 const isUser = computed(() => props.message.role === 'user')
+
+/** 消息时间:DB 存北京时间,LocalDateTime 序列化为无时区 ISO 字符串;按浏览器本地(+8)解析即正确 */
+const messageTime = computed(() => fmtMessageTime(props.message.createdAt))
 
 const starable = computed(() => !props.streaming && props.sessionId != null && !!props.message.id && props.message.id > 0)
 
@@ -145,13 +149,22 @@ async function submitEdit() {
     <div class="avatar">{{ isUser ? '我' : 'AI' }}</div>
     <div class="bubble">
       <div class="bubble-tools">
-        <button v-if="starable" class="copy-btn star-btn" :class="{ on: isStarred }" :title="isStarred ? '取消收藏' : '收藏该消息'" @click="toggleStar">{{ isStarred ? '★' : '☆' }}</button>
-        <button v-if="editable" class="copy-btn edit-btn" title="编辑并重新发送" @click="startEdit">✏️</button>
-        <button class="copy-btn" title="复制内容" @click="copyContent">📋</button>
-        <button v-if="!isUser" class="copy-btn export-btn" title="导出为 Markdown 文件" @click="exportAsMarkdown">⬇️</button>
+        <button v-if="starable" class="copy-btn star-btn" :class="{ on: isStarred }" :title="isStarred ? '取消收藏' : '收藏该消息'" @click="toggleStar">
+          <svg width="14" height="14" viewBox="0 0 24 24" :fill="isStarred ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        </button>
+        <button v-if="editable" class="copy-btn edit-btn" title="编辑并重新发送" @click="startEdit">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
+        <button class="copy-btn" title="复制内容" @click="copyContent">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>
+        <button v-if="!isUser" class="copy-btn export-btn" title="导出为 Markdown 文件" @click="exportAsMarkdown">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </button>
       </div>
       <div v-if="message._pending" class="status">发送中…</div>
       <div v-else-if="message.status === 'error'" class="status err">{{ message.error || '发送失败' }}</div>
+      <span v-if="messageTime" class="msg-time">{{ messageTime }}</span>
       <template v-if="editing">
         <textarea
           ref="editInputRef"
@@ -186,43 +199,51 @@ async function submitEdit() {
 </template>
 
 <style scoped>
-.msg { display: flex; gap: 10px; margin-bottom: 16px; }
+.msg { display: flex; gap: 12px; margin-bottom: 20px; }
 .msg.user { flex-direction: row-reverse; }
 .avatar {
-  width: 30px; height: 30px; border-radius: 10px; flex-shrink: 0;
+  width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  font-size: 12px; font-weight: 600; background: var(--surface);
+  font-size: 11px; font-weight: 600; background: var(--surface);
   color: var(--text-3);
   border: 1px solid var(--border-soft);
 }
 .msg.user .avatar {
-  background: linear-gradient(135deg, var(--accent), #7d6bfd);
+  background: var(--accent);
   color: #fff; border: none;
-  box-shadow: 0 2px 8px var(--accent-soft);
 }
 .msg.assistant .avatar {
-  background: linear-gradient(135deg, #2b3445, #232832);
+  background: var(--surface-hover);
+  color: var(--text-3);
 }
 .bubble {
   position: relative;
-  max-width: 75%; padding: 12px 16px; border-radius: var(--radius);
+  max-width: 70%; padding: 10px 14px; border-radius: var(--radius);
   line-height: 1.6; word-break: break-word;
-  background: var(--surface);
-  border: 1px solid var(--border-soft);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  transition: box-shadow .2s ease, border-color .2s ease;
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 .bubble:hover {
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14);
-  border-color: var(--border);
+  box-shadow: none;
 }
-.bubble-tools { position: absolute; top: 4px; right: 6px; opacity: 0; transition: opacity .15s; }
+.bubble-tools {
+  position: absolute; top: 4px; right: 6px; opacity: 0; transition: opacity .15s;
+  z-index: 10; display: flex; gap: 2px; background: transparent;
+}
 .bubble:hover .bubble-tools { opacity: 1; }
-.copy-btn {
-  background: transparent; border: none; cursor: pointer; font-size: 13px;
-  padding: 2px 4px; border-radius: 4px; line-height: 1;
+.bubble-tools .copy-btn { pointer-events: auto; }
+/* 消息时间:气泡内顶部左侧,弱化,与右上悬浮工具避免遮挡 */
+.msg-time {
+  display: block; font-size: 11px; color: var(--text-3); opacity: .7;
+  margin-bottom: 4px;
 }
-.copy-btn:hover { background: var(--surface-hover); }
+.copy-btn {
+  background: transparent; border: none; cursor: pointer;
+  padding: 4px; border-radius: 4px; line-height: 1;
+  color: var(--text-3); display: inline-flex; align-items: center; justify-content: center;
+}
+.copy-btn:hover { background: var(--surface-hover); color: var(--text-2); }
 .star-btn.on { color: #f0b429; }
 .edit-box {
   width: 100%; box-sizing: border-box;
@@ -235,21 +256,25 @@ async function submitEdit() {
 .edit-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 6px; }
 .edit-hint { font-size: 11px; color: var(--text-3); margin-right: auto; }
 .msg.user .bubble {
-  background: linear-gradient(135deg, var(--accent-soft), rgba(107, 138, 253, 0.06));
-  border-color: rgba(107, 138, 253, 0.25);
+  background: var(--user-bubble-bg);
+  border-radius: 12px 12px 2px 12px;
+}
+.msg.assistant .bubble {
+  background: var(--ai-bubble-bg);
+  border-radius: 12px 12px 12px 2px;
 }
 .content :deep(p) { margin: 6px 0; }
 .content :deep(a.preview-link) {
   display: inline-block; margin: 2px 0;
-  padding: 5px 12px; border-radius: 10px;
-  background: var(--accent-soft); color: var(--accent-text);
+  padding: 5px 12px; border-radius: 6px;
+  background: var(--accent-soft); color: var(--accent);
   border: 1px solid var(--border); text-decoration: none; font-size: 13px;
 }
 .content :deep(a.preview-link:hover) { background: var(--accent); color: #fff; }
-.content :deep(pre.hljs) { background: #16181d; border-radius: var(--radius-sm); padding: 10px; overflow-x: auto; }
+.content :deep(pre.hljs) { background: #1e1e1e; border-radius: var(--radius-sm); padding: 12px; overflow-x: auto; }
 .content :deep(code) { font-family: ui-monospace, monospace; font-size: 13px; }
 .content :deep(pre code) { background: none; }
-.content :deep(code:not(pre code)) { background: #16181d; padding: 2px 5px; border-radius: 4px; }
+.content :deep(code:not(pre code)) { background: var(--surface-hover); padding: 2px 5px; border-radius: 4px; }
 .status { font-size: 12px; color: var(--text-3); margin-bottom: 4px; }
 .status.err { color: var(--err); }
 .cursor { animation: blink 1s steps(2) infinite; color: var(--accent); }
@@ -258,12 +283,12 @@ async function submitEdit() {
 .att-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .att-link {
   display: inline-flex; align-items: center; gap: 3px;
-  font-size: 12px; padding: 3px 9px; border-radius: 10px;
-  background: rgba(0, 0, 0, 0.2); color: var(--accent-text);
-  border: 1px solid var(--border); cursor: pointer;
+  font-size: 12px; padding: 3px 9px; border-radius: 6px;
+  background: var(--surface-hover); color: var(--accent);
+  border: 1px solid var(--border-soft); cursor: pointer;
   text-decoration: none; max-width: 220px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
-.att-link:hover { background: rgba(0, 0, 0, 0.35); }
+.att-link:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
 .att-link.busy { opacity: .55; pointer-events: none; }
 </style>

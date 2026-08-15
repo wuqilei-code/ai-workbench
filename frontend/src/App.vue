@@ -10,17 +10,18 @@ const isDark = computed(() => theme.mode === 'dark')
 /** 暗色主题覆盖:柔和现代暗色(低饱和靛蓝主色、大圆角、细腻边框) */
 const darkOverrides: GlobalThemeOverrides = {
   common: {
-    primaryColor: '#6b8afd',
-    primaryColorHover: '#7d9bff',
-    primaryColorPressed: '#5a7aee',
-    primaryColorSuppl: '#6b8afd',
-    infoColor: '#6b8afd',
-    successColor: '#58c49b',
-    warningColor: '#e8b26b',
-    errorColor: '#e47a86',
-    borderRadius: '10px',
-    borderRadiusSmall: '8px',
+    primaryColor: '#8B5CF6',
+    primaryColorHover: '#A78BFA',
+    primaryColorPressed: '#7C3AED',
+    primaryColorSuppl: '#8B5CF6',
+    infoColor: '#8B5CF6',
+    successColor: '#10B981',
+    warningColor: '#F59E0B',
+    errorColor: '#EF4444',
+    borderRadius: '8px',
+    borderRadiusSmall: '6px',
     fontSize: '14px',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
     bodyColor: '#14161a',
     cardColor: '#1d2026',
     modalColor: '#1d2026',
@@ -47,37 +48,38 @@ const darkOverrides: GlobalThemeOverrides = {
 /** 浅色主题覆盖:同色系,亮背景、深色文字 */
 const lightOverrides: GlobalThemeOverrides = {
   common: {
-    primaryColor: '#5a6fd8',
-    primaryColorHover: '#6f85e8',
-    primaryColorPressed: '#4a5fc2',
-    primaryColorSuppl: '#5a6fd8',
-    infoColor: '#5a6fd8',
-    successColor: '#2e9e6b',
-    warningColor: '#d99a3d',
-    errorColor: '#d25563',
-    borderRadius: '10px',
-    borderRadiusSmall: '8px',
+    primaryColor: '#8B5CF6',
+    primaryColorHover: '#7C3AED',
+    primaryColorPressed: '#6D28D9',
+    primaryColorSuppl: '#8B5CF6',
+    infoColor: '#8B5CF6',
+    successColor: '#10B981',
+    warningColor: '#F59E0B',
+    errorColor: '#EF4444',
+    borderRadius: '8px',
+    borderRadiusSmall: '6px',
     fontSize: '14px',
-    bodyColor: '#f5f6fa',
-    cardColor: '#ffffff',
-    modalColor: '#ffffff',
-    popoverColor: '#ffffff',
-    dividerColor: 'rgba(20,22,26,0.08)',
-    borderColor: 'rgba(20,22,26,0.12)',
-    hoverColor: 'rgba(20,22,26,0.05)',
-    textColorBase: '#1a1d24',
-    textColor1: '#1a1d24',
-    textColor2: '#434a57',
-    textColor3: '#7a818d',
-    textColorDisabled: '#aab0ba',
-    inputColor: '#ffffff',
-    inputColorDisabled: '#eef0f4',
-    actionColor: '#f0f2f7',
-    tableColor: '#ffffff',
-    tableColorHover: '#f4f6fa',
-    tableColorStriped: '#f8f9fc',
-    iconColor: '#6a7180',
-    iconColorHover: '#3a4150',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+    bodyColor: '#FFFFFF',
+    cardColor: '#FFFFFF',
+    modalColor: '#FFFFFF',
+    popoverColor: '#FFFFFF',
+    dividerColor: 'rgba(0,0,0,0.06)',
+    borderColor: 'rgba(0,0,0,0.08)',
+    hoverColor: 'rgba(0,0,0,0.03)',
+    textColorBase: '#1a1a1a',
+    textColor1: '#1a1a1a',
+    textColor2: '#666666',
+    textColor3: '#999999',
+    textColorDisabled: '#cccccc',
+    inputColor: '#FFFFFF',
+    inputColorDisabled: '#f5f5f5',
+    actionColor: '#f5f5f5',
+    tableColor: '#FFFFFF',
+    tableColorHover: '#f5f5f5',
+    tableColorStriped: '#fafafa',
+    iconColor: '#666666',
+    iconColorHover: '#1a1a1a',
   },
 }
 </script>
@@ -115,57 +117,65 @@ const lightOverrides: GlobalThemeOverrides = {
   --text-2: #aeb3bb;
   --text-3: #7c828c;
   --text-4: #5a6478;
-  --accent: #6b8afd;
-  --accent-soft: rgba(107, 138, 253, 0.12);
-  --accent-text: #a9bcff;
+  --accent: #8B5CF6;
+  --accent-soft: rgba(139, 92, 246, 0.15);
+  --accent-text: #A78BFA;
   --ok: #58c49b;
   --warn: #e8b26b;
   --err: #e47a86;
-  --radius: 12px;
-  --radius-sm: 8px;
+  --radius: 8px;
+  --radius-sm: 6px;
   --shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
   /* 氛围光晕(背景装饰) */
-  --glow-1: rgba(107, 138, 253, 0.10);
-  --glow-2: rgba(124, 107, 253, 0.06);
+  --glow-1: rgba(139, 92, 246, 0.10);
+  --glow-2: rgba(139, 92, 246, 0.06);
+  --sidebar-bg: #1d2026;
+  --chat-bg: #14161a;
+  --input-bg: #20242b;
+  --input-border: rgba(255, 255, 255, 0.12);
+  --user-bubble-bg: #2b3445;
+  --ai-bubble-bg: transparent;
 }
 
 /* 浅色 */
 :root[data-theme='light'] {
-  --bg: #f5f6fa;
-  --bg-elev: #ffffff;
-  --surface: #ffffff;
-  --surface-hover: #f0f2f7;
-  --card-bg: #e8ecf5;
-  --border: rgba(20, 22, 26, 0.12);
-  --border-soft: rgba(20, 22, 26, 0.08);
-  --text: #1a1d24;
-  --text-2: #434a57;
-  --text-3: #7a818d;
-  --text-4: #aab0ba;
-  --accent: #5a6fd8;
-  --accent-soft: rgba(90, 111, 216, 0.1);
-  --accent-text: #4a5fc2;
-  --ok: #2e9e6b;
-  --warn: #d99a3d;
-  --err: #d25563;
-  --radius: 12px;
-  --radius-sm: 8px;
-  --shadow: 0 6px 24px rgba(30, 40, 90, 0.12);
-  --glow-1: rgba(90, 111, 216, 0.07);
-  --glow-2: rgba(124, 107, 253, 0.05);
+  --bg: #FFFFFF;
+  --bg-elev: #FFFFFF;
+  --surface: #FFFFFF;
+  --surface-hover: #f5f5f5;
+  --card-bg: #f5f5f5;
+  --border: rgba(0, 0, 0, 0.08);
+  --border-soft: rgba(0, 0, 0, 0.06);
+  --text: #1a1a1a;
+  --text-2: #666666;
+  --text-3: #999999;
+  --text-4: #cccccc;
+  --accent: #8B5CF6;
+  --accent-soft: rgba(139, 92, 246, 0.08);
+  --accent-text: #7C3AED;
+  --ok: #10B981;
+  --warn: #F59E0B;
+  --err: #EF4444;
+  --radius: 8px;
+  --radius-sm: 6px;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --glow-1: rgba(139, 92, 246, 0.04);
+  --glow-2: rgba(139, 92, 246, 0.02);
+  --sidebar-bg: #f7f8fa;
+  --chat-bg: #FFFFFF;
+  --input-bg: #FFFFFF;
+  --input-border: rgba(0, 0, 0, 0.12);
+  --user-bubble-bg: #f0f0f0;
+  --ai-bubble-bg: transparent;
 }
 
-/* 全局背景氛围:在纯平底色上加极淡的径向光晕,避免界面过于单调 */
+/* 全局背景氛围:纯色背景,干净简洁 */
 html, body {
   height: 100%;
 }
 body {
   margin: 0;
-  background:
-    radial-gradient(1100px 500px at 15% -10%, var(--glow-1), transparent 60%),
-    radial-gradient(900px 500px at 100% 110%, var(--glow-2), transparent 60%),
-    var(--bg);
-  background-attachment: fixed;
+  background: var(--bg);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }

@@ -9,27 +9,30 @@ defineEmits<{
   (e: 'downloadAll'): void
 }>()
 
-/** 按扩展名给图标的简易映射(覆盖常见文档/数据/图片/压缩格式) */
-const ICONS: Record<string, string> = {
-  pdf: '📄', doc: '📄', docx: '📄', txt: '📄', md: '📄',
-  ppt: '📊', pptx: '📊',
-  xls: '📈', xlsx: '📈', csv: '📈',
-  png: '🖼️', jpg: '🖼️', jpeg: '🖼️', gif: '🖼️', svg: '🖼️', webp: '🖼️',
-  zip: '🗜️', gz: '🗜️', tar: '🗜️', '7z': '🗜️', rar: '🗜️',
-  json: '🗂️', xml: '🗂️', html: '🗂️',
+/** 按扩展名给文件图标配色(与复制/刷新同款线框图标,用颜色区分类型) */
+const FILE_COLORS: Record<string, string> = {
+  pdf: '#E5484D', doc: '#3B82F6', docx: '#3B82F6', txt: '#6B7280', md: '#8B5CF6',
+  ppt: '#F59E0B', pptx: '#F59E0B',
+  xls: '#10B981', xlsx: '#10B981', csv: '#10B981',
+  png: '#EC4899', jpg: '#EC4899', jpeg: '#EC4899', gif: '#EC4899', svg: '#EC4899', webp: '#EC4899',
+  zip: '#F59E0B', gz: '#F59E0B', tar: '#F59E0B', '7z': '#F59E0B', rar: '#F59E0B',
+  json: '#8B5CF6', xml: '#8B5CF6', html: '#8B5CF6',
 }
-const DEFAULT_ICON = '📦'
+const DEFAULT_COLOR = '#6B7280'
 
-function icon(name: string): string {
+function fileColor(name: string): string {
   const ext = name.split('.').pop()?.toLowerCase() || ''
-  return ICONS[ext] || DEFAULT_ICON
+  return FILE_COLORS[ext] || DEFAULT_COLOR
 }
 </script>
 
 <template>
   <div v-if="items.length" class="deliverable-bar">
     <div class="deliverable-header">
-      <span>📦 结果文件</span>
+      <span class="deliverable-title">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+        结果文件
+      </span>
       <button
         v-if="items.length > 1"
         class="download-all-btn"
@@ -37,7 +40,8 @@ function icon(name: string): string {
         :title="busy ? '打包中…' : '打包下载本 turn 全部结果文件'"
         @click="$emit('downloadAll')"
       >
-        {{ busy ? '打包中…' : '⬇ 打包下载' }}
+        <svg v-if="!busy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        {{ busy ? '打包中…' : '打包下载' }}
       </button>
     </div>
     <div class="deliverable-list">
@@ -49,14 +53,18 @@ function icon(name: string): string {
         :title="`预览 ${item.path}`"
         @click="$emit('preview', item.path)"
       >
-        <span class="deliverable-icon">{{ icon(item.name) }}</span>
+        <span class="deliverable-icon">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" :stroke="fileColor(item.name)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        </span>
         <span class="deliverable-name">{{ item.name }}</span>
         <span
           class="deliverable-action"
           :class="{ spin: downloadingPath === item.path }"
           title="下载"
           @click.stop="$emit('download', item.path)"
-        >{{ downloadingPath === item.path ? '⏳' : '📥' }}</span>
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </span>
       </a>
     </div>
   </div>
@@ -81,8 +89,16 @@ function icon(name: string): string {
   font-size: 13px;
   font-weight: 600;
 }
+.deliverable-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 .download-all-btn {
-  padding: 2px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
   border: 1px solid rgba(88, 196, 155, 0.4);
   border-radius: 6px;
   background: transparent;
@@ -128,14 +144,21 @@ function icon(name: string): string {
   background: var(--surface-hover);
   border-color: rgba(88, 196, 155, 0.5);
 }
-.deliverable-icon { font-size: 16px; flex-shrink: 0; }
+.deliverable-icon { display: inline-flex; flex-shrink: 0; }
 .deliverable-name {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.deliverable-action { font-size: 14px; opacity: .8; flex-shrink: 0; }
+.deliverable-action {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-3);
+  flex-shrink: 0;
+  transition: color .12s;
+}
+.deliverable-item:hover .deliverable-action { color: var(--ok); }
 .item-busy .deliverable-action { opacity: .6; }
 .deliverable-item.item-busy .deliverable-action.spin { animation: dl-pulse 1s ease-in-out infinite; }
 @keyframes dl-pulse { 0%,100% { opacity: .5; } 50% { opacity: 1; } }

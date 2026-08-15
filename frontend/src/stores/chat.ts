@@ -50,6 +50,14 @@ export const useChatStore = defineStore('chat', () => {
   const agents = ref<AgentItem[]>([])
   const currentSessionId = ref<number | null>(null)
   const messages = ref<MessageVo[]>([])
+  /** 消息分页:单页条数(进会话初载与每次向上翻页加载的条数) */
+  const MESSAGE_PAGE = 60
+  /** 是否还有更早的历史未加载(滚动到顶时触发 loadOlderMessages) */
+  const hasOlder = ref(false)
+  /** 正在加载更早分页(防止重复触发) */
+  const loadingOlder = ref(false)
+  /** 最近一次向上翻页加载到的消息 id 上限(= 当前 messages 最小 id);增量追平用 */
+  const olderTopId = ref<number>(0)
   /** 最近一次 AI 变更总结(role=summary 的消息与 SSE 事件聚合) */
   const summaries = ref<ChangeSummary[]>([])
   /** 会话最近一次自动压缩时间(触发后前端展示「已压缩」提示) */
@@ -72,22 +80,23 @@ export const useChatStore = defineStore('chat', () => {
   function markCompacted() {
     compactedAt.value = Date.now()
     if (!currentSessionId.value) return
-    chatApi.listMessages(currentSessionId.value)
+    // 只刷新最新分页(与列表一致);保留已向上翻页加载的更早历史与本地更新消息
+    chatApi.listMessages(currentSessionId.value, { limit: MESSAGE_PAGE })
       .then((fresh) => {
-        // 合并而非直接覆盖:刷新是异步的,期间用户可能已发新消息(乐观气泡/AI 流式回复),
-        // 直接赋值会把它们清掉(表现为"切换后新对话消失")。保留本地比 fresh 更新的消息:
-        //  - 乐观气泡(_pending)与本地临时 id(id<0)
-        //  - fresh 中不存在、但本地 id 又比 fresh 最大 id 更大的消息(刷新期间新产生、fresh 未及返回)
-        //    按 id 去重,避免本地与 fresh 重叠(如 role=compaction 记录无 opencodeMessageId 时的重复)。
-        const freshMaxId = fresh.length ? Math.max(...fresh.map((m) => m.id ?? 0)) : 0
+        const freshMinId = fresh.length ? Math.min(...fresh.map((m) => m.id ?? 0)) : 0
         const freshIds = new Set(fresh.map((m) => m.opencodeMessageId).filter(Boolean))
         const freshLocalIds = new Set(fresh.map((m) => m.id))
+        // 本地已加载但不在最新分页里的消息:更早历史(localOlder)+ 更新的本地态(localNewer)
+        const localOlder = messages.value.filter(
+          (m) => (m.id != null && m.id > 0 && m.id < freshMinId) && !freshLocalIds.has(m.id),
+        )
         const localNewer = messages.value.filter(
           (m) =>
             (m._pending || (m.id != null && m.id < 0) || !m.opencodeMessageId || !freshIds.has(m.opencodeMessageId)) &&
             !freshLocalIds.has(m.id),
         )
-        messages.value = [...fresh, ...localNewer]
+        messages.value = [...localOlder, ...fresh, ...localNewer]
+        olderTopId.value = localOlder.length ? Math.min(...localOlder.map((m) => m.id ?? 0)) : freshMinId
         hydrateSummaries(); hydratePendingState()
         compactCutoffId.value = fresh.length ? fresh[fresh.length - 1].id : 0
       })
@@ -137,6 +146,15 @@ export const useChatStore = defineStore('chat', () => {
   const reconnecting = ref(false)
   /** 登录已过期(SSE 返回 401/403):停止重连,提示用户重新登录 */
   const authExpired = ref(false)
+  /** 断线期间正在生成:本轮被连接断开中断(用于兜底中止 + 重连恢复判定) */
+  const interruptedByDisconnect = ref(false)
+  /** 断线兜底已触发:本轮因连接断开被中止(UI 展示兜底横幅,可手动关闭) */
+  const disconnectAborted = ref(false)
+  /** 断线兜底定时器:断线超时未恢复 → 中止本轮并展示兜底提示 */
+  let _disconnectAbortTimer: ReturnType<typeof setTimeout> | null = null
+  /** 断线瞬间的流式现场快照(兜底中止时定稿/标记用) */
+  let _interruptedMsgId: string | null = null
+  let _interruptedText = ''
   /** 会话切换/加载进行中(避免切换时 UI 闪现旧会话) */
   const switching = ref(false)
   /** 累计断线重连次数;>0 时重连成功需做一次消息对账恢复(补回断线期间丢失的事件) */
@@ -320,21 +338,33 @@ export const useChatStore = defineStore('chat', () => {
     clearAgentStartingFallback()
     agentStarting.value = false
     authExpired.value = false
+    interruptedByDisconnect.value = false
+    disconnectAborted.value = false
+    if (_disconnectAbortTimer) { clearTimeout(_disconnectAbortTimer); _disconnectAbortTimer = null }
+    _interruptedMsgId = null
+    _interruptedText = ''
     switching.value = true
     manualCollapseOverride.value = {}
     compactCutoffId.value = 0
     compacting.value = false
     if (_compactingTimer) { clearTimeout(_compactingTimer); _compactingTimer = null }
     try {
-      const list = await chatApi.listMessages(id)
+      // 初载只取最新一页(分页):滚动到顶再向上加载更早;返回条数满页说明可能还有更早
+      const list = await chatApi.listMessages(id, { limit: MESSAGE_PAGE })
       // 若期间又切换了会话,丢弃本次结果,避免旧数据覆盖新会话
       if (seq !== _loadSeq) return
       messages.value = list
+      const minId = list.length ? Math.min(...list.map((m) => m.id ?? 0)) : 0
+      olderTopId.value = minId
+      hasOlder.value = list.length >= MESSAGE_PAGE && minId > 0
+      loadingOlder.value = false
       hydrateSummaries()
       hydratePendingState()
     } catch (e) {
       if (seq !== _loadSeq) return
       messages.value = []
+      hasOlder.value = false
+      loadingOlder.value = false
     } finally {
       if (seq === _loadSeq) switching.value = false
     }
@@ -342,6 +372,36 @@ export const useChatStore = defineStore('chat', () => {
     startWatchdog()
     // 预热 opencode 进程:提前拉起,避免首条消息冷启动阻塞数秒(后端幂等 + 15min 空闲回收)
     chatApi.warmup(id).catch((e) => console.debug('[chat] warmup skipped', e))
+  }
+
+  /**
+   * 向上翻页:加载早于当前已加载最早消息的一页(beforeId 游标),前插到 messages 头部。
+   * 滚动到虚拟列表顶部时由 ChatView 触发;返回空说明已到最早,置 hasOlder=false。
+   */
+  async function loadOlderMessages() {
+    if (!currentSessionId.value || loadingOlder.value || !hasOlder.value) return
+    loadingOlder.value = true
+    try {
+      const list = await chatApi.listMessages(currentSessionId.value, {
+        limit: MESSAGE_PAGE,
+        beforeId: olderTopId.value || undefined,
+      })
+      if (list.length === 0) {
+        hasOlder.value = false
+        return
+      }
+      const ids = new Set(messages.value.map((m) => m.opencodeMessageId).filter(Boolean))
+      const fresh = list.filter((m) => !m.opencodeMessageId || !ids.has(m.opencodeMessageId))
+      messages.value = [...fresh, ...messages.value]
+      olderTopId.value = list[0].id ?? olderTopId.value
+      hasOlder.value = list.length >= MESSAGE_PAGE
+      hydrateSummaries()
+      hydratePendingState()
+    } catch (e) {
+      console.warn('[chat] load older messages failed', e)
+    } finally {
+      loadingOlder.value = false
+    }
   }
 
   async function deleteSession(id: number) {
@@ -430,7 +490,7 @@ export const useChatStore = defineStore('chat', () => {
   /** 总结指定会话:拉取消息→拼摘要提示词→新开一个会话并把总结请求发过去。
    *  结果展示在新会话里,不污染原会话。 */
   async function summarizeSession(id: number, title: string): Promise<SessionVo> {
-    const msgs = await chatApi.listMessages(id, 500)
+    const msgs = await chatApi.listMessages(id, { limit: 500 })
     const lines: string[] = []
     for (const m of msgs) {
       if (m.role !== 'user' && m.role !== 'assistant') continue
@@ -465,13 +525,33 @@ export const useChatStore = defineStore('chat', () => {
   async function reconcileAfterReconnect() {
     if (!currentSessionId.value) return
     try {
-      const fresh = (await chatApi.listMessages(currentSessionId.value)) as MessageVo[]
-      messages.value = fresh
+      // 只对账最新分页,保留已向上翻页加载的更早历史(避免覆盖丢失)
+      const fresh = (await chatApi.listMessages(currentSessionId.value, { limit: MESSAGE_PAGE })) as MessageVo[]
+      const freshMinId = fresh.length ? Math.min(...fresh.map((m) => m.id ?? 0)) : 0
+      const freshIds = new Set(fresh.map((m) => m.opencodeMessageId).filter(Boolean))
+      const freshLocalIds = new Set(fresh.map((m) => m.id))
+      const localOlder = messages.value.filter(
+        (m) => (m.id != null && m.id > 0 && m.id < freshMinId) && !freshLocalIds.has(m.id),
+      )
+      const localNewer = messages.value.filter(
+        (m) =>
+          (m._pending || (m.id != null && m.id < 0) || !m.opencodeMessageId || !freshIds.has(m.opencodeMessageId)) &&
+          !freshLocalIds.has(m.id),
+      )
+      messages.value = [...localOlder, ...fresh, ...localNewer]
+      olderTopId.value = localOlder.length ? Math.min(...localOlder.map((m) => m.id ?? 0)) : freshMinId
       hydrateSummaries()
       hydratePendingState()
       const anyStreaming = fresh.some((m) => m.status === 'streaming')
       if (isStreaming.value && !anyStreaming && !hasPendingInteraction.value) {
-        finishStreaming()
+        // 断线期间本轮已结束(或事件丢失):若本轮由断线中断,中止并展示兜底提示;
+        // 否则正常收尾(把已落定的流式文本定稿)。
+        if (interruptedByDisconnect.value) abortStreamOnDisconnect()
+        else finishStreaming()
+      } else if (interruptedByDisconnect.value) {
+        // 断线兜底取消:连接已恢复且生成仍在继续,事件流重建,正常续播
+        interruptedByDisconnect.value = false
+        if (_disconnectAbortTimer) { clearTimeout(_disconnectAbortTimer); _disconnectAbortTimer = null }
       }
     } catch (e) {
       console.warn('[chat] reconcile after reconnect failed', e)
@@ -503,11 +583,24 @@ export const useChatStore = defineStore('chat', () => {
         connected.value = false
         reconnecting.value = true
         reconnectCount.value++
+        // 流式中断线:记录现场 + 启动兜底定时器(30s 未恢复 → 中止本轮并展示兜底提示)。
+        // 只在首次断线时记录/定时,重连期间的后续 onError 不重置倒计时。
+        if (isStreaming.value && !interruptedByDisconnect.value) {
+          interruptedByDisconnect.value = true
+          _interruptedMsgId = streamingMessageId.value
+          _interruptedText = streamingText.value
+          _disconnectAbortTimer = setTimeout(() => {
+            _disconnectAbortTimer = null
+            abortStreamOnDisconnect()
+          }, 30_000)
+        }
       },
       onAuthError: () => {
         // token 失效:停止重连(Sse 层已终止 poll),停止心跳看门狗,提示登录过期
         authExpired.value = true
         reconnectCount.value = 0
+        interruptedByDisconnect.value = false
+        if (_disconnectAbortTimer) { clearTimeout(_disconnectAbortTimer); _disconnectAbortTimer = null }
         closeStream()
       },
     }
@@ -569,6 +662,12 @@ export const useChatStore = defineStore('chat', () => {
     touchStreamActivity()
     streamStartAt.value = Date.now()
     armAgentStartingFallback()
+    // 新一轮生成:重置断线兜底现场(旧中止流程不再影响新轮)
+    interruptedByDisconnect.value = false
+    disconnectAborted.value = false
+    if (_disconnectAbortTimer) { clearTimeout(_disconnectAbortTimer); _disconnectAbortTimer = null }
+    _interruptedMsgId = null
+    _interruptedText = ''
 
     // 首条用户消息:并行更新标题(不依赖 sendMessage 的 await,
     // 避免 sendMessage 异常/超时/lazy-rebind 阻断标题更新)
@@ -618,6 +717,12 @@ export const useChatStore = defineStore('chat', () => {
     touchStreamActivity()
     streamStartAt.value = Date.now()
     armAgentStartingFallback()
+    // 新一轮生成:重置断线兜底现场
+    interruptedByDisconnect.value = false
+    disconnectAborted.value = false
+    if (_disconnectAbortTimer) { clearTimeout(_disconnectAbortTimer); _disconnectAbortTimer = null }
+    _interruptedMsgId = null
+    _interruptedText = ''
     try {
       await chatApi.runCommand(currentSessionId.value, { command, arguments: args })
     } catch (e: any) {
@@ -1282,6 +1387,41 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  /**
+   * 断线兜底:连接断开且未在宽限期内恢复(或重连后发现本轮已结束)时,中止本轮生成并展示兜底提示。
+   *  <p>
+   *  背景:isStreaming=true 期间断线,SSE 层会无限重连,若一直连不上,UI 会永远卡在
+   *  "AI 正在处理中",没有任何兜底。此函数由 onError 记录的现场触发:
+   *  中止后端生成(事件已丢失,继续跑浪费资源)→ 已产生的部分文本先定稿保留 →
+   *  清理流式态 → 把当前 assistant 消息标记为错误并展示"连接已断开"兜底文案。
+   */
+  async function abortStreamOnDisconnect() {
+    if (_disconnectAbortTimer) { clearTimeout(_disconnectAbortTimer); _disconnectAbortTimer = null }
+    if (!interruptedByDisconnect.value) return
+    interruptedByDisconnect.value = false
+    disconnectAborted.value = true
+    try { if (currentSessionId.value) await chatApi.abort(currentSessionId.value) } catch (_) {}
+    // 已有部分输出:先定稿到消息,避免用户丢失已生成内容
+    if (_interruptedMsgId && _interruptedText) {
+      finalizeTextPart(_interruptedMsgId, _interruptedText, true)
+    }
+    markAssistantError(_interruptedMsgId, '连接已断开，本轮回答已中止。请检查网络后重新提问。')
+    isStreaming.value = false
+    streamStartAt.value = 0
+    streamingText.value = ''
+    streamingMessageId.value = null
+    _interruptedMsgId = null
+    _interruptedText = ''
+    clearPendingQuestion(undefined)
+    clearPendingPermission(undefined)
+    reasoningPartIds.clear()
+  }
+
+  /** 关闭断线兜底横幅 */
+  function dismissDisconnectAbort() {
+    disconnectAborted.value = false
+  }
+
   /** 当前会话是否存在未回复的 pending question/permission(AI 真的在等待用户输入)。
    *  <p>
    *  正常情况下 question.asked/permission.asked 会把 isStreaming 置 false,banner 不显示。
@@ -1369,6 +1509,8 @@ export const useChatStore = defineStore('chat', () => {
     streamingReasoningMsgId,
     hasPendingInteraction, connected, reconnecting, forceReconnect, agentStarting,
     authExpired, switching, changedFilePaths,
+    disconnectAborted, dismissDisconnectAbort,
+    hasOlder, loadingOlder, loadOlderMessages,
     searchResults, searching, searchSessions,
     availableModels, selectedProviderId, selectedModelId,
     pendingFill, fillInput, pendingAttachPath, attachFile,

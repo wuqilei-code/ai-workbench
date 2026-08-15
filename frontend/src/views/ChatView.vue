@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted, onBeforeUnmount, computed } from 'vue'
+import { ref, watch, nextTick, onMounted, onBeforeUnmount, computed, inject, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useFavoritesStore } from '@/stores/favorites'
@@ -13,8 +13,13 @@ import DocumentGenerator from '@/components/DocumentGenerator.vue'
 import ErrorDiagnose from '@/components/ErrorDiagnose.vue'
 import FavoritesPanel from '@/components/FavoritesPanel.vue'
 import SkillMarketplace from '@/components/SkillMarketplace.vue'
+import McpManager from '@/components/McpManager.vue'
 import FileTree from '@/components/FileTree.vue'
 import TaskPanel from '@/components/TaskPanel.vue'
+import AutomationManager from '@/components/AutomationManager.vue'
+import JobRunsPanel from '@/components/JobRunsPanel.vue'
+import NotificationCenter from '@/components/NotificationCenter.vue'
+import UserMenu from '@/components/UserMenu.vue'
 import ChangeSummaryCard from '@/components/ChangeSummaryCard.vue'
 import { chatApi } from '@/api/chat'
 import type { MessageVo, SkillInfo } from '@/types'
@@ -28,18 +33,50 @@ const fav = useFavoritesStore()
 const msg = useMessage()
 const virtualListRef = ref<VirtualListInst | null>(null)
 const showFiles = ref(true)
+/** 工作区右侧面板当前标签(文件/技能/任务/定时任务/收藏) */
+const workspaceTab = ref('files')
+
+/** 工作区标签(收起后顶部显示的小图标,点击展开并切换) */
+const workspaceTabs = [
+  { key: 'files', label: '文件', icon: 'M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z' },
+  { key: 'skills', label: '技能', icon: 'M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 2.001c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z' },
+  { key: 'tasks', label: '任务', icon: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z' },
+  { key: 'jobs', label: '定时任务', icon: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2' },
+  { key: 'favorites', label: '收藏', icon: 'M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 21 12 17.77 5.82 21 7 14.14 2 9.27l6.91-1.01z' },
+]
+function openWorkspaceTab(key: string) {
+  showFiles.value = true
+  workspaceTab.value = key
+}
 const chatInputRef = ref<InstanceType<typeof ChatInput> | null>(null)
 const templateLibShow = ref(false)
 const docGenShow = ref(false)
 const errorDiagnoseShow = ref(false)
 const marketplaceShow = ref(false)
+const mcpShow = ref(false)
 const skillTreeKey = ref(0)
+/** 自动化管理弹窗(点侧边栏「自动化」打开:任务列表 + 启停 + 新建) */
+const automationShow = ref(false)
 /** 消息定位轮询中(从任务/收藏跳转后等待消息加载) */
 const locating = ref(false)
 /** 安装技能后刷新技能目录树 */
 function onSkillInstalled() {
   skillTreeKey.value++
 }
+
+/** 侧边栏导航事件监听 */
+const sidebarEvents = inject<Ref<{openPluginMarket:boolean; openTemplateLib:boolean; openMyFiles:boolean; openAutomation:boolean; openFind:boolean; openMyMcp:boolean}>>('sidebarEvents')
+if (sidebarEvents) {
+  watch(() => sidebarEvents.value.openPluginMarket, (v) => { if (v) marketplaceShow.value = true })
+  watch(() => sidebarEvents.value.openTemplateLib, (v) => { if (v) templateLibShow.value = true })
+  watch(() => sidebarEvents.value.openMyFiles, (v) => { if (v) showFiles.value = true })
+  watch(() => sidebarEvents.value.openFind, (v) => { if (v) openFind() })
+  watch(() => sidebarEvents.value.openMyMcp, (v) => { if (v) mcpShow.value = true })
+  watch(() => sidebarEvents.value.openAutomation, (v) => { if (v) openAutomationModal() })}
+
+/** 侧边栏折叠状态(由 ChatLayout provide):顶部「展开侧边栏」按钮使用 */
+const sidebarCollapsed = inject<Ref<boolean>>('sidebarCollapsed', ref(false))
+const toggleSidebar = inject<() => void>('toggleSidebar', () => {})
 
 /** 空会话判断:会话已建但尚无任何消息(turn 为空)。 */
 const isNewSession = computed(() => chat.currentSessionId != null && chat.turns.length === 0)
@@ -121,6 +158,16 @@ function openFind() {
   findOpen.value = true
   findIndex.value = 0
   nextTick(() => findInputRef.value?.focus())
+}
+/** 打开「自动化」:弹窗展示任务列表(管理:新建/启停/执行)。 */
+function openAutomationModal() {
+  automationShow.value = true
+}
+
+/** 跳转到工作区「定时任务」tab(消息中心点击后查看执行记录/报告)。 */
+function openJobTab() {
+  showFiles.value = true
+  workspaceTab.value = 'jobs'
 }
 function closeFind() {
   findOpen.value = false
@@ -251,13 +298,6 @@ function scrollToBottom() {
     vl.scrollTo({ position: 'bottom' })
   })
 }
-watch(() => chat.messages.length, () => {
-  // 打开历史会话 / 压缩后刷新:等虚拟列表渲染后再滚到底(内容高度异步实测,需延迟多次)
-  scrollToBottom()
-  setTimeout(scrollToBottom, 150)
-  setTimeout(scrollToBottom, 400)
-})
-watch(() => chat.turns.length, scrollToBottom)
 
 /** 用户提交/拒绝权限或问题后(resumeStreaming 置 isStreaming=true),agent 会继续输出。
  *  此时把用户拉回底部,避免"确认后看不到后续输出"。
@@ -273,14 +313,39 @@ watch(() => chat.isStreaming, (now, prev) => {
 
 /** 用户是否停留在底部区域(阈值内视为贴底)。贴底时流式输出自动跟随;上翻阅读时不被拉回。 */
 const stickToBottom = ref(true)
+/** 正在前插更早分页:期间抑制自动滚底(messages.length 变化由 loadOlderMessages 前插引起) */
+const isBackfilling = ref(false)
 function handleVirtualScroll() {
   const el = virtualListRef.value?.getScrollContainer?.()
   if (!el) return
-  stickToBottom.value = el.scrollTop + el.clientHeight >= el.scrollHeight - 120
+  const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 120
+  stickToBottom.value = nearBottom
+  // 滚动到顶:加载更早历史(loadingOlder 防重入;hasOlder=false 表示已到最早)
+  if (el.scrollTop <= 60 && chat.hasOlder && !chat.loadingOlder) {
+    isBackfilling.value = true
+    // nextTick 后复位:store 的 loadingOlder 是同步复位的,而 messages/turns 的 watch
+    // 在组件下一帧调度,届时标志需仍为 true 才能抑制"前插后自动滚底"
+    chat.loadOlderMessages()
+      .catch(() => {})
+      .finally(() => nextTick(() => { isBackfilling.value = false }))
+  }
 }
 // 仅当贴底时才在流式时跟随底部,交给 vueuc 内置 ResizeObserver 跟随(避免与强制滚动竞争抖动)
 watch(() => chat.streamingText, () => {
   if (stickToBottom.value) scrollToBottom()
+})
+
+// 前插更早分页时(backfilling)不自动滚底:用户正停留在顶部阅读历史,不应被拉回底部
+watch(() => chat.messages.length, () => {
+  if (isBackfilling.value || chat.loadingOlder) return
+  // 打开历史会话 / 压缩后刷新:等虚拟列表渲染后再滚到底(内容高度异步实测,需延迟多次)
+  scrollToBottom()
+  setTimeout(scrollToBottom, 150)
+  setTimeout(scrollToBottom, 400)
+})
+watch(() => chat.turns.length, () => {
+  if (isBackfilling.value || chat.loadingOlder) return
+  scrollToBottom()
 })
 
 /** 当前流式目标消息是否已落入某个 turn(step/finalAnswer) */
@@ -321,11 +386,20 @@ type VirtualListItem =
   | { key: string; kind: 'streaming'; text: string }
   | { key: string; kind: 'thinking' }
   | { key: string; kind: 'connecting' }
+  | { key: string; kind: 'older-loader' }
+  | { key: string; kind: 'top-space' }
   | { key: string; kind: 'compact-divider' }
   | { key: string; kind: 'compact-progress' }
 
 const virtualItems = computed<VirtualListItem[]>(() => {
   const items: VirtualListItem[] = []
+  // 历史分页:还有更早消息或正在加载时,顶部固定显示提示条(滚动到顶触发加载)
+  if (chat.hasOlder || chat.loadingOlder) {
+    items.push({ key: '__older__', kind: 'older-loader' })
+  } else if (chat.messages.length > 0) {
+    // 已到最早:插入空占位,避免第一条消息紧贴对话框顶部
+    items.push({ key: '__top-space__', kind: 'top-space' })
+  }
   const msgs = chat.messages
   // 压缩点现在由后端落库为一条 role='compaction' 记录(见 ChatMessageService.summarize)。
   // 该记录有自增 id,天然位于消息流正确位置,前端直接按 id 归并渲染,
@@ -401,16 +475,37 @@ const itemSize = 120
   <div class="chat-view">
     <div class="chat-head">
       <div class="head-left">
+        <n-button v-if="sidebarCollapsed" size="small" quaternary title="展开侧边栏" @click="toggleSidebar()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/></svg>
+        </n-button>
         <span class="title">{{ chat.currentSession?.title || 'AI Workbench' }}</span>
         <n-tag :type="chat.connected ? 'success' : (chat.reconnecting ? 'warning' : 'default')" size="tiny" round>
           {{ chat.connected ? '已连接' : (chat.reconnecting ? '重连中…' : '未连接') }}
         </n-tag>
+        <n-button size="small" quaternary title="会话内查找 (Ctrl+F)" @click="openFind">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          查找
+        </n-button>
       </div>
       <div class="head-right">
-        <n-button size="small" quaternary title="会话内查找 (Ctrl+F)" @click="openFind">查找</n-button>
-        <n-button size="small" quaternary title="提示词模板库" @click="templateLibShow = true">模板库</n-button>
-        <n-button size="small" quaternary title="技能广场:浏览/发布/安装技能" @click="marketplaceShow = true">技能广场</n-button>
-        <n-button size="small" quaternary @click="showFiles = !showFiles">工作区</n-button>
+        <div v-if="!showFiles" class="ws-tab-icons">
+          <n-button
+            v-for="t in workspaceTabs"
+            :key="t.key"
+            size="small"
+            quaternary
+            :title="t.label"
+            @click="openWorkspaceTab(t.key)"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path :d="t.icon"/></svg>
+          </n-button>
+        </div>
+        <n-button size="small" quaternary :title="showFiles ? '收起工作区' : '展开工作区'" @click="showFiles = !showFiles">
+          <svg v-if="showFiles" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/><path d="m8 9 3 3-3 3"/></svg>
+          <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/><path d="m8 15 3-3-3-3"/></svg>
+        </n-button>
+        <NotificationCenter />
+        <UserMenu />
       </div>
     </div>
 
@@ -426,6 +521,12 @@ const itemSize = 120
       <n-button size="tiny" type="primary" @click="chat.forceReconnect">立即重连</n-button>
     </div>
 
+    <!-- 断线兜底横幅:连接断开超时未恢复,本轮已中止 -->
+    <div v-if="chat.disconnectAborted && !chat.isStreaming" class="disconnect-abort-bar">
+      <span>连接已断开，本轮回答已中止。请检查网络后重新提问。</span>
+      <n-button size="tiny" quaternary @click="chat.dismissDisconnectAbort">知道了</n-button>
+    </div>
+
     <!-- 会话内查找栏 -->
     <div v-if="findOpen" class="find-bar">
       <n-input
@@ -437,14 +538,22 @@ const itemSize = 120
         @update:value="() => { findIndex = 0 }"
         @keyup.enter="navigateFind(1)"
       >
-        <template #prefix>🔍</template>
+        <template #prefix>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </template>
         <template #suffix>
           <span class="find-count">{{ findMatches.length ? findIndex + 1 + ' / ' + findMatches.length : 0 + ' / 0' }}</span>
         </template>
       </n-input>
-      <n-button size="small" quaternary title="上一个 (Shift+Enter)" @click="navigateFind(-1)">▲</n-button>
-      <n-button size="small" quaternary title="下一个 (Enter)" @click="navigateFind(1)">▼</n-button>
-      <n-button size="small" quaternary title="关闭 (Esc)" @click="closeFind">✕</n-button>
+      <n-button size="small" quaternary title="上一个 (Shift+Enter)" @click="navigateFind(-1)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+      </n-button>
+      <n-button size="small" quaternary title="下一个 (Enter)" @click="navigateFind(1)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </n-button>
+      <n-button size="small" quaternary title="关闭 (Esc)" @click="closeFind">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </n-button>
     </div>
 
     <div class="chat-main">
@@ -492,6 +601,13 @@ const itemSize = 120
                 <div v-else-if="item.kind === 'thinking'" class="thinking">
                   <n-spin size="small" /> AI 思考中…
                 </div>
+                <!-- 历史分页:滚动到顶自动加载更早;加载中显示状态,已到最早则提示 -->
+                <div v-else-if="item.kind === 'older-loader'" class="older-loader">
+                  <span v-if="chat.loadingOlder" class="spinner"></span>
+                  <span>{{ chat.loadingOlder ? '正在加载更早消息…' : (chat.hasOlder ? '还有更早的历史消息,滚动到顶加载' : '已加载全部历史消息') }}</span>
+                </div>
+                <!-- 已到最早时的顶部占位:保持首条消息与对话框顶部的间距 -->
+                <div v-else-if="item.kind === 'top-space'" class="top-space"></div>
                 <!-- agent 冷启动连接中:空闲回收后发消息,先拉起容器再回复;有流式内容即消失 -->
                 <div v-else-if="item.kind === 'connecting'" class="connecting-dock">
                   <span class="connecting">正在连接智能体,请稍候…</span>
@@ -520,14 +636,8 @@ const itemSize = 120
       <!-- 工作区:常驻右侧面板,可向右收起 -->
       <div class="workspace-panel" :class="{ 'workspace-collapsed': !showFiles }">
         <div class="workspace-body" v-if="showFiles">
-          <div class="workspace-head">
-            <span class="workspace-title">工作区</span>
-            <n-button size="small" quaternary class="workspace-collapse-btn" title="收起工作区" @click="showFiles = false">
-              <span class="ws-arrow">»</span>
-            </n-button>
-          </div>
           <div class="workspace-tabs">
-            <n-tabs type="line" animated size="small">
+            <n-tabs v-model:value="workspaceTab" type="line" animated size="small">
               <n-tab-pane name="files" tab="文件">
                 <FileTree :changed-paths="Array.from(chat.changedFilePaths)" @ask-ai="onAskAIFile" />
               </n-tab-pane>
@@ -553,15 +663,14 @@ const itemSize = 120
                 <n-tab-pane name="tasks" tab="任务">
                   <TaskPanel @open-session="onOpenSession" />
                 </n-tab-pane>
+                <n-tab-pane name="jobs" tab="定时任务">
+                  <JobRunsPanel />
+                </n-tab-pane>
                 <n-tab-pane name="favorites" tab="收藏">
                   <FavoritesPanel @open-session="onOpenFavorite" />
                 </n-tab-pane>
             </n-tabs>
           </div>
-        </div>
-        <!-- 收起态:右侧竖条,点击展开 -->
-        <div v-else class="workspace-collapsed-tab" title="展开工作区" @click="showFiles = true">
-          <span class="ws-vertical-text">工作区</span>
         </div>
       </div>
     </div>
@@ -583,20 +692,28 @@ const itemSize = 120
     v-model:show="marketplaceShow"
     @installed="onSkillInstalled"
   />
+  <n-modal
+    v-model:show="mcpShow"
+    preset="card"
+    title="我的 MCP Server"
+    :style="{ width: '720px', maxWidth: '92vw' }"
+    :bordered="false"
+  >
+    <McpManager scope="user" />
+  </n-modal>
+  <AutomationManager v-model:show="automationShow" />
 </template>
 
 <style scoped>
-.chat-view { display: flex; flex-direction: column; height: 100vh; }
+.chat-view { display: flex; flex-direction: column; height: 100vh; background: var(--chat-bg); }
 .chat-head {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 18px; border-bottom: 1px solid var(--border-soft);
+  padding: 12px 20px; border-bottom: 1px solid var(--border-soft);
   background: var(--bg-elev);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
 }
 .head-left { display: flex; align-items: center; gap: 10px; }
-.head-left .title { font-weight: 600; color: var(--text); font-size: 14px; }
-.head-right { display: flex; align-items: center; gap: 8px; }
+.head-left .title { font-weight: 600; color: var(--text); font-size: 15px; }
+.head-right { display: flex; align-items: center; gap: 6px; }
 
 /* 左右两栏:左=对话区(自适应),右=工作区(固定宽,可收起) */
 .chat-main { flex: 1; display: flex; min-height: 0; }
@@ -605,6 +722,20 @@ const itemSize = 120
 .chat-virtual { height: 100%; }
 .thinking { display: flex; align-items: center; gap: 8px; color: var(--text-3); padding: 8px 0; }
 
+/* 历史分页顶部提示条:滚动到顶时自动加载更早消息 */
+.older-loader {
+  display: flex; align-items: center; justify-content: center;
+  gap: 8px; padding: 10px 0 4px;
+  color: var(--text-3); font-size: 12px;
+}
+.older-loader .spinner {
+  width: 14px; height: 14px; border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%; animation: spin 0.8s linear infinite;
+}
+/* 已到最早时的顶部占位:给第一条消息留出与顶部的间距 */
+.top-space { height: 16px; }
+
 /* agent 冷启动连接中占位:居中 + 呼吸点动画,与 thinking 区分 */
 .connecting-dock {
   display: flex; align-items: center; justify-content: center;
@@ -612,13 +743,16 @@ const itemSize = 120
 }
 .connecting-dock .connecting::before {
   content: ''; display: inline-block; width: 8px; height: 8px;
-  border-radius: 50%; background: var(--warn, #f0a020);
+  border-radius: 50%; background: var(--warn);
   margin-right: 8px; vertical-align: -1px;
   animation: connecting-pulse 1.2s ease-in-out infinite;
 }
 @keyframes connecting-pulse {
   0%, 100% { opacity: .35; }
   50% { opacity: 1; }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* 会话切换加载遮罩 */
@@ -629,45 +763,42 @@ const itemSize = 120
 
 /* 工作区面板 */
 .workspace-panel {
-  width: 440px; flex-shrink: 0;
+  width: 300px; flex-shrink: 0;
   display: flex; flex-direction: column;
   border-left: 1px solid var(--border-soft); background: var(--bg-elev);
   transition: width .18s ease;
 }
-.workspace-panel.workspace-collapsed { width: 24px; }
+.workspace-panel.workspace-collapsed { width: 0; border-left: none; }
 .workspace-body { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-.workspace-head {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 10px 10px 14px; border-bottom: 1px solid var(--border-soft); flex-shrink: 0;
-}
-.workspace-title { font-size: 14px; font-weight: 600; color: var(--text); }
-.workspace-collapse-btn { color: var(--text-3); }
-.workspace-collapse-btn:hover { color: var(--accent-text); }
-.ws-arrow { font-size: 14px; }
-.workspace-tabs { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 10px; }
+.workspace-tabs { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 8px 12px; }
+.workspace-tabs :deep(.n-tabs) { min-width: 0; }
+.workspace-tabs :deep(.n-tabs-pane-wrapper), .workspace-tabs :deep(.n-tab-pane) { min-width: 0; width: 100%; box-sizing: border-box; overflow-x: hidden; }
 
-/* 收起态竖条:右侧显示「工作区」竖排文字 */
-.workspace-collapsed-tab {
-  flex: 1; display: flex; align-items: center; justify-content: center;
-  cursor: pointer; user-select: none; color: var(--text-3);
-  border-left: 1px solid var(--border-soft); background: var(--bg-elev);
-  transition: color .15s, background .15s;
+/* 顶部收起态:工作区小图标组 */
+.ws-tab-icons {
+  display: flex; align-items: center; gap: 2px;
+  padding-right: 4px; border-right: 1px solid var(--border-soft);
 }
-.workspace-collapsed-tab:hover { color: var(--accent-text); background: var(--surface-hover); }
-.ws-vertical-text { writing-mode: vertical-rl; font-size: 13px; letter-spacing: 3px; }
 
 /* 登录过期横幅 */
 .auth-expired-bar {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 8px 18px; font-size: 13px; color: var(--err);
-  background: rgba(228, 122, 134, 0.1); border-bottom: 1px solid rgba(228, 122, 134, 0.25);
+  background: rgba(239, 68, 68, 0.08); border-bottom: 1px solid rgba(239, 68, 68, 0.2);
 }
 
 /* 断线横幅 */
 .reconnect-bar {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 8px 18px; font-size: 13px; color: var(--warn);
-  background: rgba(232, 178, 107, 0.08); border-bottom: 1px solid rgba(232, 178, 107, 0.2);
+  background: rgba(245, 158, 11, 0.08); border-bottom: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+/* 断线兜底横幅:本轮已中止 */
+.disconnect-abort-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 18px; font-size: 13px; color: var(--err);
+  background: rgba(239, 68, 68, 0.08); border-bottom: 1px solid rgba(239, 68, 68, 0.2);
 }
 
 /* 压缩分割线:早期内容已总结,不展示在对话里 */
@@ -683,7 +814,7 @@ const itemSize = 120
   white-space: nowrap;
 }
 .compact-divider .spinner {
-  width: 11px; height: 11px; border: 2px solid rgba(250, 173, 20, 0.3);
+  width: 11px; height: 11px; border: 2px solid rgba(245, 158, 11, 0.3);
   border-top-color: var(--warn); border-radius: 50%;
   animation: compact-spin 0.8s linear infinite;
 }
@@ -695,7 +826,7 @@ const itemSize = 120
   padding: 16px 0; font-size: 13px; color: var(--warn);
 }
 .compact-progress .spinner {
-  width: 12px; height: 12px; border: 2px solid rgba(250, 173, 20, 0.3);
+  width: 12px; height: 12px; border: 2px solid rgba(245, 158, 11, 0.3);
   border-top-color: var(--warn); border-radius: 50%;
   animation: compact-spin 0.8s linear infinite;
 }
@@ -709,14 +840,14 @@ const itemSize = 120
 .find-count { color: var(--text-3); font-size: 12px; padding: 0 4px; }
 
 /* 查找跳转目标:命中轮次短暂高亮 */
-.flow-item { border-radius: 10px; }
+.flow-item { border-radius: 8px; }
 .flow-item.find-flash {
   outline: 2px solid var(--warn);
   outline-offset: 4px;
   animation: find-flash 1.6s ease-out;
 }
 @keyframes find-flash {
-  0% { background: rgba(232, 178, 107, 0.18); }
+  0% { background: rgba(245, 158, 11, 0.15); }
   100% { background: transparent; }
 }
 
@@ -730,7 +861,7 @@ const itemSize = 120
   padding: 8px 10px; border-radius: var(--radius-sm);
   background: var(--surface); border: 1px solid var(--border-soft);
 }
-.builtin-name { font-size: 12px; font-weight: 600; color: var(--accent-text); }
+.builtin-name { font-size: 12px; font-weight: 600; color: var(--accent); }
 .builtin-desc {
   font-size: 12px; color: var(--text-2); line-height: 1.5;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;

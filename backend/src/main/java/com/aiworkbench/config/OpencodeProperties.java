@@ -62,6 +62,24 @@ public class OpencodeProperties {
     /** 未回答的权限/问题请求超过该时长(ms)自动拒绝(需 < 容器 idle 回收,让拒绝先于回收生效;0=禁用) */
     private long stuckPermissionTimeoutMs = 300_000;
 
+    // ---- 定时任务(JobScheduler / JobQueueDispatcher) ----
+    /** 同时运行的任务容器上限(容器资源有限,默认 1,超出排队) */
+    private int jobMaxConcurrent = 1;
+    /** 任务容器镜像(与 agent 容器同镜像) */
+    private String jobImage = "ai-workbench-agent";
+    /** 任务容器命名前缀(如 aiwb-job-<jobId>) */
+    private String jobNamePrefix = "aiwb-job-";
+    /** 任务容器 CPU 配额(核) */
+    private double jobCpus = 1.0;
+    /** 任务容器内存上限(MB) */
+    private int jobMemoryMb = 1024;
+    /** 单任务最大运行时长(分钟),超时强制停止容器的保护 */
+    private int jobTimeoutMinutes = 30;
+    /** 任务快照工作区所在:每用户工作区下 jobs/ 子目录(挂进任务容器的独立副本) */
+    private String jobSnapshotSubdir = "jobs";
+    /** 任务调度扫描间隔(ms)(供 cron 触发与队列调度复用,默认每 5s) */
+    private long jobSweepMs = 5_000;
+
     /** uid = uidBase + userId(确定性,免协调;与 UserProvisioningService 一致) */
     public int uidOf(Long userId) {
         return uidBase + userId.intValue();

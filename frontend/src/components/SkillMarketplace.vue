@@ -40,6 +40,17 @@ const filtered = computed(() => {
   })
 })
 
+/** 分页 */
+const page = ref(1)
+const pageSize = 9
+const pagedSkills = computed(() => {
+  const start = (page.value - 1) * pageSize
+  return filtered.value.slice(start, start + pageSize)
+})
+function resetPage() {
+  page.value = 1
+}
+
 async function load() {
   loading.value = true
   try {
@@ -336,8 +347,10 @@ onMounted(() => {
     @after-enter="onShow"
   >
     <div class="mp-head">
-      <n-input v-model:value="keyword" size="small" clearable placeholder="搜索技能名或描述…" style="max-width: 240px">
-        <template #prefix>🔍</template>
+      <n-input v-model:value="keyword" size="small" clearable placeholder="搜索技能名或描述…" style="max-width: 240px" @update:value="resetPage">
+        <template #prefix>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </template>
       </n-input>
       <span class="mp-note">技能 = SKILL.md(指令)+ 可选脚本/数据/参考文件;发布后他人一键安装到工作区</span>
       <n-button size="small" type="primary" @click="openPublish">+ 发布技能</n-button>
@@ -349,17 +362,17 @@ onMounted(() => {
         :key="c.key"
         class="mp-tab"
         :class="{ active: activeCat === c.key }"
-        @click="activeCat = c.key"
+        @click="activeCat = c.key; resetPage()"
       >
         <span class="mp-tab-emoji">{{ c.emoji }}</span>{{ c.label }}
         <span class="mp-tab-count">{{ catCount(c.key) }}</span>
       </button>
     </div>
 
-    <n-spin :show="loading" style="display: block; min-height: 120px">
+    <n-spin :show="loading" class="mp-body">
       <div v-if="!filtered.length" class="mp-empty">暂无匹配的技能,发布第一个吧</div>
       <div v-else class="mp-grid">
-        <div v-for="s in filtered" :key="s.id" class="mp-card" @click="openDetail(s)">
+        <div v-for="s in pagedSkills" :key="s.id" class="mp-card" @click="openDetail(s)">
           <div class="mp-card-icon" :title="skillCategoryInfo(s.category).label">
             {{ skillIcon(s) }}
           </div>
@@ -384,6 +397,10 @@ onMounted(() => {
         </div>
       </div>
     </n-spin>
+
+    <div v-if="filtered.length > pageSize" class="mp-pager">
+      <n-pagination v-model:page="page" :page-size="pageSize" :item-count="filtered.length" size="small" />
+    </div>
 
     <!-- 发布弹窗 -->
     <n-modal
@@ -542,6 +559,9 @@ onMounted(() => {
 
 .mp-empty { color: var(--text-3); font-size: 13px; padding: 48px 0; text-align: center; }
 
+/* 内容区固定高度:数据未加载前也维持网格高度,避免弹窗先矮后高 */
+.mp-body { display: block; min-height: 52vh; }
+
 /* 卡片网格 */
 .mp-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -571,6 +591,7 @@ onMounted(() => {
 .mp-installs { white-space: nowrap; }
 .mp-author { margin-left: auto; }
 .mp-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+.mp-pager { display: flex; justify-content: center; padding: 10px 0 2px; }
 
 /* 发布表单 */
 .mp-import { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--accent-soft); }

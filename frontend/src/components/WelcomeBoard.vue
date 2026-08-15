@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { chatApi } from '@/api/chat'
+import { templateIconInner } from '@/utils/themeIcons'
 
 /** 空会话欢迎板:场景化快捷提问,点击把模板填入输入框供编辑发送。
  *  优先显示模板库(管理员可维护);模板库为空时才回退到内置常用场景,避免重复。 */
@@ -53,7 +54,15 @@ function onSelect(s: Scenario) {
         class="scenario-card"
         @click="onSelect(s)"
       >
-        <div class="scenario-icon">{{ s.icon }}</div>
+        <div class="scenario-icon">
+          <svg
+            v-if="templateIconInner(s.icon)"
+            width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            v-html="templateIconInner(s.icon)"
+          ></svg>
+          <span v-else>{{ s.icon }}</span>
+        </div>
         <div class="scenario-title">{{ s.title }}</div>
         <div class="scenario-desc">{{ s.desc }}</div>
       </div>
@@ -107,6 +116,7 @@ function onSelect(s: Scenario) {
   width: 40px; height: 40px; border-radius: 12px; font-size: 20px;
   display: flex; align-items: center; justify-content: center;
   background: var(--accent-soft); border: 1px solid var(--border-soft);
+  color: var(--accent);
   margin-bottom: 2px;
 }
 .scenario-title { font-size: 14px; font-weight: 600; color: var(--text); }

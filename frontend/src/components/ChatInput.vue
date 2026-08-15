@@ -651,11 +651,19 @@ async function startNewChat() {
           </button>
         </n-dropdown>
 
-        <!-- 快捷工具:测试分析 / 生成文档 / 解读报错 / 我的MCP -->
-        <button class="tool-btn tool-btn-text" title="源码测试分析:上传项目 zip 生成测试点/用例/脚本" @click="emit('openTestAnalysis')">🧪 测试</button>
-        <button class="tool-btn tool-btn-text" title="一键生成文档(周报/会议纪要/邮件/分析报告)" @click="emit('openDocGen')">📄 生成文档</button>
-        <button class="tool-btn tool-btn-text" title="粘贴报错信息,让 AI 解读" @click="emit('openErrorDiagnose')">🩺 解读报错</button>
-        <button class="tool-btn tool-btn-text" title="配置我的 MCP Server(仅对我生效)" @click="router.push('/settings/mcps')">🔌 我的MCP</button>
+        <!-- 快捷工具:压缩会话 / 生成文档 / 解读报错 / 我的MCP -->
+        <button class="tool-btn tool-btn-text" title="压缩会话:总结早期内容,释放上下文" @click="onSummarize">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>
+          压缩会话
+        </button>
+        <button class="tool-btn tool-btn-text" title="一键生成文档(周报/会议纪要/邮件/分析报告)" @click="emit('openDocGen')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          生成文档
+        </button>
+        <button class="tool-btn tool-btn-text" title="粘贴报错信息,让 AI 解读" @click="emit('openErrorDiagnose')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.8 2.3A.3.3 0 1 0 5 2H4a2 2 0 0 0-2 2v5a6 6 0 0 0 6 6a6 6 0 0 0 6-6V4a2 2 0 0 0-2-2h-1a.2.2 0 1 0 .3.3"/><path d="M8 15v1a6 6 0 0 0 6 6a6 6 0 0 0 6-6v-4"/><circle cx="20" cy="10" r="2"/></svg>
+          解读报错
+        </button>
       </div>
 
       <div class="toolbar-right">
@@ -699,9 +707,8 @@ async function startNewChat() {
       <p v-if="stats.real" class="stats-note">为模型真实返回的 token 用量(上限 {{ modelLimit.toLocaleString() }})。压缩后该值会随上下文释放而下降。</p>
       <p v-else class="stats-note">token 数为粗略估算（字符数 / 4），仅供参考。</p>
       <div class="stats-warn" :class="{ alert: ringNearFull }">
-        <span>{{ ringNearFull ? '会话上下文已接近上限，可压缩会话以释放上下文，或新开会话。' : '上下文占用过高时，可压缩会话以释放空间。' }}</span>
+        <span>{{ ringNearFull ? '会话上下文已接近上限，可新开会话。' : '上下文占用过高时，可新开会话。' }}</span>
         <div class="stats-actions">
-          <n-button size="small" @click="onSummarize">压缩会话</n-button>
           <n-button size="small" type="primary" @click="startNewChat">新开会话</n-button>
         </div>
       </div>
@@ -713,8 +720,8 @@ async function startNewChat() {
 .chat-input {
   position: relative;
   border-top: 1px solid var(--border-soft);
-  padding: 12px 16px 12px;
-  background: var(--bg-elev);
+  padding: 16px 20px;
+  background: var(--chat-bg);
 }
 
 /* 命令菜单 */
@@ -722,14 +729,14 @@ async function startNewChat() {
   position: absolute; bottom: 100%; left: 16px; right: 16px; z-index: 20;
   margin-bottom: 6px; max-height: 260px; overflow-y: auto;
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius-sm); box-shadow: var(--shadow);
+  border-radius: var(--radius); box-shadow: var(--shadow);
 }
 .cmd-item {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 12px; cursor: pointer; font-size: 13px;
 }
 .cmd-item.active, .cmd-item:hover { background: var(--accent-soft); }
-.cmd-name { color: var(--accent-text); font-family: ui-monospace, monospace; flex-shrink: 0; }
+.cmd-name { color: var(--accent); font-family: ui-monospace, monospace; flex-shrink: 0; }
 .cmd-desc {
   color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -750,9 +757,9 @@ async function startNewChat() {
 }
 .att-chip {
   display: inline-flex; align-items: center; gap: 4px;
-  background: var(--accent-soft); color: var(--accent-text);
-  border: 1px solid rgba(107, 138, 253, 0.35);
-  font-size: 12px; padding: 3px 8px; border-radius: 10px; max-width: 240px;
+  background: var(--accent-soft); color: var(--accent);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  font-size: 12px; padding: 3px 8px; border-radius: 6px; max-width: 240px;
 }
 .att-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .att-remove { cursor: pointer; opacity: .7; padding: 0 4px; }
@@ -762,36 +769,36 @@ async function startNewChat() {
 /* 数据问答引导卡片 */
 .data-guide {
   background: var(--accent-soft);
-  border: 1px solid rgba(107, 138, 253, 0.3);
-  border-radius: var(--radius-sm);
-  padding: 8px 12px;
-  margin-bottom: 8px;
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin-bottom: 10px;
 }
-.dg-title { font-size: 12px; font-weight: 600; color: var(--accent-text); margin-bottom: 6px; }
+.dg-title { font-size: 12px; font-weight: 600; color: var(--accent); margin-bottom: 6px; }
 .dg-samples { display: flex; flex-wrap: wrap; gap: 6px; }
 .dg-sample {
   font-size: 12px; color: var(--text-2);
   background: var(--surface); border: 1px solid var(--border-soft);
-  border-radius: 12px; padding: 3px 10px; cursor: pointer;
+  border-radius: 6px; padding: 4px 10px; cursor: pointer;
   transition: border-color .15s, color .15s;
 }
-.dg-sample:hover { border-color: var(--accent-text); color: var(--accent-text); }
+.dg-sample:hover { border-color: var(--accent); color: var(--accent); }
 
 /* 输入框:柔和、无生硬边框 */
 .textarea {
   width: 100%; resize: none;
   padding: 12px 14px; border-radius: var(--radius);
-  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  border: 1px solid var(--input-border); background: var(--input-bg); color: var(--text);
   font-size: 14px; line-height: 1.6; outline: none;
   max-height: 200px; overflow-y: auto;
   box-sizing: border-box;
   transition: border-color .2s, background .2s, box-shadow .2s;
 }
 .textarea::placeholder { color: var(--text-3); }
-.textarea:hover { border-color: var(--border); }
+.textarea:hover { border-color: rgba(0, 0, 0, 0.2); }
 .textarea:focus {
-  border-color: var(--accent); background: var(--surface-hover);
-  box-shadow: 0 0 0 3px var(--accent-soft), 0 4px 20px rgba(0, 0, 0, 0.1);
+  border-color: var(--accent); background: var(--input-bg);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .hidden-input { display: none; }
 
@@ -813,37 +820,50 @@ async function startNewChat() {
   font-size: 13px; line-height: 1; white-space: nowrap;
   transition: background .15s, color .15s, border-color .15s;
 }
-.tool-btn:hover { background: var(--surface-hover); color: var(--text-2); border-color: var(--border); }
+.tool-btn:hover { background: var(--surface-hover); color: var(--text); border-color: var(--border); }
 .tool-btn svg { flex-shrink: 0; }
 .tool-btn-text { padding: 5px 10px; }
 
-/* 模型下拉(紧凑) */
+/* 模型下拉(紧凑):高度与 tool-btn 对齐,避免错位 */
 .toolbar-select {
   max-width: 200px;
+  flex-shrink: 0;
 }
 .toolbar-select :deep(.n-base-selection) {
   background: transparent;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-size: 13px;
-  min-height: 28px;
+  height: 28px;
+  box-sizing: border-box;
 }
 .toolbar-select :deep(.n-base-selection:hover) {
   border-color: var(--border);
   background: var(--surface-hover);
 }
+.toolbar-select :deep(.n-base-selection-label) {
+  height: 26px;
+  line-height: 26px;
+  padding: 0 8px;
+}
+.toolbar-select :deep(.n-base-selection .n-base-selection-label__placeholder),
+.toolbar-select :deep(.n-base-selection .n-base-selection-label__render-label) {
+  font-size: 13px;
+}
+.toolbar-select :deep(.n-base-suffix) {
+  right: 8px;
+}
 
-/* 发送按钮:圆形渐变 */
+/* 发送按钮:圆形 */
 .send-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 34px; height: 34px; border-radius: 50%;
-  background: linear-gradient(135deg, #6b8afd, #7d6bfd); border: none; cursor: pointer;
+  background: var(--accent); border: none; cursor: pointer;
   color: #fff; transition: filter .15s, opacity .15s;
-  box-shadow: 0 2px 8px rgba(107, 138, 253, 0.3);
 }
-.send-btn:hover:not(.disabled) { filter: brightness(1.12); }
-.send-btn.disabled { background: var(--surface-hover); color: var(--text-3); cursor: default; box-shadow: none; }
-.send-btn-stop { background: linear-gradient(135deg, #e47a86, #d96a78); box-shadow: 0 2px 8px rgba(228, 122, 134, 0.3); }
+.send-btn:hover:not(.disabled) { filter: brightness(1.1); }
+.send-btn.disabled { background: var(--surface-hover); color: var(--text-3); cursor: default; }
+.send-btn-stop { background: var(--err); }
 .send-btn-stop:hover { filter: brightness(1.1); }
 
 /* token 进度环 */
@@ -874,20 +894,20 @@ async function startNewChat() {
 .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
 .stat {
   display: flex; flex-direction: column; align-items: center; gap: 4px;
-  padding: 12px 8px; border-radius: var(--radius-sm);
+  padding: 12px 8px; border-radius: var(--radius);
   background: var(--surface); border: 1px solid var(--border-soft);
 }
 .stat .k { font-size: 12px; color: var(--text-3); }
-.stat .v { font-size: 18px; font-weight: 600; color: var(--accent-text); }
+.stat .v { font-size: 18px; font-weight: 600; color: var(--accent); }
 .stats-note { color: var(--text-3); font-size: 12px; margin-top: 12px; }
 .stats-warn {
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
-  margin-top: 12px; padding: 10px 12px; border-radius: var(--radius-sm);
-  background: rgba(107, 138, 253, 0.08); border: 1px solid rgba(107, 138, 253, 0.22);
+  margin-top: 12px; padding: 10px 12px; border-radius: var(--radius);
+  background: var(--accent-soft); border: 1px solid rgba(139, 92, 246, 0.2);
   color: var(--text-2); font-size: 13px;
 }
 .stats-warn.alert {
-  background: rgba(228, 122, 134, 0.1); border: 1px solid rgba(228, 122, 134, 0.3);
+  background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25);
   color: var(--err);
 }
 .stats-actions { display: flex; gap: 8px; }

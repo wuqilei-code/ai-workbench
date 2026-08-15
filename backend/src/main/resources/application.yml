@@ -46,6 +46,13 @@ opencode:
   agent-memory-mb: ${OPENCODE_AGENT_MEMORY_MB:1024}
   agent-stop-grace-seconds: ${OPENCODE_AGENT_STOP_GRACE:5}
   agent-network: ${OPENCODE_AGENT_NETWORK:aiwb-agents}
+  # 定时任务队列(JobScheduler/JobQueueDispatcher)
+  job-max-concurrent: ${OPENCODE_JOB_MAX_CONCURRENT:1}
+  job-image: ${AGENT_IMAGE:ai-workbench-agent}
+  job-cpus: ${OPENCODE_JOB_CPUS:1}
+  job-memory-mb: ${OPENCODE_JOB_MEMORY_MB:1024}
+  job-timeout-minutes: ${OPENCODE_JOB_TIMEOUT_MINUTES:30}
+  job-sweep-ms: ${OPENCODE_JOB_SWEEP_MS:5000}
 
 # JWT
 jwt:

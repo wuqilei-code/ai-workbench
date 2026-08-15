@@ -209,6 +209,69 @@ ALTER TABLE mcp_config DROP INDEX uk_mcp_name;
 ALTER TABLE mcp_config ADD UNIQUE INDEX uk_mcp_user_name (user_id, name);
 ALTER TABLE mcp_config ADD INDEX idx_mcp_user (user_id);
 
+-- 定时/一次性任务:用户配置的任务(含 cron 或手动触发),由 JobScheduler/JobQueueDispatcher 排队执行。
+-- 每次运行使用独立快照工作区(隔离),全局并发由 opencode.job-max-concurrent 控制。
+CREATE TABLE IF NOT EXISTS job_task (
+    id           BIGINT       NOT NULL AUTO_INCREMENT,
+    user_id      BIGINT       NOT NULL,
+    name         VARCHAR(128) NOT NULL,
+    prompt       TEXT         NOT NULL,
+    cron         VARCHAR(64)  NULL COMMENT 'cron 表达式;NULL=手动一次性任务',
+    agent        VARCHAR(64)  NOT NULL DEFAULT 'chat',
+    auto_approve TINYINT      NOT NULL DEFAULT 1 COMMENT '非交互运行是否自动批准未显式拒绝的权限(--auto)',
+    enabled      TINYINT      NOT NULL DEFAULT 1,
+    status       VARCHAR(16)  NOT NULL DEFAULT 'pending' COMMENT 'pending/queued/running/success/failed/timeout/cancelled',
+    next_run_at  DATETIME(3)  NULL COMMENT '下次触发时间(pending 状态用)',
+    queued_at    DATETIME(3)  NULL,
+    started_at   DATETIME(3)  NULL,
+    finished_at  DATETIME(3)  NULL,
+    last_result  TEXT         NULL COMMENT '最近一次运行结果摘要',
+    last_error   VARCHAR(1000) NULL,
+    container_name VARCHAR(128) NULL COMMENT '运行中的任务容器名',
+    run_job_dir  VARCHAR(512) NULL COMMENT '最近一次运行的工作区目录(快照)',
+    created_at   DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at   DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (id),
+    KEY idx_job_user (user_id, created_at),
+    KEY idx_job_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 定时任务运行历史:每次执行(run)一条记录,关联到 job_task.id。
+-- 一个 cron 任务会跑出多次结果,每次运行独立记录结果/日志路径,供「定时任务结果」展示。
+CREATE TABLE IF NOT EXISTS job_task_run (
+    id          BIGINT       NOT NULL AUTO_INCREMENT,
+    job_id      BIGINT       NOT NULL,
+    user_id     BIGINT       NOT NULL,
+    status      VARCHAR(16)  NOT NULL DEFAULT 'running' COMMENT 'running/success/failed/timeout/cancelled',
+    started_at  DATETIME(3)  NULL,
+    finished_at DATETIME(3)  NULL,
+    exit_code   INT          NULL COMMENT '容器退出码(0=成功)',
+    changed_files INT        NULL COMMENT '本次回写到真实工作区的文件数',
+    result      TEXT         NULL COMMENT '本次运行结果摘要(退出码+回写数+日志尾部)',
+    error       VARCHAR(1000) NULL COMMENT '失败原因',
+    container_name VARCHAR(128) NULL,
+    run_log_path VARCHAR(512) NULL COMMENT '本次运行的日志文件路径(工作区内 jobs/<jobId>/runs/<runId>.log)',
+    created_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (id),
+    KEY idx_run_job (job_id, id),
+    KEY idx_run_user (user_id, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 系统消息中心:定时任务等后台事件产生的用户消息(右上角铃铛展示)。
+CREATE TABLE IF NOT EXISTS notification (
+    id          BIGINT       NOT NULL AUTO_INCREMENT,
+    user_id     BIGINT       NOT NULL,
+    type        VARCHAR(32)  NOT NULL DEFAULT 'task' COMMENT '消息类型:task(定时任务)/system',
+    title       VARCHAR(255) NOT NULL COMMENT '消息标题',
+    content     TEXT         NULL COMMENT '消息正文(摘要)',
+    link        VARCHAR(512) NULL COMMENT '跳转链接(如任务报告文件路径或会话地址)',
+    read_flag   TINYINT      NOT NULL DEFAULT 0 COMMENT '0=未读 1=已读',
+    created_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (id),
+    KEY idx_notif_user (user_id, id),
+    KEY idx_notif_read (user_id, read_flag)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- 技能安装记录:同一用户不可重复安装同名技能(唯一约束)
 CREATE TABLE IF NOT EXISTS skill_install (
     id          BIGINT      NOT NULL AUTO_INCREMENT,

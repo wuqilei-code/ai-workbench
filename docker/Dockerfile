@@ -29,13 +29,14 @@ FROM ${DOCKER_REGISTRY}/maven:3.9-eclipse-temurin-21 AS runtime
 # 故不装 python/文档处理依赖(那些只在 agent 镜像需要)。只装运行所需:nginx/supervisor/docker CLI/git/curl。
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-       nginx supervisor curl ca-certificates git procps bash \
+       nginx supervisor curl ca-certificates git procps bash tzdata \
        unzip \
        docker.io \
   && rm -rf /var/lib/apt/lists/* \
   # 清理 docker CLI 附带的无关 bash-completion/文档,进一步瘦身
   && rm -rf /usr/share/doc /usr/share/man /usr/share/locale /usr/share/i18n \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* \
+  && ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
 
 # 后端 jar
 COPY --from=backend-build /build/target/*.jar /app/app.jar
@@ -56,6 +57,7 @@ RUN chmod +x /entrypoint.sh \
 ENV OPENWORK_WORKSPACE=/workspace \
     OPENCODE_DATA_DIR=/data/opencode \
     HOME=/root \
+    TZ=Asia/Shanghai \
     OPENCODE_SERVER_USERNAME=opencode \
     OPENCODE_SERVER_PASSWORD=changeme \
     SPRING_PROFILES_ACTIVE=prod
@@ -85,10 +87,13 @@ ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
   && apt-get update \
   && apt-get install -y --no-install-recommends \
-       curl ca-certificates git procps mawk bash \
+       curl ca-certificates git procps mawk bash tzdata \
        unzip poppler-utils \
        openssh-client sshpass libnss-wrapper \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* \
+  && ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+
+ENV TZ=Asia/Shanghai
 
 # 中文字体:Noto CJK 是 CFF/TTC 轮廓,reportlab 无法加载且体积大(89MB)。
 # 统一改用后端内置的 simhei.ttf(TrueType 黑体,9.7MB),reportlab 与 matplotlib 均可直接加载。

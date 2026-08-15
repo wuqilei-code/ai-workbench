@@ -35,70 +35,38 @@ watch([() => props.text, expanded], async () => {
 </script>
 
 <template>
-  <div v-if="text" class="reasoning-wrap">
-    <div class="reasoning-header" @click="toggle">
-      <span class="reasoning-toggle">{{ expanded ? '▼' : '▶' }}</span>
-      思维链
-      <span v-if="lineCount > 0" class="reasoning-meta">{{ lineCount }} 行</span>
-      <span v-if="isStreaming" class="reasoning-running-tag">输出中…</span>
-    </div>
-    <div v-if="expanded" ref="boxEl" class="reasoning-box">{{ text }}</div>
+  <div v-if="text" class="reasoning">
+    <button class="reasoning-head" @click="toggle">
+      <svg class="chevron" :class="{ open: expanded }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      <span class="label">思考链</span>
+      <span v-if="lineCount > 0" class="meta">{{ lineCount }} 行</span>
+      <span v-if="isStreaming" class="run-tag">生成中…</span>
+    </button>
+    <div v-if="expanded" ref="boxEl" class="reasoning-body">{{ text }}</div>
   </div>
 </template>
 
 <style scoped>
-.reasoning-wrap {
-  margin: 4px 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
+.reasoning { margin: 2px 0; }
+.reasoning-head {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 4px; margin-left: -4px;
+  border: none; background: none; cursor: pointer;
+  font-size: 12px; color: var(--text-3);
+  border-radius: 4px;
 }
-.reasoning-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
-  cursor: pointer;
-  user-select: none;
-  font-size: 12px;
-  color: var(--text-2);
-  background: var(--bg-elev);
-}
-.reasoning-header:hover {
-  background: var(--surface-hover);
-}
-.reasoning-toggle {
-  font-size: 10px;
-  width: 12px;
-  text-align: center;
-  flex-shrink: 0;
-}
-.reasoning-meta {
-  color: var(--text-3);
-  font-size: 11px;
-}
-.reasoning-running-tag {
-  color: var(--accent);
-  font-size: 11px;
-  margin-left: auto;
-}
-.reasoning-box {
-  font-size: 12px;
-  color: var(--text-2);
-  font-style: italic;
-  white-space: pre-wrap;
-  word-break: break-word;
-  background: var(--bg-elev);
-  padding: 6px 10px;
-  max-height: 180px;
-  overflow-y: auto;
-  border-top: 1px solid var(--border-soft);
-}
-.reasoning-box::-webkit-scrollbar {
-  width: 6px;
-}
-.reasoning-box::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 3px;
+.reasoning-head:hover { color: var(--text-2); background: var(--surface-hover); }
+.reasoning-head .chevron { transition: transform .15s; flex-shrink: 0; }
+.reasoning-head .chevron.open { transform: rotate(90deg); }
+.reasoning-head .label { font-weight: 500; }
+.reasoning-head .meta { font-size: 11px; }
+.reasoning-head .run-tag { color: var(--accent); font-size: 11px; }
+.reasoning-body {
+  margin: 2px 0 4px 18px; padding-left: 12px;
+  border-left: 2px solid var(--accent-soft);
+  font-size: 12px; color: var(--text-3);
+  font-style: italic; line-height: 1.6;
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 180px; overflow-y: auto;
 }
 </style>

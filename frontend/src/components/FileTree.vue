@@ -150,6 +150,7 @@ async function load(path = '', silent = false) {
     // 隐藏 git/opencode 系统内部文件:技能有专用「技能」标签访问,
     // .git/.gitignore 是 git plumbing,用户不应在文件树手动触碰,避免与用户文件交叉。
     // tasks/ 是后台任务运行目录,由右侧抽屉「任务」标签专门管理,同样从文件树隐藏。
+    // jobs/ 保留展示:里面是定时任务执行报告(report.md)与日志,供用户直接查看。
     nodes.value = all.filter(
       (n) => n.name !== '.git' && n.name !== '.opencode' && n.name !== '.gitignore' && n.name !== 'tasks',
     )
@@ -521,7 +522,9 @@ onBeforeUnmount(() => {
       @input="onSearchInput"
       @clear="onSearchInput"
     >
-      <template #prefix>🔍</template>
+      <template #prefix>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      </template>
     </n-input>
     <div class="path">{{ isSearchMode ? `搜索结果 (${displayNodes.length})` : displayPath }}</div>
     <div v-if="skillsMode" class="hint">
@@ -530,9 +533,13 @@ onBeforeUnmount(() => {
     <n-spin :show="loading || searching">
       <div v-for="n in displayNodes" :key="n.path" class="node">
         <div class="node-main" @click="open(n)" @contextmenu="onContextMenu(n, $event)">
-          <span class="node-icon">{{ skillDisplay(n) ? skillDisplay(n)!.icon : (n.directory ? '📁' : '📄') }}</span>
+          <span class="node-icon">
+            <template v-if="skillDisplay(n)">{{ skillDisplay(n)!.icon }}</template>
+            <svg v-else-if="n.directory" class="dir-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+            <svg v-else class="file-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
+          </span>
           <span v-if="isAiChanged(n)" class="ai-mark" title="本轮 AI 改动">✦</span>
-          <span class="node-name" :class="{ dir: n.directory }">{{ skillDisplay(n) ? skillDisplay(n)!.title : n.name }}</span>
+          <span class="node-name" :class="{ dir: n.directory }" :title="skillDisplay(n) ? `${skillDisplay(n)!.title} (${n.name})` : n.name">{{ skillDisplay(n) ? skillDisplay(n)!.title : n.name }}</span>
           <span v-if="skillDisplay(n)" class="skill-sub" :title="n.name">/{{ n.name }}</span>
           <span v-if="isSearchMode" class="node-sub" :title="relFromAbs(n.path)">{{ relFromAbs(n.path) }}</span>
           <span v-if="!n.directory && !isSearchMode" class="node-size">{{ fmtSize(n.size) }}</span>
@@ -692,7 +699,9 @@ onBeforeUnmount(() => {
   display: flex; align-items: center; gap: 6px;
   cursor: pointer; flex: 1; min-width: 0; padding: 2px 4px;
 }
-.node-icon { flex-shrink: 0; font-size: 14px; }
+.node-icon { flex-shrink: 0; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; }
+.node-icon .dir-icon { color: var(--accent); }
+.node-icon .file-icon { color: var(--text-3); }
 .node-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ai-mark { color: var(--warn); font-size: 11px; flex-shrink: 0; }
 .node-name.dir { font-weight: 600; }

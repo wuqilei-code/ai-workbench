@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useMessage } from 'naive-ui'
 import { chatApi } from '@/api/chat'
+import { templateIconInner } from '@/utils/themeIcons'
 import type { TemplateVo } from '@/types'
 
 const props = defineProps<{ show: boolean }>()
@@ -32,6 +33,19 @@ const filtered = computed(() => {
     return t.title.toLowerCase().includes(q) || t.content.toLowerCase().includes(q)
   })
 })
+
+/** 分页 */
+const page = ref(1)
+const pageSize = 8
+const pagedTemplates = computed(() => {
+  const start = (page.value - 1) * pageSize
+  return filtered.value.slice(start, start + pageSize)
+})
+
+/** 搜索/切分类后回到第一页 */
+function resetPage() {
+  page.value = 1
+}
 
 async function load() {
   loading.value = true
@@ -150,8 +164,10 @@ async function remove(t: TemplateVo) {
     @after-enter="onShow"
   >
     <div class="tpl-head">
-      <n-input v-model:value="keyword" size="small" clearable placeholder="搜索模板…" style="max-width: 220px">
-        <template #prefix>🔍</template>
+      <n-input v-model:value="keyword" size="small" clearable placeholder="搜索模板…" style="max-width: 220px" @update:value="resetPage">
+        <template #prefix>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </template>
       </n-input>
       <div class="cat-tabs">
         <span
@@ -159,17 +175,25 @@ async function remove(t: TemplateVo) {
           :key="c"
           class="cat-tab"
           :class="{ active: activeCategory === c }"
-          @click="activeCategory = c"
+          @click="activeCategory = c; resetPage()"
         >{{ c }}</span>
       </div>
       <n-button size="small" type="primary" @click="openCreate">+ 新建模板</n-button>
     </div>
 
-    <n-spin :show="loading" style="display: block; margin: 24px auto">
+    <n-spin :show="loading" class="tpl-body">
       <div v-if="!filtered.length" class="tpl-empty">暂无模板</div>
       <div v-else class="tpl-list">
-        <div v-for="t in filtered" :key="t.id" class="tpl-item">
-          <div class="tpl-icon" :title="t.title">{{ t.icon || '📋' }}</div>
+        <div v-for="t in pagedTemplates" :key="t.id" class="tpl-item">
+          <div class="tpl-icon" :title="t.title">
+            <svg
+              v-if="templateIconInner(t.icon)"
+              width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              v-html="templateIconInner(t.icon)"
+            ></svg>
+            <span v-else>{{ t.icon || '📋' }}</span>
+          </div>
           <div class="tpl-main">
             <div class="tpl-row">
               <span class="tpl-title">{{ t.title }}</span>
@@ -203,6 +227,10 @@ async function remove(t: TemplateVo) {
         </div>
       </div>
     </n-spin>
+
+    <div v-if="filtered.length > pageSize" class="tpl-pager">
+      <n-pagination v-model:page="page" :page-size="pageSize" :item-count="filtered.length" size="small" />
+    </div>
 
     <!-- 新增/编辑 -->
     <n-modal
@@ -263,6 +291,8 @@ async function remove(t: TemplateVo) {
 .cat-tab:hover { background: var(--surface-hover); color: var(--text-2); }
 .cat-tab.active { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
 .tpl-empty { color: var(--text-3); font-size: 13px; padding: 32px 0; text-align: center; }
+/* 内容区固定高度:数据未加载前也维持列表高度,避免弹窗先矮后高 */
+.tpl-body { display: block; min-height: 52vh; }
 .tpl-list { display: flex; flex-direction: column; gap: 8px; max-height: 52vh; overflow-y: auto; }
 .tpl-item {
   display: flex; align-items: center; gap: 12px;
@@ -272,7 +302,7 @@ async function remove(t: TemplateVo) {
 .tpl-icon {
   width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  font-size: 18px; background: var(--accent-soft);
+  font-size: 18px; background: var(--accent-soft); color: var(--accent);
 }
 .icon-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 .icon-label { font-size: 12px; color: var(--text-3); margin-right: 4px; }
@@ -294,5 +324,6 @@ async function remove(t: TemplateVo) {
   white-space: pre-wrap;
 }
 .tpl-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.tpl-pager { display: flex; justify-content: center; padding: 10px 0 2px; }
 .edit-form { display: flex; flex-direction: column; gap: 12px; }
 </style>

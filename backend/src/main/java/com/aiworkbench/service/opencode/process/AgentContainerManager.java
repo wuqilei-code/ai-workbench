@@ -145,6 +145,28 @@ public class AgentContainerManager {
     }
 
     /** 容器当前是否在运行。 */
+    /**
+ * 解析容器内路径(以 /workspace 或 /data 为前缀)对应的宿主 bind 源路径。
+ * 定时任务容器复用:(1) 工作区快照 jobs/&lt;id&gt;;(2) per-user 数据 /data/users/&lt;uid&gt;。
+ * 仅容器内(root)可用。
+ */
+public String hostSourceFor(String containerPath) {
+    String p = containerPath;
+    while (p.startsWith("/")) {
+        p = p.substring(1);
+    }
+    String prefix = p.contains("/") ? p.substring(0, p.indexOf('/')) : p;
+    for (Map.Entry<String, String> e : selfVolumes().entrySet()) {
+        String dest = e.getValue();
+        if (dest != null && dest.equals("/" + prefix)) {
+            return e.getKey() + "/" + p.substring(prefix.length()).replace('\\', '/');
+        }
+    }
+    throw new BusinessException(ResultCode.OPENCODE_UNAVAILABLE.getCode(),
+            "无法解析容器内路径的宿主源: " + containerPath);
+}
+
+/** 容器当前是否在运行。 */
     public boolean isRunning(Long userId) {
         try {
             Result r = run(List.of("docker", "inspect", "-f", "{{.State.Running}}", containerName(userId)));

@@ -150,7 +150,7 @@ onBeforeUnmount(stopPolling)
           <div class="task-grid task-main" @click="toggle(t.id)">
             <span class="c-status">
               <n-tag size="tiny" :type="statusType(t)" :bordered="false" class="status-tag">
-                <template v-if="t.status === 'running'" #icon><n-spin :size="10" class="mini-spin" /></template>
+                <template v-if="t.status === 'running'" #icon><span class="mini-spin" /></template>
                 {{ t.statusText }}
               </n-tag>
             </span>
@@ -230,7 +230,13 @@ onBeforeUnmount(stopPolling)
 .t-time { font-size: 11px; color: var(--text-2); white-space: nowrap; }
 .t-dur { font-size: 10px; color: var(--text-3); white-space: nowrap; }
 .caret { color: var(--text-3); font-size: 11px; text-align: right; }
-.mini-spin { margin-right: 4px; }
+.mini-spin {
+  display: inline-block; width: 10px; height: 10px; margin-right: 4px;
+  border: 2px solid currentColor; border-top-color: transparent;
+  border-radius: 50%; animation: tp-spin .7s linear infinite;
+  vertical-align: -1px;
+}
+@keyframes tp-spin { to { transform: rotate(360deg); } }
 
 .task-detail { border-top: 1px solid var(--border-soft); padding: 8px 10px; }
 .task-done { font-size: 12px; color: var(--text-2); margin-bottom: 6px; word-break: break-all; }

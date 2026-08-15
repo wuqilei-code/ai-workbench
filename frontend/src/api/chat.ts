@@ -22,8 +22,11 @@ export const chatApi = {
   warmup: (id: number) => http.post(`/chat/sessions/${id}/warmup`),
   /** 按当前用户预热 agent(无需会话)。登录/进主页时调用,提前拉起实例避免新建会话冷启动等待 */
   warmupMine: () => http.post('/chat/sessions/warmup'),
-  listMessages: (id: number, limit = 200) =>
-    http.get<MessageVo[]>(`/chat/sessions/${id}/messages`, { params: { limit } }).then(unwrap),
+  /** 消息历史(游标分页):beforeId 向上翻页取更早,afterId 增量追平,都不传取最新 limit 条 */
+  listMessages: (id: number, opts?: { limit?: number; beforeId?: number; afterId?: number }) =>
+    http.get<MessageVo[]>(`/chat/sessions/${id}/messages`, {
+      params: { limit: opts?.limit ?? 200, beforeId: opts?.beforeId, afterId: opts?.afterId },
+    }).then(unwrap),
   clearMessages: (id: number) => http.delete(`/chat/sessions/${id}/messages`),
   exportSession: (id: number, format: 'md' | 'json' | 'pdf' | 'docx' = 'md') =>
     http.get<Blob>(`/chat/sessions/${id}/export`, { params: { format }, responseType: 'blob' }),

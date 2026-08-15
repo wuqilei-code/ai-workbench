@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref, nextTick } from 'vue'
+import { onMounted, onBeforeUnmount, ref, nextTick, provide } from 'vue'
 import { useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { chatApi } from '@/api/chat'
@@ -15,6 +15,30 @@ const isNarrow = ref(false)
 const sidebarCollapsed = ref(false)
 /** 首次进入:正在加载模型/会话/归档列表(避免白屏)。 */
 const initLoading = ref(true)
+
+/** 侧边栏导航事件:提供给子组件(ChatView)使用 */
+const sidebarEvents = ref({
+  openPluginMarket: false,
+  openTemplateLib: false,
+  openMyFiles: false,
+  openAutomation: false,
+  openFind: false,
+  openMyMcp: false,
+})
+provide('sidebarEvents', sidebarEvents)
+
+/** 侧边栏折叠状态:提供给子组件(ChatView 顶部「展开侧边栏」按钮)使用 */
+provide('sidebarCollapsed', sidebarCollapsed)
+function toggleSidebar() {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+}
+provide('toggleSidebar', toggleSidebar)
+
+function triggerSidebarEvent(key: keyof typeof sidebarEvents.value) {
+  sidebarEvents.value[key] = true
+  // 重置以便重复触发
+  setTimeout(() => { sidebarEvents.value[key] = false }, 100)
+}
 
 function applyIsNarrow() {
   isNarrow.value = window.innerWidth < 960
@@ -53,7 +77,17 @@ onBeforeUnmount(() => {
 
 <template>
   <n-layout has-sider style="height: 100vh">
-    <Sidebar :collapsed="sidebarCollapsed" :narrow="isNarrow" @update:collapsed="sidebarCollapsed = $event" />
+    <Sidebar
+      :collapsed="sidebarCollapsed"
+      :narrow="isNarrow"
+      @update:collapsed="sidebarCollapsed = $event"
+      @open-plugin-market="triggerSidebarEvent('openPluginMarket')"
+      @open-template-lib="triggerSidebarEvent('openTemplateLib')"
+      @open-my-files="triggerSidebarEvent('openMyFiles')"
+      @open-automation="triggerSidebarEvent('openAutomation')"
+      @open-find="triggerSidebarEvent('openFind')"
+      @open-my-mcp="triggerSidebarEvent('openMyMcp')"
+    />
     <n-layout>
       <n-layout-content content-style="height:100vh; overflow:hidden">
         <div v-if="initLoading" class="layout-loading">

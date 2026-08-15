@@ -5,6 +5,7 @@ import { useChatStore } from '@/stores/chat'
 import { useFavoritesStore } from '@/stores/favorites'
 import { renderMarkdown } from '@/utils/markdown'
 import { isFileProducingTool, extractDeliverables, stripDeliverableMarkers } from '@/utils/turns'
+import { fmtMessageTime } from '@/utils/time'
 import { chatApi } from '@/api/chat'
 import { fileApi } from '@/api/files'
 import JSZip from 'jszip'
@@ -123,6 +124,9 @@ function exportFinalAnswerAsMarkdown() {
 // ---------- 收藏最终答案 ----------
 
 const faMessageId = computed(() => props.turn.finalAnswer?.message.id ?? 0)
+
+/** 最终答案消息时间(多步气泡顶部) */
+const faTime = computed(() => props.turn.finalAnswer?.message.createdAt || '')
 
 const faStarred = computed(() =>
   props.sessionId != null && faMessageId.value > 0
@@ -297,8 +301,8 @@ const thinkingStepCount = computed(() => {
 
 const thinkingHeader = computed(() =>
   turnInProgress.value
-    ? `思考中… (${props.turn.steps.length} 步)`
-    : `已折叠 ${props.turn.steps.length} 步思考`,
+    ? `思考中… ${thinkingStepCount.value} 步`
+    : `已折叠 ${thinkingStepCount.value} 步思考`,
 )
 
 function stepHtml(step: Step): string {
@@ -522,6 +526,7 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
   <div v-else class="msg assistant">
     <div class="avatar">AI</div>
     <div class="bubble">
+      <span v-if="faTime" class="msg-time">{{ fmtMessageTime(faTime) }}</span>
       <!-- 思考过程(可折叠) -->
       <NCollapse
         v-if="turn.steps.length > 0 || (turn.finalAnswer && (turn.finalAnswer.toolCalls.length || turn.finalAnswer.reasoning))"
@@ -529,7 +534,13 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
         :display-directive="'show'"
         @update:expanded-names="handleExpand"
       >
-        <NCollapseItem name="thinking" :title="thinkingHeader">
+        <NCollapseItem name="thinking">
+          <template #header>
+            <span class="think-header" :class="{ active: turnInProgress }">
+              <span v-if="turnInProgress" class="think-spinner"><span class="think-ring" /></span>
+              <span class="think-label">{{ thinkingHeader }}</span>
+            </span>
+          </template>
           <div v-for="(step, i) in turn.steps" :key="step.message.id ?? i" class="step">
             <ReasoningBlock :text="step.reasoning || ''" :is-streaming="step.message.opencodeMessageId === chat.streamingReasoningMsgId" />
             <div
@@ -566,28 +577,38 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
 
       <!-- 最终答案 -->
       <div v-if="turn.finalAnswer" class="content">
-        <button
-          class="copy-btn star-btn"
-          :class="{ on: faStarred }"
-          :title="faStarred ? '取消收藏' : '收藏该回答'"
-          @click="toggleFaStar"
-        >{{ faStarred ? '★' : '☆' }}</button>
-        <button
-          class="copy-btn"
-          title="复制回答"
-          @click="copyFinalAnswer"
-        >📋</button>
-        <button
-          class="copy-btn export-btn"
-          title="导出为 Markdown 文件"
-          @click="exportFinalAnswerAsMarkdown"
-        >⬇️</button>
-        <button
-          v-if="canRegenerate"
-          class="copy-btn regen-btn"
-          title="重新生成回答"
-          @click="regenerateAnswer"
-        >🔄</button>
+        <div class="fa-tools">
+          <button
+            class="copy-btn star-btn"
+            :class="{ on: faStarred }"
+            :title="faStarred ? '取消收藏' : '收藏该回答'"
+            @click="toggleFaStar"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" :fill="faStarred ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          </button>
+          <button
+            class="copy-btn"
+            title="复制回答"
+            @click="copyFinalAnswer"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
+          <button
+            class="copy-btn export-btn"
+            title="导出为 Markdown 文件"
+            @click="exportFinalAnswerAsMarkdown"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </button>
+          <button
+            v-if="canRegenerate"
+            class="copy-btn regen-btn"
+            title="重新生成回答"
+            @click="regenerateAnswer"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          </button>
+        </div>
         <span
           v-if="displayContent(turn.finalAnswer)"
           v-html="renderMarkdown(stripDeliverableMarkers(displayContent(turn.finalAnswer)))"
@@ -722,7 +743,9 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
         class="pending-block permission-block"
       >
         <div class="pending-block-header">
-          <span class="pending-icon">🔒</span>
+          <span class="pending-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1 1 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>
+          </span>
           <span class="pending-title">请求权限</span>
         </div>
         <div class="pending-block-body">
@@ -796,65 +819,104 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
 </template>
 
 <style scoped>
-.msg { display: flex; gap: 10px; margin-bottom: 16px; }
+.msg { display: flex; gap: 12px; margin-bottom: 20px; }
 .followups { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
 .fu-label { font-size: 12px; color: var(--text-3); }
 .fu-chip {
   font-size: 12px; color: var(--text-2);
   background: var(--surface); border: 1px solid var(--border-soft);
-  border-radius: 12px; padding: 3px 10px; cursor: pointer;
+  border-radius: 6px; padding: 4px 10px; cursor: pointer;
   transition: border-color .15s, color .15s;
 }
-.fu-chip:hover { border-color: var(--accent-text); color: var(--accent-text); }
+.fu-chip:hover { border-color: var(--accent); color: var(--accent); }
 .avatar {
-  width: 30px; height: 30px; border-radius: 10px; flex-shrink: 0;
+  width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  font-size: 12px; font-weight: 600; background: var(--surface);
+  font-size: 11px; font-weight: 600; background: var(--surface-hover);
   color: var(--text-3);
-  border: 1px solid var(--border-soft);
 }
 .msg.assistant .avatar {
-  background: linear-gradient(135deg, #2b3445, #232832);
+  background: var(--surface-hover);
 }
 .bubble {
   position: relative;
-  max-width: 75%;
+  max-width: 70%;
   min-width: 0;
-  padding: 12px 16px; border-radius: var(--radius);
-  background: var(--surface); line-height: 1.6; word-break: break-word;
-  border: 1px solid var(--border-soft);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  transition: box-shadow .2s ease, border-color .2s ease;
+  padding: 10px 14px; border-radius: 12px 12px 12px 2px;
+  background: var(--ai-bubble-bg); line-height: 1.6; word-break: break-word;
+  border: none;
+  box-shadow: none;
   overflow: hidden;
 }
+/* 请求权限/提问等操作块需要更宽空间,避免内部按钮被 overflow 裁切 */
+.bubble:has(.pending-block) {
+  max-width: 92%;
+}
+.msg-time {
+  display: block; font-size: 11px; color: var(--text-3); opacity: .7;
+  margin-bottom: 4px;
+}
 .bubble:hover {
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14);
-  border-color: var(--border);
+  box-shadow: none;
 }
 .content { position: relative; }
-.copy-btn {
-  position: absolute; top: -4px; right: -4px;
-  background: transparent; border: none; cursor: pointer; font-size: 13px;
-  padding: 2px 4px; border-radius: 4px; line-height: 1; opacity: 0; transition: opacity .15s; z-index: 2;
+/* 最终答案工具条:水平排列,悬停显示 */
+.fa-tools {
+  position: absolute; top: -6px; right: -6px; z-index: 2;
+  display: flex; align-items: center; gap: 2px;
+  padding: 2px; border-radius: 6px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  box-shadow: var(--shadow);
+  opacity: 0; transition: opacity .15s;
 }
-.content:hover .copy-btn { opacity: 1; }
-.copy-btn:hover { background: var(--surface-hover); }
+.content:hover .fa-tools { opacity: 1; }
+.copy-btn {
+  background: transparent; border: none; cursor: pointer;
+  padding: 4px; border-radius: 4px; line-height: 1;
+  color: var(--text-3); display: inline-flex; align-items: center; justify-content: center;
+}
+.copy-btn:hover { background: var(--surface-hover); color: var(--text-2); }
 .copy-btn.star-btn.on { color: #f0b429; }
-.copy-btn.regen-btn:hover { color: var(--accent-text); }
+.copy-btn.regen-btn:hover { color: var(--accent); }
 .content :deep(p) { margin: 6px 0; }
-.content :deep(pre.hljs) { background: #16181d; border-radius: var(--radius-sm); padding: 10px; overflow-x: auto; }
+.content :deep(pre.hljs) { background: #1e1e1e; border-radius: var(--radius-sm); padding: 12px; overflow-x: auto; }
 .content :deep(code) { font-family: ui-monospace, monospace; font-size: 13px; }
 .content :deep(pre code) { background: none; }
-.content :deep(code:not(pre code)) { background: #16181d; padding: 2px 5px; border-radius: 4px; }
+.content :deep(code:not(pre code)) { background: var(--surface-hover); padding: 2px 5px; border-radius: 4px; }
 
 /* 思考区 */
-.step { padding: 4px 0; border-bottom: 1px dashed var(--border); }
+.think-header {
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.think-spinner {
+  position: relative; width: 13px; height: 13px; flex-shrink: 0;
+  display: inline-flex;
+}
+.think-ring {
+  position: absolute; inset: 0; border-radius: 50%;
+  border: 2px solid var(--accent-soft);
+  border-top-color: var(--accent);
+  animation: think-spin .8s linear infinite;
+}
+@keyframes think-spin { to { transform: rotate(360deg); } }
+.think-label {
+  font-size: 13px; font-weight: 600; color: var(--text-3);
+  transition: color .2s;
+}
+.think-header.active .think-label {
+  color: var(--accent-text);
+  animation: think-pulse 1.4s ease-in-out infinite;
+}
+@keyframes think-pulse { 50% { opacity: .6; } }
+
+.step { padding: 4px 0; border-bottom: 1px dashed var(--border-soft); }
 .step:last-child { border-bottom: none; }
 .step-narration {
   font-size: 13px; color: var(--text-2); opacity: .85;
 }
 .step-narration :deep(p) { margin: 4px 0; }
-.step-narration :deep(pre.hljs) { background: #16181d; border-radius: var(--radius-sm); padding: 8px; overflow-x: auto; }
+.step-narration :deep(pre.hljs) { background: #1e1e1e; border-radius: var(--radius-sm); padding: 8px; overflow-x: auto; }
 .step-narration :deep(code) { font-family: ui-monospace, monospace; font-size: 12px; }
 
 .tool-calls { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
@@ -869,38 +931,47 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
 .pending-block {
   margin-top: 12px;
   border-radius: var(--radius);
-  border: 1px solid rgba(232, 178, 107, 0.35);
-  background: rgba(232, 178, 107, 0.06);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  background: rgba(245, 158, 11, 0.05);
   overflow: hidden;
   width: 100%;
   min-width: 0;
+  box-sizing: border-box;
 }
 .pending-block-header {
   display: flex; align-items: center; gap: 8px;
   padding: 8px 12px;
-  background: rgba(232, 178, 107, 0.1);
+  background: rgba(245, 158, 11, 0.08);
   color: var(--warn);
   font-size: 14px;
   font-weight: 600;
-  border-bottom: 1px solid rgba(232, 178, 107, 0.2);
+  border-bottom: 1px solid rgba(245, 158, 11, 0.15);
 }
 .pending-block-body {
   padding: 12px;
   width: 100%;
   overflow: hidden;
+  box-sizing: border-box;
 }
-.pending-icon { font-size: 16px; }
+.pending-icon {
+  font-size: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+}
 .pending-title { font-weight: 600; }
 
-.question-block { border-color: rgba(232, 178, 107, 0.35); }
-.question-block .pending-block-header { background: rgba(232, 178, 107, 0.1); color: var(--warn); }
-.permission-block { border-color: rgba(107, 138, 253, 0.35); }
-.permission-block .pending-block-header { background: rgba(107, 138, 253, 0.1); color: var(--accent-text); }
+.question-block { border-color: rgba(245, 158, 11, 0.3); }
+.question-block .pending-block-header { background: rgba(245, 158, 11, 0.08); color: var(--warn); }
+.permission-block { border-color: rgba(139, 92, 246, 0.3); }
+.permission-block .pending-block-header { background: rgba(139, 92, 246, 0.08); color: var(--accent); }
 
 .question-item {
   margin-bottom: 14px;
   width: 100%;
   overflow: hidden;
+  box-sizing: border-box;
 }
 .question-item:last-child {
   margin-bottom: 10px;
@@ -941,8 +1012,9 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
   font-size: 14px;
   margin-bottom: 8px;
   line-height: 1.6;
-  color: var(--accent-text);
+  color: var(--accent);
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .perm-list {
@@ -955,6 +1027,8 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
 .perm-list li {
   margin: 2px 0;
   font-family: ui-monospace, monospace;
+  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 
 .pending-actions {
@@ -964,5 +1038,6 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
   margin-top: 12px;
   flex-wrap: wrap;
   width: 100%;
+  box-sizing: border-box;
 }
 </style>

@@ -12,7 +12,7 @@ defineProps<{ content: string }>()
   white-space: pre-wrap; word-break: break-word;
   font-family: ui-monospace, 'Cascadia Code', monospace;
   font-size: 13px; line-height: 1.6;
-  color: #d4d4d4;
+  color: var(--text);
   overflow: auto; height: 100%; box-sizing: border-box;
 }
 </style>
