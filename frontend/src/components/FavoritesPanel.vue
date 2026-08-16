@@ -94,6 +94,9 @@ function fmtTime(ts: number): string {
 }
 .fav-actions { flex-shrink: 0; opacity: 0; transition: opacity .15s; }
 .fav-item:hover .fav-actions { opacity: 1; }
+@media (hover: none) {
+  .fav-actions { opacity: 1; }
+}
 .fav-remove {
   color: var(--text-3); cursor: pointer; font-size: 12px; padding: 2px;
 }

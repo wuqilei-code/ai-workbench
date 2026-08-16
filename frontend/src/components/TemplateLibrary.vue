@@ -321,9 +321,15 @@ async function remove(t: TemplateVo) {
 .tpl-content {
   font-size: 12px; color: var(--text-3); line-height: 1.5;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .tpl-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 .tpl-pager { display: flex; justify-content: center; padding: 10px 0 2px; }
 .edit-form { display: flex; flex-direction: column; gap: 12px; }
+
+/* 移动端:分类标签占满整行,避免被搜索框+按钮挤压成一竖条 */
+@media (max-width: 768px) {
+  .tpl-head .cat-tabs { flex-basis: 100%; order: 3; }
+}
 </style>

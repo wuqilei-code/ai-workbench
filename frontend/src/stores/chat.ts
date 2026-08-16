@@ -66,9 +66,16 @@ export const useChatStore = defineStore('chat', () => {
   const compacting = ref(false)
   /** 压缩中提示的兜底超时(防止 session.compacted 丢失时提示一直挂着) */
   let _compactingTimer: ReturnType<typeof setTimeout> | null = null
-  /** 压缩点:压缩(主动或自动)成功后设为当时最大消息 id;会话 token 环只统计其后的消息。
-   *  opencode compaction 只总结历史不删消息,历史字符仍在,需用该点把旧消息从估算中排除。 */
-  const compactCutoffId = ref(0)
+  /** 当前会话的压缩点:最近一条"已完成压缩"标记消息的 id;其前历史已总结,不参与 token 估算。
+   *  从当前会话消息派生(压缩标记随消息持久化在各自会话里),
+   *  切换会话/重载后按各会话单独记录,圆环只需查询该值即可。 */
+  const compactCutoffId = computed(() => {
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      const m = messages.value[i]
+      if (m.role === 'compaction' && m.status === 'completed') return m.id ?? 0
+    }
+    return 0
+  })
 
   /**
    * 标记会话已压缩:刷新消息列表,并把 token 环的统计起点推到当前最后一条消息。
@@ -86,19 +93,19 @@ export const useChatStore = defineStore('chat', () => {
         const freshMinId = fresh.length ? Math.min(...fresh.map((m) => m.id ?? 0)) : 0
         const freshIds = new Set(fresh.map((m) => m.opencodeMessageId).filter(Boolean))
         const freshLocalIds = new Set(fresh.map((m) => m.id))
-        // 本地已加载但不在最新分页里的消息:更早历史(localOlder)+ 更新的本地态(localNewer)
+        // 本地已加载但不在最新分页里的消息:更早历史(localOlder)+ 更新的本地态(localNewer)。
+        // 已出现在 fresh 里(按 id 或 opencodeMessageId 命中)的本地消息必须剔除,否则刷新后重复。
         const localOlder = messages.value.filter(
           (m) => (m.id != null && m.id > 0 && m.id < freshMinId) && !freshLocalIds.has(m.id),
         )
-        const localNewer = messages.value.filter(
-          (m) =>
-            (m._pending || (m.id != null && m.id < 0) || !m.opencodeMessageId || !freshIds.has(m.opencodeMessageId)) &&
-            !freshLocalIds.has(m.id),
-        )
+        const localNewer = messages.value.filter((m) => {
+          if (freshLocalIds.has(m.id)) return false
+          if (m.opencodeMessageId != null && freshIds.has(m.opencodeMessageId)) return false
+          return m._pending || (m.id != null && m.id < 0) || !m.opencodeMessageId
+        })
         messages.value = [...localOlder, ...fresh, ...localNewer]
         olderTopId.value = localOlder.length ? Math.min(...localOlder.map((m) => m.id ?? 0)) : freshMinId
         hydrateSummaries(); hydratePendingState()
-        compactCutoffId.value = fresh.length ? fresh[fresh.length - 1].id : 0
       })
       .catch((e) => console.warn('[chat] refresh after compact failed', e))
   }
@@ -345,7 +352,6 @@ export const useChatStore = defineStore('chat', () => {
     _interruptedText = ''
     switching.value = true
     manualCollapseOverride.value = {}
-    compactCutoffId.value = 0
     compacting.value = false
     if (_compactingTimer) { clearTimeout(_compactingTimer); _compactingTimer = null }
     try {
@@ -366,7 +372,11 @@ export const useChatStore = defineStore('chat', () => {
       hasOlder.value = false
       loadingOlder.value = false
     } finally {
-      if (seq === _loadSeq) switching.value = false
+      if (seq === _loadSeq) {
+        // 遮罩保持到列表渲染并滚到底后再摘:列表在此前被 isNewSession 短暂卸载,
+        // 消息就绪后才重新挂载并滚动;延迟摘遮罩可盖住这段"顶部闪现",渲染完再展示。
+        setTimeout(() => { if (seq === _loadSeq) switching.value = false }, 300)
+      }
     }
     subscribe()
     startWatchdog()
@@ -533,15 +543,22 @@ export const useChatStore = defineStore('chat', () => {
       const localOlder = messages.value.filter(
         (m) => (m.id != null && m.id > 0 && m.id < freshMinId) && !freshLocalIds.has(m.id),
       )
-      const localNewer = messages.value.filter(
-        (m) =>
-          (m._pending || (m.id != null && m.id < 0) || !m.opencodeMessageId || !freshIds.has(m.opencodeMessageId)) &&
-          !freshLocalIds.has(m.id),
-      )
+      const localNewer = messages.value.filter((m) => {
+        if (freshLocalIds.has(m.id)) return false
+        if (m.opencodeMessageId != null && freshIds.has(m.opencodeMessageId)) return false
+        return m._pending || (m.id != null && m.id < 0) || !m.opencodeMessageId
+      })
       messages.value = [...localOlder, ...fresh, ...localNewer]
       olderTopId.value = localOlder.length ? Math.min(...localOlder.map((m) => m.id ?? 0)) : freshMinId
       hydrateSummaries()
       hydratePendingState()
+      // 断线期间 agent 实际在等待权限/问题确认(事件丢失导致 isStreaming 未置 false):
+      // 恢复出未决交互后立刻收尾流式态,否则心跳看门狗会反复 forceReconnect、输入区误判"处理中"。
+      if (hasPendingInteraction.value) {
+        isStreaming.value = false
+        interruptedByDisconnect.value = false
+        if (_disconnectAbortTimer) { clearTimeout(_disconnectAbortTimer); _disconnectAbortTimer = null }
+      }
       const anyStreaming = fresh.some((m) => m.status === 'streaming')
       if (isStreaming.value && !anyStreaming && !hasPendingInteraction.value) {
         // 断线期间本轮已结束(或事件丢失):若本轮由断线中断,中止并展示兜底提示;
@@ -592,7 +609,7 @@ export const useChatStore = defineStore('chat', () => {
           _disconnectAbortTimer = setTimeout(() => {
             _disconnectAbortTimer = null
             abortStreamOnDisconnect()
-          }, 30_000)
+          }, 180_000)
         }
       },
       onAuthError: () => {
@@ -739,7 +756,12 @@ export const useChatStore = defineStore('chat', () => {
     } finally {
       isStreaming.value = false
       streamStartAt.value = 0
+      // 压缩被中断:清除"正在压缩"状态与兜底定时器
+      compacting.value = false
+      if (_compactingTimer) { clearTimeout(_compactingTimer); _compactingTimer = null }
     }
+    // 刷新消息:拉取后端插入的"已中断"标记记录,前端即时渲染分割线
+    reconcileAfterReconnect()
   }
 
   /**
@@ -831,6 +853,9 @@ export const useChatStore = defineStore('chat', () => {
       case 'session.status':
         clearAgentStartingFallback()
         agentStarting.value = false
+        // 压缩期间:压缩 agent 的 busy/idle 心跳不代表用户对话在生成,忽略,
+        // 否则 busy 会把 isStreaming 置 true,压缩结束后残留"AI 正在处理中"。
+        if (compacting.value) break
         if (data.status?.type === 'idle') finishStreaming()
         else if (data.status?.type === 'busy') {
           isStreaming.value = true
@@ -839,6 +864,7 @@ export const useChatStore = defineStore('chat', () => {
         }
         break
       case 'session.idle':
+        if (compacting.value) break
         finishStreaming()
         break
 
@@ -858,6 +884,8 @@ export const useChatStore = defineStore('chat', () => {
         compacting.value = false
         console.log('[chat] compacting: OFF (compacted)')
         if (_compactingTimer) { clearTimeout(_compactingTimer); _compactingTimer = null }
+        // 压缩完成:结束流式态,避免残留"AI 正在处理中"提示
+        finishStreaming()
         markCompacted()
         break
       }
@@ -984,6 +1012,11 @@ export const useChatStore = defineStore('chat', () => {
     const role = info.role || 'assistant'
     const completed = info.time?.completed != null
     const status = role === 'user' ? 'completed' : completed ? 'completed' : 'streaming'
+    // opencode 在消息定稿时携带真实 token 用量(info.tokens),实时回填供圆环统计;
+    // 建壳阶段 tokens 全为 0,须忽略,避免用零覆盖已有真实值。
+    const tokens = info.tokens && typeof info.tokens === 'object'
+      && ((info.tokens.input ?? 0) > 0 || (info.tokens.output ?? 0) > 0)
+      ? info.tokens : undefined
 
     // 用户消息:关联到最后一个 _pending 乐观气泡(刚发送的那条),避免重复气泡
     if (role === 'user') {
@@ -1005,6 +1038,7 @@ export const useChatStore = defineStore('chat', () => {
     if (existIdx >= 0) {
       messages.value[existIdx] = {
         ...messages.value[existIdx], role, status,
+        tokens: tokens ?? messages.value[existIdx].tokens,
         compactionSummary: isCompactionMsg(info) ? true : messages.value[existIdx].compactionSummary,
       }
     } else {
@@ -1015,6 +1049,7 @@ export const useChatStore = defineStore('chat', () => {
         role,
         content: '',
         status,
+        tokens,
         createdAt: info.time?.created ? new Date(info.time.created).toISOString() : new Date().toISOString(),
         compactionSummary: isCompactionMsg(info) ? true : undefined,
       })
@@ -1237,7 +1272,12 @@ export const useChatStore = defineStore('chat', () => {
     const idx = findOrCreateAssistantMessageIndex(toolMessageID)
     const msg = messages.value[idx]
     const parts: StepParts = msg.parts ? { ...msg.parts } : {}
-    parts.pendingPermission = pp
+    // 多个并发权限各自独立:按 requestId 去重追加,不互相覆盖
+    const list = parts.pendingPermissions ? [...parts.pendingPermissions] : []
+    const exist = list.findIndex((p) => p.requestId === pp.requestId)
+    if (exist >= 0) list[exist] = pp
+    else list.push(pp)
+    parts.pendingPermissions = list
     messages.value[idx] = { ...msg, parts }
   }
 
@@ -1246,10 +1286,10 @@ export const useChatStore = defineStore('chat', () => {
       const idx = messages.value.findIndex((m) => m.opencodeMessageId === toolMessageID)
       if (idx >= 0) {
         const msg = messages.value[idx]
-        if (msg.parts?.pendingPermission) {
+        if (msg.parts?.pendingPermissions?.length) {
           const parts: StepParts = {
             ...msg.parts,
-            pendingPermission: { ...msg.parts.pendingPermission, _replied: true },
+            pendingPermissions: msg.parts.pendingPermissions.map((p) => ({ ...p, _replied: true })),
           }
           messages.value[idx] = { ...msg, parts }
           const targetId = toolMessageID
@@ -1257,8 +1297,8 @@ export const useChatStore = defineStore('chat', () => {
             const mi = messages.value.findIndex((m) => m.opencodeMessageId === targetId)
             if (mi < 0) return
             const m = messages.value[mi]
-            if (m?.parts?.pendingPermission) {
-              messages.value[mi] = { ...m, parts: { ...m.parts, pendingPermission: null } }
+            if (m?.parts?.pendingPermissions) {
+              messages.value[mi] = { ...m, parts: { ...m.parts, pendingPermissions: null as any } }
             }
           }, 100)
         }
@@ -1267,10 +1307,10 @@ export const useChatStore = defineStore('chat', () => {
     }
     for (let i = messages.value.length - 1; i >= 0; i--) {
       const msg = messages.value[i]
-      if (msg.role === 'assistant' && msg.parts?.pendingPermission && !msg.parts.pendingPermission._replied) {
+      if (msg.role === 'assistant' && msg.parts?.pendingPermissions?.length) {
         const parts: StepParts = {
           ...msg.parts,
-          pendingPermission: { ...msg.parts.pendingPermission, _replied: true },
+          pendingPermissions: msg.parts.pendingPermissions.map((p) => ({ ...p, _replied: true })),
         }
         messages.value[i] = { ...msg, parts }
         const targetId = msg.opencodeMessageId
@@ -1281,8 +1321,8 @@ export const useChatStore = defineStore('chat', () => {
             : (messages.value[targetIdx]?.opencodeMessageId === targetId ? targetIdx : -1)
           if (mi < 0) return
           const m = messages.value[mi]
-          if (m?.parts?.pendingPermission) {
-            messages.value[mi] = { ...m, parts: { ...m.parts, pendingPermission: null } }
+          if (m?.parts?.pendingPermissions) {
+            messages.value[mi] = { ...m, parts: { ...m.parts, pendingPermissions: null as any } }
           }
         }, 100)
         return
@@ -1299,8 +1339,12 @@ export const useChatStore = defineStore('chat', () => {
     }
     for (let i = messages.value.length - 1; i >= 0; i--) {
       const msg = messages.value[i]
-      if (msg.role === 'assistant' && msg.parts?.pendingPermission?.requestId === requestId) {
-        const parts: StepParts = { ...msg.parts, pendingPermission: { ...msg.parts.pendingPermission, _replied: true } }
+      const list = msg.parts?.pendingPermissions
+      if (msg.role === 'assistant' && list && list.some((p) => p.requestId === requestId)) {
+        const parts: StepParts = {
+          ...msg.parts,
+          pendingPermissions: list.map((p) => (p.requestId === requestId ? { ...p, _replied: true } : p)),
+        }
         messages.value[i] = { ...msg, parts }
         const targetId = msg.opencodeMessageId
         const targetRequestId = requestId
@@ -1311,8 +1355,9 @@ export const useChatStore = defineStore('chat', () => {
             : (messages.value[targetIdx]?.opencodeMessageId === targetId ? targetIdx : -1)
           if (mi < 0) return
           const m = messages.value[mi]
-          if (m?.parts?.pendingPermission && m.parts.pendingPermission.requestId === targetRequestId) {
-            messages.value[mi] = { ...m, parts: { ...m.parts, pendingPermission: null } }
+          if (m?.parts?.pendingPermissions) {
+            const rest = m.parts.pendingPermissions.filter((p) => p.requestId !== targetRequestId)
+            messages.value[mi] = { ...m, parts: { ...m.parts, pendingPermissions: rest.length ? rest : (null as any) } }
           }
         }, 100)
         return
@@ -1399,6 +1444,12 @@ export const useChatStore = defineStore('chat', () => {
     if (_disconnectAbortTimer) { clearTimeout(_disconnectAbortTimer); _disconnectAbortTimer = null }
     if (!interruptedByDisconnect.value) return
     interruptedByDisconnect.value = false
+    // 重连对账后若发现仍有未决权限/问题(agent 正等待用户确认),绝不 abort 后端,
+    // 否则会杀死本应展示的授权/提问弹窗;此时已恢复连接,正常续播即可。
+    if (hasPendingInteraction.value) {
+      disconnectAborted.value = false
+      return
+    }
     disconnectAborted.value = true
     try { if (currentSessionId.value) await chatApi.abort(currentSessionId.value) } catch (_) {}
     // 已有部分输出:先定稿到消息,避免用户丢失已生成内容
@@ -1438,7 +1489,7 @@ export const useChatStore = defineStore('chat', () => {
     if (last.finalAnswer) steps.push(last.finalAnswer)
     return steps.some(s =>
       (s.message.parts?.pendingQuestion && !s.message.parts.pendingQuestion._replied) ||
-      (s.message.parts?.pendingPermission && !s.message.parts.pendingPermission._replied),
+      (s.message.parts?.pendingPermissions?.some(p => !p._replied)),
     )
   })
 

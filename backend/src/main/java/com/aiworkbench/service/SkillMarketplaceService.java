@@ -80,7 +80,7 @@ public class SkillMarketplaceService {
         Long dup = marketplaceMapper.selectCount(
                 new LambdaQueryWrapper<SkillMarketplace>().eq(SkillMarketplace::getName, req.getName()));
         if (dup != null && dup > 0) {
-            throw new BusinessException(ResultCode.CONFLICT.getCode(), "广场已存在同名技能「" + req.getName() + "」");
+            throw new BusinessException(ResultCode.CONFLICT.getCode(), "市场已存在同名技能「" + req.getName() + "」");
         }
         User author = userMapper.selectById(userId);
         SkillMarketplace s = new SkillMarketplace();
@@ -120,6 +120,8 @@ public class SkillMarketplaceService {
             if (f == null || f.getPath() == null || f.getPath().isBlank()) continue;
             String rel = f.getPath().replace('\\', '/').replaceAll("^/+", "");
             if (rel.contains("..") || rel.startsWith("/") || rel.isEmpty()) continue;
+            // SKILL.md 已由 content 写入,附加文件里再带一个会重复覆盖,跳过
+            if ("SKILL.md".equals(rel)) continue;
             workspaceService.writeFile(userId, dir + "/" + rel,
                     f.getContent() == null ? "" : f.getContent());
             written++;

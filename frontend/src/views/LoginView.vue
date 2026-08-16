@@ -31,7 +31,7 @@ async function onSubmit() {
 /** 项目功能展示 */
 const features = [
   { icon: '💬', title: '智能对话', desc: '多模型 AI 助手，上下文感知，支持文档/代码/数据分析' },
-  { icon: '🧩', title: '技能广场', desc: '一键安装/发布技能，SKILL.md 驱动的工作流扩展' },
+  { icon: '🧩', title: '技能市场', desc: '一键安装/发布技能，SKILL.md 驱动的工作流扩展' },
   { icon: '📚', title: '模板库', desc: '周报、会议纪要、数据分析等常用提示词模板' },
   { icon: '⏰', title: '定时自动化', desc: '可视化 cron 定时任务，结果自动生成执行报告' },
   { icon: '📁', title: '文件工作区', desc: '内置代码编辑器、预览、版本历史与 AI 联动' },
@@ -242,5 +242,29 @@ const features = [
   .brand-panel { padding: 30px 28px; }
   .feature-grid { grid-template-columns: 1fr; }
   .form-panel { border-left: none; border-top: 1px solid rgba(255,255,255,0.06); }
+}
+
+/* 移动端:聚焦表单,隐藏功能介绍,允许滚动,输入框 16px 防 iOS 自动放大 */
+@media (max-width: 768px) {
+  .auth-page {
+    overflow-y: auto;
+    padding: 12px;
+  }
+  .auth-shell {
+    width: 100%;
+    min-height: 0;
+    border-radius: 16px;
+    margin: auto 0;
+  }
+  .brand-panel {
+    padding: 20px 20px 4px;
+    align-items: center;
+    text-align: center;
+  }
+  .brand-slogan { margin: 8px 0 0; font-size: 13px; }
+  .feature-grid { display: none; }
+  .form-panel { padding: 16px 20px 24px; }
+  .form-title { font-size: 20px; }
+  :deep(.n-input__input-el) { font-size: 16px !important; }
 }
 </style>

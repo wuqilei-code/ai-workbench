@@ -40,7 +40,7 @@ export interface SessionVo {
 export interface MessageVo {
   id: number
   opencodeMessageId?: string
-  role: 'user' | 'assistant' | 'tool' | 'system' | 'summary' | 'compaction'
+  role: 'user' | 'assistant' | 'tool' | 'system' | 'summary' | 'compaction' | 'interrupted'
   content: string
   /** 结构化 part:工具调用 & 步骤结束标记;旧消息为 null */
   parts?: StepParts | null
@@ -220,7 +220,8 @@ export interface StepParts {
   /** 模型思维链(reasoning part 的 text);模型不输出思维链则不存在 */
   reasoning?: { text?: string } | null
   pendingQuestion?: PendingQuestion | null
-  pendingPermission?: PendingPermission | null
+  /** 多个并发待确认权限(一条命令可能同时触发 external_directory + bash 等多个,按 requestId 各自独立) */
+  pendingPermissions?: PendingPermission[]
 }
 
 /** Turn 内的一个步骤(中间思考步或最终答案) */

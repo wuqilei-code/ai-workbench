@@ -17,6 +17,7 @@ const emit = defineEmits<{
   'open-automation': []
   'open-find': []
   'open-my-mcp': []
+  'open-dashboard': []
 }>()
 
 const router = useRouter()
@@ -48,6 +49,54 @@ const searchActive = computed(() => searchQuery.value.trim().length > 0)
 const displayed = computed<SessionVo[]>(() =>
   searchActive.value ? chat.searchResults : sessions.value,
 )
+
+/** 相对时间:刚刚 / N 分钟前 / N 小时前 / 昨天 / N 天前 / 日期 */
+function fmtRelativeTime(ts?: string): string {
+  if (!ts) return ''
+  const d = new Date(ts).getTime()
+  if (Number.isNaN(d)) return ''
+  const diff = Date.now() - d
+  const min = 60_000, hour = 3_600_000, day = 86_400_000
+  if (diff < min) return '刚刚'
+  if (diff < hour) return `${Math.floor(diff / min)} 分钟前`
+  if (diff < day) return `${Math.floor(diff / hour)} 小时前`
+  const dayDiff = Math.floor(diff / day)
+  if (dayDiff === 1) return '昨天'
+  if (dayDiff < 7) return `${dayDiff} 天前`
+  const date = new Date(d)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+/** 会话时间分组:今天/昨天/7 天内/更早 */
+function groupOf(ts?: string): string {
+  if (!ts) return '更早'
+  const d = new Date(ts).getTime()
+  if (Number.isNaN(d)) return '更早'
+  const now = new Date()
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const day = 86_400_000
+  if (d >= todayStart) return '今天'
+  if (d >= todayStart - day) return '昨天'
+  if (d >= todayStart - 7 * day) return '7 天内'
+  return '更早'
+}
+
+interface GroupedSessions { label: string; items: SessionVo[] }
+/** 分组后的会话列表:搜索时平铺;否则 置顶 → 今天 → 昨天 → 7 天内 → 更早 */
+const grouped = computed<GroupedSessions[]>(() => {
+  if (searchActive.value) {
+    return displayed.value.length ? [{ label: '搜索结果', items: displayed.value }] : []
+  }
+  const groups: GroupedSessions[] = []
+  const pinned = displayed.value.filter((s) => !viewArchived.value && s.pinned)
+  const rest = displayed.value.filter((s) => viewArchived.value || !s.pinned)
+  if (pinned.length) groups.push({ label: '置顶', items: pinned })
+  for (const label of ['今天', '昨天', '7 天内', '更早']) {
+    const items = rest.filter((s) => groupOf(s.updatedAt) === label)
+    if (items.length) groups.push({ label, items })
+  }
+  return groups
+})
 
 function onSearchInput(v: string) {
   searchQuery.value = v
@@ -148,6 +197,7 @@ function confirmSwitch(action: string): Promise<boolean> {
       content: '当前会话仍在生成中。切换后本会话的实时推送会中断(已在服务端执行的操作会继续完成),确认继续？',
       positiveText: '继续',
       negativeText: '取消',
+      positiveButtonProps: { type: 'primary' },
       onPositiveClick: () => resolve(true),
       onNegativeClick: () => resolve(false),
       onClose: () => resolve(false),
@@ -161,6 +211,7 @@ async function remove(id: number) {
     content: '确定删除该会话？此操作不可恢复。',
     positiveText: '删除',
     negativeText: '取消',
+    positiveButtonProps: { type: 'primary' },
     onPositiveClick: async () => {
       try {
         await withBusy('正在删除会话…', () => chat.deleteSession(id))
@@ -184,6 +235,7 @@ async function onArchive(s: { id: number; title: string }) {
     content: `将「${s.title}」移入归档？归档后仍可在归档视图找回。`,
     positiveText: '归档',
     negativeText: '取消',
+    positiveButtonProps: { type: 'primary' },
     onPositiveClick: async () => {
       try {
         await withBusy('正在归档会话…', () => chat.archiveSession(s.id))
@@ -233,6 +285,7 @@ async function onClear(s: { id: number; title: string }) {
     content: `将清空「${s.title}」的所有聊天记录（会话保留）。确定继续？`,
     positiveText: '清空',
     negativeText: '取消',
+    positiveButtonProps: { type: 'primary' },
     onPositiveClick: async () => {
       try {
         await withBusy('正在清空会话…', () => chat.clearSession(s.id))
@@ -316,13 +369,17 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
     </div>
 
     <div class="nav-section">
+      <div class="nav-item" @click="emit('open-dashboard')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+        <span>驾驶舱</span>
+      </div>
       <div class="nav-item" @click="newChat">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         <span>新建任务</span>
       </div>
       <div class="nav-item" @click="emit('open-plugin-market')">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
-        <span>插件市场</span>
+        <span>技能市场</span>
       </div>
       <div class="nav-item" @click="emit('open-automation')">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
@@ -352,6 +409,21 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
         </n-dropdown>
       </div>
 
+      <div class="search-box">
+        <n-input
+          v-model:value="searchQuery"
+          size="small"
+          clearable
+          placeholder="搜索会话…"
+          @update:value="onSearchInput"
+          @clear="clearSearch"
+        >
+          <template #prefix>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </template>
+        </n-input>
+      </div>
+
       <div class="list-tabs">
         <span
           class="tab"
@@ -366,33 +438,58 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
       </div>
 
       <div class="session-list">
-        <div
-          v-for="s in displayed"
-          :key="s.id"
-          class="session-item"
-          :class="{ active: s.id === chat.currentSessionId }"
-          @click="openSession(s.id)"
-        >
-          <span v-if="!viewArchived && s.pinned" class="pin-mark" title="已置顶">📌</span>
-          <span class="title" :title="s.agent ? `agent: ${s.agent}` : undefined">{{ s.title }}</span>
-          <n-tag v-if="searchActive && s.archived" size="tiny" :bordered="false" class="arch-tag">归档</n-tag>
-          <n-tag v-if="s.agent" size="tiny" :bordered="false" class="agent-tag">{{ s.agent }}</n-tag>
-          <n-dropdown
-            :options="menuOptions(s)"
-            trigger="click"
-            size="small"
-            placement="bottom-end"
-            @select="(k: string) => onMenuSelect(k, s)"
+        <template v-for="g in grouped" :key="g.label">
+          <div v-if="!searchActive" class="group-header">{{ g.label }}</div>
+          <div
+            v-for="s in g.items"
+            :key="s.id"
+            class="session-item"
+            :class="{ active: s.id === chat.currentSessionId }"
+            @click="openSession(s.id)"
           >
-            <n-button quaternary circle size="tiny" @click.stop>⋯</n-button>
-          </n-dropdown>
-        </div>
+            <span v-if="!viewArchived && s.pinned" class="pin-mark" title="已置顶">📌</span>
+            <span class="title" :title="s.agent ? `agent: ${s.agent}` : undefined">{{ s.title }}</span>
+            <n-tag v-if="searchActive && s.archived" size="tiny" :bordered="false" class="arch-tag">归档</n-tag>
+            <span class="item-time">{{ fmtRelativeTime(s.updatedAt) }}</span>
+            <div class="item-ops" @click.stop>
+              <button
+                v-if="!viewArchived"
+                class="op-btn"
+                :title="s.pinned ? '取消置顶' : '置顶'"
+                @click="onPin(s)"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16h14v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z"/></svg>
+              </button>
+              <button
+                v-if="!viewArchived"
+                class="op-btn"
+                title="重命名"
+                @click="onRename(s)"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+              </button>
+              <n-dropdown
+                :options="menuOptions(s)"
+                trigger="click"
+                size="small"
+                placement="bottom-end"
+                @select="(k: string) => onMenuSelect(k, s)"
+              >
+                <n-button quaternary circle size="tiny" @click.stop>⋯</n-button>
+              </n-dropdown>
+            </div>
+          </div>
+        </template>
         <n-spin v-if="searchActive && searching" size="small" style="margin: 24px auto; display: block" />
         <n-empty
           v-else-if="!displayed.length"
           :description="searchActive ? '未找到匹配的会话' : (viewArchived ? '暂无归档会话' : '暂无会话')"
           style="margin-top: 40px"
-        />
+        >
+          <template #extra>
+            <n-button v-if="!searchActive && !viewArchived" size="small" type="primary" @click="newChat">新建会话</n-button>
+          </template>
+        </n-empty>
         <transition name="sidebusy-fade">
           <div v-if="busy" class="side-busy">
             <n-spin size="small" />
@@ -406,7 +503,7 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
       v-model:show="renameVisible"
       preset="card"
       title="重命名会话"
-      :style="{ width: '380px' }"
+      :style="{ width: '380px', maxWidth: '92vw' }"
       :mask-closable="false"
       :bordered="false"
     >
@@ -563,11 +660,9 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
 }
 .arch-tag {
   flex-shrink: 0;
-  margin-right: 4px;
 }
 .agent-tag {
   flex-shrink: 0;
-  margin-right: 4px;
 }
 .pin-mark {
   font-size: 11px;
@@ -577,7 +672,7 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
 .session-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 4px;
   padding: 8px 12px;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -612,7 +707,72 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
+  min-width: 0;
   color: var(--text-2);
   font-size: 13px;
+}
+.search-box {
+  padding: 0 16px 8px;
+}
+.group-header {
+  padding: 8px 12px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+.item-time {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-3);
+  transition: opacity 0.15s;
+}
+.session-item:hover .item-time {
+  opacity: 0;
+}
+.item-ops {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 2px;
+  border-radius: 6px;
+  background: inherit;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+.session-item:hover .item-ops {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* 触屏:会话操作(⋯ 菜单)常显,hover 不生效 */
+@media (hover: none) {
+  .item-ops {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+.op-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.15s;
+}
+.op-btn:hover {
+  background: var(--surface);
+  color: var(--accent);
 }
 </style>

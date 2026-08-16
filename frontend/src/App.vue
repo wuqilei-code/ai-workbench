@@ -135,6 +135,7 @@ const lightOverrides: GlobalThemeOverrides = {
   --input-border: rgba(255, 255, 255, 0.12);
   --user-bubble-bg: #2b3445;
   --ai-bubble-bg: #20242b;
+  --code-bg: #1e1e1e;
   /* 登录/注册页两版主题 */
   --auth-bg: linear-gradient(150deg, #101218 0%, #161924 45%, #1b1e2e 100%);
   --auth-shell-bg: rgba(255, 255, 255, 0.035);
@@ -179,6 +180,7 @@ const lightOverrides: GlobalThemeOverrides = {
   --input-border: rgba(0, 0, 0, 0.12);
   --user-bubble-bg: #f0f0f0;
   --ai-bubble-bg: #f5f5f5;
+  --code-bg: #f6f8fa;
   /* 登录/注册页两版主题 */
   --auth-bg: linear-gradient(150deg, #f6f7fb 0%, #f1f2f9 45%, #eceef7 100%);
   --auth-shell-bg: rgba(255, 255, 255, 0.75);
@@ -278,4 +280,16 @@ body {
 :root[data-theme='light'] .hljs-comment,
 :root[data-theme='light'] .hljs-quote { color: #6e7781; font-style: italic; }
 :root[data-theme='light'] .hljs-built_in { color: #953800; }
+:root[data-theme='light'] .hljs-attr,
+:root[data-theme='light'] .hljs-variable,
+:root[data-theme='light'] .hljs-template-variable,
+:root[data-theme='light'] .hljs-params { color: #953800; }
+:root[data-theme='light'] .hljs-type,
+:root[data-theme='light'] .hljs-name { color: #0550ae; }
+:root[data-theme='light'] .hljs-selector-id,
+:root[data-theme='light'] .hljs-selector-class { color: #8250df; }
+:root[data-theme='light'] .hljs-meta,
+:root[data-theme='light'] .hljs-doctag { color: #6e7781; }
+:root[data-theme='light'] .hljs-addition { color: #1a7f37; }
+:root[data-theme='light'] .hljs-deletion { color: #cf222e; }
 </style>

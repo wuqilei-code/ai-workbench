@@ -539,6 +539,8 @@ public class OpencodeProcessManager {
         env.put("XDG_STATE_HOME", home.resolve(".local/state").toString());
         env.put("OPENCODE_SERVER_USERNAME", props.getUsername());
         env.put("OPENCODE_SERVER_PASSWORD", perUserPassword(userId));
+        // bash 工具超时:超时后 opencode kill 命令并把提示返回给 agent,agent 可继续,而非整轮中断
+        env.put("OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS", String.valueOf(props.getBashTimeoutMs()));
         // 解析用户 opencode.env 中的 KEY=VALUE(解密后的 API key),注入环境
         Path envFile = home.resolve(".config/opencode/opencode.env");
         parseEnvFile(envFile).forEach(env::put);

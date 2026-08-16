@@ -279,6 +279,7 @@ public OpencodeInstanceEventConsumer(WebClient instanceClient, OpencodeEventRout
                 }
             }
             if (("permission.asked".equals(resolvedType) || "permission.v2.asked".equals(resolvedType)) && sessionID != null) {
+                log.info("permission-asked: type={}, sessionID={}, properties={}", resolvedType, sessionID, properties);
                 try {
                     chatMessageService.upsertPermissionFromEvent(sessionID, properties);
                 } catch (Exception persistErr) {

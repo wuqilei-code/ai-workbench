@@ -46,6 +46,9 @@ opencode:
   agent-memory-mb: ${OPENCODE_AGENT_MEMORY_MB:1024}
   agent-stop-grace-seconds: ${OPENCODE_AGENT_STOP_GRACE:5}
   agent-network: ${OPENCODE_AGENT_NETWORK:aiwb-agents}
+  # bash 工具默认超时(ms);看门狗 stuck-tool-timeout-ms 须大于它,保证超时后 agent 能继续而非被看门狗 abort
+  bash-timeout-ms: ${OPENCODE_BASH_TIMEOUT_MS:300000}
+  stuck-tool-timeout-ms: ${OPENCODE_STUCK_TOOL_TIMEOUT_MS:360000}
   # 定时任务队列(JobScheduler/JobQueueDispatcher)
   job-max-concurrent: ${OPENCODE_JOB_MAX_CONCURRENT:1}
   job-image: ${AGENT_IMAGE:ai-workbench-agent}

@@ -40,29 +40,10 @@ Python dependencies:
 
 Node.js / frontend support:
 
-- Node.js **v22** + npm 10 are preinstalled, with **vite**, **typescript** and **tsx** available globally (`vite`, `tsc`, `tsx` commands). Use them to build/serve/type-check frontend code.
+- Node.js **v22** + npm 10 are preinstalled, with **vite**, **typescript** and **tsx** available globally (`vite`, `tsc`, `tsx` commands). Use them to build/type-check frontend code.
 - `npm` is **kept** (unlike pip) so you can `npm install` project dependencies; the registry is preset to the npmmirror mirror. Prefer installing into the project (not globally). If the environment has no internet, rely on the globally preinstalled tools and vendor any extra packages you need ahead of time.
 - For running/typing TypeScript on the fly, `tsx file.ts` works without a build step.
-- When starting a frontend dev server for the user to view, bind it to `0.0.0.0` and report the preview address (see "Service preview").
-
-Service preview (服务预览):
-
-- If the user asks you to start a local web service (Flask/FastAPI/`python -m http.server`/Jupyter/Streamlit/plotly dashboards etc.) for them to view, you CAN do it — start the server inside the workspace (bind to `0.0.0.0`, choose a port like 8000/8080 that is not already in use), then tell the user the preview address.
-- The preview address is always of the form `/api/preview/<port>/` (a relative URL, no scheme/host needed). Write it plainly in your reply, e.g.:
-  ```
-  预览服务已启动,点击 /api/preview/8000/ 打开。
-  ```
-  The UI auto-converts such `/api/preview/<port>/...` text into a clickable "打开预览" link.
-- Notes:
-  - The service runs inside your sandboxed container and is reachable by the user through the gateway only while your session/container is alive; it is not exposed to the public internet.
-  - Bind the server to `0.0.0.0`, not `127.0.0.1`, so the gateway proxy can reach it.
-  - **Never start the server in the foreground of a bash tool call.** A foreground long-running process (Flask/FastAPI/vite dev server etc.) makes the bash tool wait forever, the turn hangs until the watchdog aborts it after ~90s, and the user sees a stuck session. ALWAYS start it detached so the bash command returns immediately:
-    - `setsid nohup python3 app.py > tasks/<name>.log 2>&1 < /dev/null &`
-    - `setsid nohup npx vite --host 0.0.0.0 --port 5173 > tasks/vite.log 2>&1 < /dev/null &`
-  - After starting, verify it is listening (e.g. `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:<port>/` or `ss -tln | grep <port>`), then report the preview address.
-  - If you must run a blocking command to test (health check, single run), wrap it in `timeout 15 <cmd>` so it cannot hang the turn.
-  - Prefer long-running services via the background-task convention so the turn returns immediately; the preview stays reachable while the process runs.
-  - If the user asked for a one-shot file/artifact instead of a running service, produce the file and declare it with `[结果文件]` as usual rather than starting a server.
+- **Do not start a dev server / web service for the user to preview.** Only build and create files/projects; the user views the generated artifacts in the workbench, not a live server.
 
 Intermediate script cleanup:
 
@@ -116,6 +97,8 @@ Background long-running tasks (后台长任务):
 - The watcher runs every ~5s, detects completion, and injects the result (log tail + status) as a new message in the conversation so the agent **automatically continues the follow-up steps** and reports back. Do not schedule any further manual polling.
 - `.done` contract: status starting with `failed` (e.g. `failed: 磁盘不足`) means failure; **any other content (or an empty file) means the task finished** — downstream scripts / pipeline skills must treat non-`failed` as ready.
 - **Never run unbounded commands in the foreground of a turn** (that is what caused stuck conversations): validation must use `bash -n`, a bounded `timeout 20 <cmd>`, or a quick single run. Never run a script with a wait/dependency loop (like a pipeline node) in the foreground to "test" it — run such tests through the background-task path, with a short `PIPE_DEP_TIMEOUT_S` if available.
+- **When running any test script or command that may start a server / long-lived process (node/python tests, `node xxx.js`, `pytest`, dev server, etc.), ALWAYS wrap it with a hard `timeout`** so it cannot hang the turn, e.g. `timeout 30 node scratch/test_auth.js`. If it genuinely starts a server, start that server detached in the background (`setsid nohup ... > tasks/<id>.log 2>&1 < /dev/null &`) and only run short checks against it in the foreground — never run the server itself in the foreground, or a leftover child process will keep the bash pipe open and stall the turn.
+- **When a bash command times out (default 5 minutes), do NOT just stop the reply.** The tool returns a timeout notice to you — acknowledge it to the user and keep going: explain that the command exceeded the time limit, then either (a) retry with a shorter/bounded command, (b) move the long-running work to the background-task convention, or (c) summarize what completed and what remains. Ending the turn silently on a timeout is wrong.
 - Clean up `tasks/` files (`.json/.pid/.log/.done/.delivered`) after the injected continuation has consumed the result, to avoid a stale task re-triggering.
 
 Skills:

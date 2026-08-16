@@ -364,23 +364,23 @@ async function onAbort() {
 /** 主动压缩会话:调用 opencode summarize,总结早期内容释放上下文。 */
 async function onSummarize() {
   if (!chat.currentSessionId) return
-  dialog.warning({
+  const d = dialog.warning({
     title: '压缩会话',
     content: '将自动总结早期对话内容以释放上下文,最近 2 轮对话保留完整。确定压缩?',
     positiveText: '压缩',
     negativeText: '取消',
+    positiveButtonProps: { type: 'primary' },
     onPositiveClick: async () => {
+      // 点击后立即关闭确认框并显示"正在压缩"动画;压缩在后台异步进行
+      d.destroy()
       if (chat.compacting) return
+      chat.compacting = true
+      statsOpen.value = false
       try {
         await chatApi.summarizeSession(chat.currentSessionId!)
-        // 请求返回即压缩已触发(opencode 后台异步总结):立即把 token 环的统计起点
-        // 推到当前最后一条消息,让圆环即时回落;若之后有 session.compacted 事件再幂等刷新。
-        chat.markCompacted()
-        // 显示"正在压缩"提示;compaction agent 生成 summary 消息时后端会推 session.compacting
-        // 覆盖(幂等),压缩完成(session.compacted)后自动消失。
-        chat.compacting = true
-        statsOpen.value = false
+        // 压缩已触发;完成后由 session.compacted 事件刷新圆环并渲染"已压缩"分割线
       } catch (e: any) {
+        chat.compacting = false
         msg.error(e?.message || '压缩失败')
       }
     },
@@ -441,46 +441,66 @@ async function onAgentSelect(key: string) {
 const statsOpen = ref(false)
 const stats = computed(() => {
   const msgs = chat.messages
-  // 压缩点:store 在 session.compacted 后设为当时最大消息 id;其前的历史已总结、字符不参与估算
+  // 压缩点:最近一条"已完成压缩"标记消息的 id;其前历史已总结、不参与 token 估算
   const cutoff = chat.compactCutoffId
 
   let user = 0, assistant = 0, tool = 0, chars = 0
   let toolCalls = 0
+  let summaryChars = 0
   for (const m of msgs) {
-    // 跳过压缩产生的消息(占位/Continue/总结),不参与统计
-    if (m.compactionSummary) continue
     if (m.role === 'user' && !(m.content || '').trim()) continue
     if ((m.content || '').trim().startsWith('Continue if you have next steps')) continue
-    if (cutoff > 0 && (m.id ?? 0) <= cutoff) continue
+    // 消息计数:统计会话内全部真实消息(压缩后仍显示会话总条数,不受压缩点影响)
     if (m.role === 'user') user++
     else if (m.role === 'assistant') assistant++
     else if (m.role === 'tool') tool++
-    chars += (m.content || '').length
     toolCalls += m.parts?.toolCalls?.length || 0
+    // 压缩总结消息:压缩后上下文 = 该总结 + 保留消息;记录最近一条总结的字符单独计入
+    if (m.compactionSummary && m.role === 'assistant' && (m.content || '').trim()) {
+      summaryChars = (m.content || '').length
+      continue
+    }
+    // 字符估算:压缩点之前的已总结历史不参与 token 估算;本地新消息(id 为负)始终计入
+    if (cutoff > 0 && (m.id ?? 0) > 0 && (m.id ?? 0) <= cutoff) continue
+    chars += (m.content || '').length
     for (const tc of m.parts?.toolCalls || []) {
       if (tc.input != null) chars += JSON.stringify(tc.input).length
       if (typeof tc.output === 'string') chars += tc.output.length
     }
   }
+  // 当前上下文 = 压缩点之后的消息 + 最近一条压缩总结(压缩结果长度)
+  const contextChars = chars + summaryChars
 
-  // 真实 token 用量(与 opencode web 一致):取最后一条带 tokens 的 assistant 消息,
-  //    total = input + output + reasoning + cache.read + cache.write。
+  // 真实 token:优先取压缩点之后最后一条带 tokens 的 assistant 消息(上下文占用 = input);
+  // 压缩后尚无新消息时,退而用最近一条压缩总结消息的 output(即压缩结果长度)。
   for (let i = msgs.length - 1; i >= 0; i--) {
-    const t = msgs[i].tokens
-    if (!t || msgs[i].compactionSummary) continue
+    const m = msgs[i]
+    const t = m.tokens
+    if (!t) continue
+    if (m.compactionSummary && m.role === 'assistant') {
+      // 压缩总结:output = 压缩后的结果长度
+      const ctx = t.output ?? 0
+      if (ctx > 0) {
+        return {
+          total: user + assistant + tool, user, assistant, tool, toolCalls, chars: contextChars,
+          estTokens: ctx, real: true, tokens: t, contextTokens: ctx,
+        }
+      }
+      break // 总结无 output:退回估算
+    }
+    if (cutoff > 0 && (m.id ?? 0) > 0 && (m.id ?? 0) <= cutoff) break
     const total = (t.input ?? 0) + (t.output ?? 0) + (t.reasoning ?? 0) + (t.cache?.read ?? 0) + (t.cache?.write ?? 0)
     return {
-      total: msgs.length, user, assistant, tool, toolCalls, chars,
-      estTokens: Math.max(0, total),
-      real: true, tokens: t,
+      total: user + assistant + tool, user, assistant, tool, toolCalls, chars: contextChars,
+      estTokens: Math.max(0, total), real: true, tokens: t, contextTokens: t.input ?? 0,
     }
   }
 
   // 估算兜底:chars/4(对齐 opencode),无真实 tokens
+  const est = Math.ceil(contextChars / 4)
   return {
-    total: msgs.length, user, assistant, tool, toolCalls, chars,
-    estTokens: Math.ceil(chars / 4),
-    real: false, tokens: null,
+    total: user + assistant + tool, user, assistant, tool, toolCalls, chars: contextChars,
+    estTokens: est, real: false, tokens: null, contextTokens: est,
   }
 })
 
@@ -500,14 +520,14 @@ const modelLimit = computed(() => {
 
 /** 进度 0~1;>=模型窗口满环 */
 const tokenRatio = computed(() => {
+  // 真实模式与估算统一用模型上下文窗口上限,避免流式(估算)与结束(真实)之间圆环跳变
+  const limit = modelLimit.value
   if (stats.value.real) {
-    const limit = modelLimit.value
-    const t = stats.value.tokens!
-    // 真实模式:上下文占用 = 输入 token(input 已含缓存读);output/reasoning 是响应,不占窗口
-    const input = t.input ?? 0
-    return Math.min(1, input / limit)
+    // 真实模式:上下文占用 = 压缩点之后最后一条真实消息的 input(输入含缓存读);
+    // 压缩后无新消息时为压缩总结的 output(压缩结果长度)。
+    return Math.min(1, (stats.value.contextTokens ?? 0) / limit)
   }
-  return Math.min(1, stats.value.estTokens / TOKEN_LIMIT)
+  return Math.min(1, stats.value.estTokens / limit)
 })
 /** 环色:低占用柔和蓝,>60% 变琥珀,>85% 变红(提示该开新会话了) */
 const ringColor = computed(() => {
@@ -581,45 +601,35 @@ async function startNewChat() {
 
     <input ref="fileInputRef" type="file" multiple class="hidden-input" @change="onFileChange" />
 
-    <!-- 输入框:无边框,全宽 -->
-    <textarea
-      ref="inputRef"
-      v-model="text"
-      class="textarea"
-      rows="1"
-      :placeholder="chat.isStreaming
-        ? (hasPending ? '上方有待答问题,作答后发送;或直接输入以继续…' : 'AI 正在处理中,可点「停止」中断…')
-        : '随便问点什么, / 可查看命令, @ 可添加上下文...'"
-      @keydown="onKeydown"
-      @input="onInput"
-      @paste="onPaste"
-    />
+    <!-- 输入卡片:textarea + 发送按钮 -->
+    <div class="input-card">
+      <textarea
+        ref="inputRef"
+        v-model="text"
+        class="textarea"
+        rows="1"
+        :placeholder="chat.isStreaming
+          ? (hasPending ? '上方有待答问题,作答后发送;或直接输入以继续…' : 'AI 正在处理中,可点「停止」中断…')
+          : '随便问点什么, / 可查看命令, @ 可添加上下文...'"
+        @keydown="onKeydown"
+        @input="onInput"
+        @paste="onPaste"
+      />
+      <div class="card-side">
+        <template v-if="chat.isStreaming">
+          <button class="send-btn send-btn-stop" title="停止" @click="onAbort">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+          </button>
+        </template>
+        <button v-else class="send-btn" :class="{ disabled: !canSend }" :disabled="!canSend" title="发送 (Enter)" @click="onSend">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+        </button>
+      </div>
+    </div>
 
     <!-- 底部工具栏: +附件 | 模型 | 模式 | 发送 -->
     <div class="toolbar">
       <div class="toolbar-left">
-        <!-- 会话 token 进度环:点击查看详情 -->
-        <button
-          class="token-ring-btn"
-          :class="{ full: ringNearFull }"
-          :title="`${stats.real ? '会话上下文' : '会话约'} ${stats.estTokens.toLocaleString()} token / ${(stats.real ? modelLimit : TOKEN_LIMIT).toLocaleString()},点击查看详情${ringNearFull ? ';建议新开会话' : ''}`"
-          @click="statsOpen = true"
-        >
-          <svg class="token-ring" width="30" height="30" viewBox="0 0 36 36">
-            <circle class="ring-bg" cx="18" cy="18" r="15" />
-            <circle
-              class="ring-fg"
-              cx="18" cy="18" r="15"
-              :style="{
-                strokeDasharray: `${2 * Math.PI * 15}`,
-                strokeDashoffset: `${2 * Math.PI * 15 * (1 - tokenRatio)}`,
-                stroke: ringColor,
-              }"
-            />
-            <text x="18" y="21" class="ring-text" :style="{ fill: ringColor }">{{ Math.round(tokenRatio * 100) }}%</text>
-          </svg>
-        </button>
-
         <!-- 附件按钮 -->
         <button class="tool-btn" title="选择附件" @click="pickFile" :disabled="uploading">
           <span v-if="uploading" class="tool-spinner"></span>
@@ -652,28 +662,41 @@ async function startNewChat() {
         </n-dropdown>
 
         <!-- 快捷工具:压缩会话 / 生成文档 / 解读报错 / 我的MCP -->
-        <button class="tool-btn tool-btn-text" title="压缩会话:总结早期内容,释放上下文" @click="onSummarize">
+        <button class="tool-btn tool-btn-text tool-quick" title="压缩会话:总结早期内容,释放上下文" @click="onSummarize">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>
           压缩会话
         </button>
-        <button class="tool-btn tool-btn-text" title="一键生成文档(周报/会议纪要/邮件/分析报告)" @click="emit('openDocGen')">
+        <button class="tool-btn tool-btn-text tool-quick" title="一键生成文档(周报/会议纪要/邮件/分析报告)" @click="emit('openDocGen')">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
           生成文档
         </button>
-        <button class="tool-btn tool-btn-text" title="粘贴报错信息,让 AI 解读" @click="emit('openErrorDiagnose')">
+        <button class="tool-btn tool-btn-text tool-quick" title="粘贴报错信息,让 AI 解读" @click="emit('openErrorDiagnose')">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.8 2.3A.3.3 0 1 0 5 2H4a2 2 0 0 0-2 2v5a6 6 0 0 0 6 6a6 6 0 0 0 6-6V4a2 2 0 0 0-2-2h-1a.2.2 0 1 0 .3.3"/><path d="M8 15v1a6 6 0 0 0 6 6a6 6 0 0 0 6-6v-4"/><circle cx="20" cy="10" r="2"/></svg>
           解读报错
         </button>
       </div>
 
       <div class="toolbar-right">
-        <template v-if="chat.isStreaming">
-          <button class="send-btn send-btn-stop" title="停止" @click="onAbort">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-          </button>
-        </template>
-        <button v-else class="send-btn" :class="{ disabled: !canSend }" :disabled="!canSend" title="发送 (Enter)" @click="onSend">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+        <!-- 会话 token 进度环:点击查看详情 -->
+        <button
+          class="token-ring-btn"
+          :class="{ full: ringNearFull }"
+          :title="`${stats.real ? '会话上下文' : '会话约'} ${stats.estTokens.toLocaleString()} token / ${(stats.real ? modelLimit : TOKEN_LIMIT).toLocaleString()},点击查看详情${ringNearFull ? ';建议新开会话' : ''}`"
+          @click="statsOpen = true"
+        >
+          <svg class="token-ring" width="30" height="30" viewBox="0 0 36 36">
+            <circle class="ring-bg" cx="18" cy="18" r="15" />
+            <circle
+              class="ring-fg"
+              cx="18" cy="18" r="15"
+              :style="{
+                strokeDasharray: `${2 * Math.PI * 15}`,
+                strokeDashoffset: `${2 * Math.PI * 15 * (1 - tokenRatio)}`,
+                stroke: ringColor,
+              }"
+            />
+            <text x="18" y="21" class="ring-text" :style="{ fill: ringColor }">{{ Math.round(tokenRatio * 100) }}%</text>
+          </svg>
         </button>
       </div>
     </div>
@@ -683,7 +706,7 @@ async function startNewChat() {
       v-model:show="statsOpen"
       preset="card"
       title="会话统计"
-      :style="{ width: '440px' }"
+      :style="{ width: '440px', maxWidth: '92vw' }"
       :bordered="false"
     >
       <div class="stats-grid">
@@ -694,7 +717,7 @@ async function startNewChat() {
         <div class="stat"><span class="k">工具调用次数</span><span class="v">{{ stats.toolCalls }}</span></div>
         <div class="stat"><span class="k">总字符数</span><span class="v">{{ stats.chars }}</span></div>
         <template v-if="stats.real">
-          <div class="stat"><span class="k">上下文 token(输入)</span><span class="v">{{ stats.tokens!.input }}</span></div>
+          <div class="stat"><span class="k">上下文 token</span><span class="v">{{ stats.contextTokens }}</span></div>
           <div class="stat"><span class="k">输出 token</span><span class="v">{{ stats.tokens!.output }}</span></div>
           <div class="stat"><span class="k">推理 token</span><span class="v">{{ stats.tokens!.reasoning }}</span></div>
           <div class="stat"><span class="k">缓存读取/写入</span><span class="v">{{ stats.tokens!.cache?.read ?? 0 }} / {{ stats.tokens!.cache?.write ?? 0 }}</span></div>
@@ -784,21 +807,44 @@ async function startNewChat() {
 }
 .dg-sample:hover { border-color: var(--accent); color: var(--accent); }
 
-/* 输入框:柔和、无生硬边框 */
-.textarea {
-  width: 100%; resize: none;
-  padding: 12px 14px; border-radius: var(--radius);
-  border: 1px solid var(--input-border); background: var(--input-bg); color: var(--text);
-  font-size: 14px; line-height: 1.6; outline: none;
-  max-height: 200px; overflow-y: auto;
-  box-sizing: border-box;
-  transition: border-color .2s, background .2s, box-shadow .2s;
+/* 输入卡片:圆角卡片 + 边框 + 阴影,聚焦高亮 */
+.input-card {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  transition: border-color .2s, box-shadow .2s;
 }
-.textarea::placeholder { color: var(--text-3); }
-.textarea:hover { border-color: rgba(0, 0, 0, 0.2); }
-.textarea:focus {
-  border-color: var(--accent); background: var(--input-bg);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+.input-card:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft), 0 4px 18px rgba(139, 92, 246, 0.12);
+}
+
+/* 输入框:无边框,由卡片提供边界 */
+.textarea {
+  flex: 1;
+  resize: none;
+  padding: 6px 4px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.6;
+  outline: none;
+  max-height: 200px;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+.textarea::placeholder { color: var(--text-3); opacity: 0.7; }
+.card-side {
+  display: flex;
+  align-items: flex-end;
+  flex-shrink: 0;
+  padding-bottom: 2px;
 }
 .hidden-input { display: none; }
 
@@ -857,11 +903,11 @@ async function startNewChat() {
 /* 发送按钮:圆形 */
 .send-btn {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 34px; height: 34px; border-radius: 50%;
+  width: 36px; height: 36px; border-radius: 50%;
   background: var(--accent); border: none; cursor: pointer;
-  color: #fff; transition: filter .15s, opacity .15s;
+  color: #fff; transition: filter .15s, opacity .15s, transform .15s;
 }
-.send-btn:hover:not(.disabled) { filter: brightness(1.1); }
+.send-btn:hover:not(.disabled) { filter: brightness(1.1); transform: translateY(-1px); }
 .send-btn.disabled { background: var(--surface-hover); color: var(--text-3); cursor: default; }
 .send-btn-stop { background: var(--err); }
 .send-btn-stop:hover { filter: brightness(1.1); }
@@ -911,4 +957,16 @@ async function startNewChat() {
   color: var(--err);
 }
 .stats-actions { display: flex; gap: 8px; }
+
+/* 移动端:精简工具栏,收起快捷文本按钮,紧凑模型下拉 */
+@media (max-width: 768px) {
+  .chat-input { padding: 10px 10px; }
+  .tool-quick { display: none; }
+  .toolbar-select { max-width: 130px; }
+  .toolbar { gap: 4px; }
+  .toolbar-left { gap: 4px; }
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  /* iOS 聚焦 <16px 输入框会自动放大页面,移动端提到 16px 避免 */
+  .textarea { font-size: 16px; }
+}
 </style>

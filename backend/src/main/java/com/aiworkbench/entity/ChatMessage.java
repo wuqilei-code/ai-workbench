@@ -20,6 +20,10 @@ public class ChatMessage {
     private Long userId;
     private String opencodeMessageId;
 
+    /** 冗余会话的 provider/model(写时复制),供按模型统计 token/成本 */
+    private String providerId;
+    private String modelId;
+
     /** user | assistant | tool | system */
     private String role;
     /** 文本内容(MVP 存文本) */
@@ -30,6 +34,20 @@ public class ChatMessage {
     private String tokens;
     /** 1=压缩产生的总结消息(compaction summary),前端不展示,仅占位避免历史断裂 */
     private Integer compactionSummary;
+
+    // ---------- 方案 A:从 tokens/parts JSON 抽取的数值列(写时落列,驾驶舱聚合用,避免运行时解析) ----------
+    /** 输入 token 数 */
+    private Long inputTokens;
+    /** 输出 token 数 */
+    private Long outputTokens;
+    /** 思维链(reasoning) token 数 */
+    private Long reasoningTokens;
+    /** 缓存读 token 数 */
+    private Long cacheReadTokens;
+    /** 缓存写 token 数 */
+    private Long cacheWriteTokens;
+    /** 工具调用次数(parts.toolCalls 数组长度) */
+    private Integer toolCallCount;
 
     /** pending | streaming | completed | error | aborted */
     private String status;

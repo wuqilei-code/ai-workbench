@@ -30,6 +30,7 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 import java.io.ByteArrayOutputStream;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * 聊天消息服务。
@@ -49,6 +50,18 @@ public class ChatMessageService {
     private final OpencodeEventRouter eventRouter;
     private final ObjectMapper objectMapper;
     private final WorkspaceSnapshotService snapshotService;
+
+    /**
+     * parts JSON 列是「读-改-写」操作,SSE 消费者(boundedElastic 线程)与 HTTP 回复(请求线程)
+     * 会并发修改同一消息的 parts(如工具调用状态更新 vs 权限清除),存在丢失更新竞态:
+     * 权限已清除却又被旧的 part 更新写回,导致会话结束后仍残留授权框。
+     * 按会话串行化这些写操作,消除竞态(锁粒度=会话,操作极短,无死锁风险)。
+     */
+    private final java.util.concurrent.ConcurrentHashMap<Long, Object> partsLocks = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private Object partsLock(Long sessionId) {
+        return partsLocks.computeIfAbsent(sessionId, k -> new Object());
+    }
 
     /**
      * 找该会话在 beforeEpochMs(含)之前最近的一条用户消息,作为后台任务的"触发消息"。
@@ -322,6 +335,12 @@ public class ChatMessageService {
                 partsNode.remove("pendingPermission");
                 changed = true;
             }
+            // 多权限数组:工具已完成(权限已授予)时同样清除残留,避免重载后重复弹框
+            JsonNode arr = partsNode.get("pendingPermissions");
+            if (arr != null && arr.isArray() && arr.size() > 0 && hasCompletedToolCall(partsNode)) {
+                partsNode.remove("pendingPermissions");
+                changed = true;
+            }
             if (changed) {
                 String newParts = objectMapper.writeValueAsString(partsNode);
                 m.setParts(newParts);
@@ -339,7 +358,8 @@ public class ChatMessageService {
         JsonNode toolCalls = partsNode.get("toolCalls");
         if (toolCalls == null || !toolCalls.isArray()) return false;
         for (JsonNode tc : toolCalls) {
-            if ("completed".equals(tc.has("status") ? tc.get("status").asText() : "")) return true;
+            String status = tc.has("status") ? tc.get("status").asText() : "";
+            if ("completed".equals(status) || "error".equals(status)) return true;
         }
         return false;
     }
@@ -410,6 +430,12 @@ public class ChatMessageService {
     public boolean abort(Long sessionId, Long userId) {
         ChatSession s = chatSessionService.getOwned(sessionId, userId);
         boolean ok = opencodeClient.abort(userId, s.getOpencodeSessionId());
+        // 用户中断输出:若有在途生成,插入"已中断"标记记录(前端渲染为分割线)。
+        if (ok || countStreamingMessages(sessionId) > 0) {
+            insertInterruptedMarker(sessionId, userId);
+        }
+        // 压缩被中断:删除未完成的压缩标记(status=compacting),避免前端残留"正在压缩"分割线。
+        cancelPendingCompaction(sessionId);
         // 用户点击「停止」:opencode 对正在生成的消息补发定稿事件,但卡死消息不会;
         // 主动把残留 streaming 标记为 aborted,避免 DB/重载后永久转圈。
         if (ok) {
@@ -421,6 +447,34 @@ public class ChatMessageService {
         return ok;
     }
 
+    /** 删除该会话所有未完成的压缩标记(status=compacting),用于压缩被中断时清理残留。 */
+    public int cancelPendingCompaction(Long sessionId) {
+        return chatMessageMapper.delete(new LambdaQueryWrapper<ChatMessage>()
+                .eq(ChatMessage::getSessionId, sessionId)
+                .eq(ChatMessage::getRole, "compaction")
+                .eq(ChatMessage::getStatus, "compacting"));
+    }
+
+    /** 会话当前正在流式生成的 assistant 消息数(判定 abort 时是否有在途生成)。 */
+    public long countStreamingMessages(Long sessionId) {
+        Long c = chatMessageMapper.selectCount(new LambdaQueryWrapper<ChatMessage>()
+                .eq(ChatMessage::getSessionId, sessionId)
+                .eq(ChatMessage::getRole, "assistant")
+                .eq(ChatMessage::getStatus, "streaming"));
+        return c == null ? 0 : c;
+    }
+
+    /** 插入一条"已中断"标记消息:role=interrupted。前端把该记录渲染为"已中断"分割线。 */
+    public void insertInterruptedMarker(Long sessionId, Long userId) {
+        ChatMessage m = new ChatMessage();
+        m.setSessionId(sessionId);
+        m.setUserId(userId);
+        m.setRole("interrupted");
+        m.setContent(null);
+        m.setStatus("completed");
+        chatMessageMapper.insert(m);
+    }
+
     /** 主动触发会话压缩(项目侧检测到会话接近预算时调用)。
      *  auto=false:压缩完成后不自动继续(不注入 Continue),会话停在压缩总结处,由用户自行继续。
      *  压缩点会落库为一条 role=compaction 记录(status=compacting),前端直接渲染该记录
@@ -428,8 +482,17 @@ public class ChatMessageService {
     public boolean summarize(Long sessionId, Long userId) {
         ChatSession s = chatSessionService.getOwned(sessionId, userId);
         insertCompactionMarker(s.getId(), s.getUserId());
-        return opencodeClient.summarize(userId, s.getOpencodeSessionId(),
-                s.getProviderId(), s.getModelId(), false);
+        // 异步触发 opencode 压缩:压缩在后台进行,不阻塞接口返回(避免前端 30s 超时)。
+        // 完成/中断由 SSE 事件驱动前端状态,此处只管发起。
+        CompletableFuture.runAsync(() -> {
+            try {
+                opencodeClient.summarize(userId, s.getOpencodeSessionId(),
+                        s.getProviderId(), s.getModelId(), false);
+            } catch (Exception e) {
+                log.warn("async summarize opencode failed (sessionId={}): {}", sessionId, e.toString());
+            }
+        });
+        return true;
     }
 
     /** 插入一条压缩点标记消息:role=compaction,status=compacting。
@@ -523,6 +586,11 @@ public class ChatMessageService {
         // opencode message.updated 的 info 是完整 AssistantMessage(顶层带 tokens)
         JsonNode tokens = info.has("tokens") && info.get("tokens").isObject() ? info.get("tokens") : null;
         String tokensJson = tokens != null ? tokens.toString() : null;
+        // 冗余 provider/model(优先 opencode 消息自带,回退会话),供按模型统计 token/成本
+        String providerId = info.path("providerID").asText(null);
+        if (providerId == null) providerId = session.getProviderId();
+        String modelId = info.path("modelID").asText(null);
+        if (modelId == null) modelId = session.getModelId();
 
         ChatMessage existing = chatMessageMapper.selectOne(new LambdaQueryWrapper<ChatMessage>()
                 .eq(ChatMessage::getSessionId, session.getId())
@@ -564,17 +632,23 @@ public class ChatMessageService {
             }
             existing.setCompactionSummary(compactionFlag);
             existing.setStatus(status);
+            if (existing.getProviderId() == null && providerId != null) existing.setProviderId(providerId);
+            if (existing.getModelId() == null && modelId != null) existing.setModelId(modelId);
+            applyDerivedMetrics(existing);
             chatMessageMapper.updateById(existing);
         } else {
             ChatMessage m = new ChatMessage();
             m.setSessionId(session.getId());
             m.setUserId(session.getUserId());
             m.setOpencodeMessageId(opencodeMessageId);
+            m.setProviderId(providerId);
+            m.setModelId(modelId);
             m.setRole(role);
             m.setContent(text);
             m.setTokens(tokensJson);
             m.setCompactionSummary(compactionFlag);
             m.setStatus(status);
+            applyDerivedMetrics(m);
             chatMessageMapper.insert(m);
         }
     }
@@ -604,23 +678,25 @@ public class ChatMessageService {
         if (session == null) {
             return;
         }
-        String messageID = part.get("messageID").asText();
-        ChatMessage existing = findOrCreateMessage(session, messageID);
+        synchronized (partsLock(session.getId())) {
+            String messageID = part.get("messageID").asText();
+            ChatMessage existing = findOrCreateMessage(session, messageID);
 
-        if ("text".equals(partType)) {
-            // text part:写 content(用户消息 & 助手消息文本都走这里)
-            existing.setContent(part.has("text") ? part.get("text").asText() : "");
-        } else {
-            // tool / step-finish 等结构化 part:合并到 parts JSON 列
-            ObjectNode partsNode = parsePartsObject(existing.getParts());
-            mergeParts(partsNode, part);
-            try {
-                existing.setParts(objectMapper.writeValueAsString(partsNode));
-            } catch (Exception e) {
-                log.warn("serialize parts failed (messageID={}): {}", messageID, e.toString());
+            if ("text".equals(partType)) {
+                // text part:写 content(用户消息 & 助手消息文本都走这里)
+                existing.setContent(part.has("text") ? part.get("text").asText() : "");
+            } else {
+                // tool / step-finish 等结构化 part:合并到 parts JSON 列
+                ObjectNode partsNode = parsePartsObject(existing.getParts());
+                mergeParts(partsNode, part);
+                try {
+                    existing.setParts(objectMapper.writeValueAsString(partsNode));
+                } catch (Exception e) {
+                    log.warn("serialize parts failed (messageID={}): {}", messageID, e.toString());
+                }
             }
+            persistMessage(existing);
         }
-        persistMessage(existing);
     }
 
     /**
@@ -665,17 +741,19 @@ public class ChatMessageService {
         if (session == null) {
             return;
         }
-        ChatMessage existing = findOrCreateMessage(session, messageID);
-        ObjectNode partsNode = parsePartsObject(existing.getParts());
-        ObjectNode r = objectMapper.createObjectNode();
-        r.put("text", text);
-        partsNode.set("reasoning", r);
-        try {
-            existing.setParts(objectMapper.writeValueAsString(partsNode));
-        } catch (Exception e) {
-            log.warn("serialize parts failed (messageID={}): {}", messageID, e.toString());
+        synchronized (partsLock(session.getId())) {
+            ChatMessage existing = findOrCreateMessage(session, messageID);
+            ObjectNode partsNode = parsePartsObject(existing.getParts());
+            ObjectNode r = objectMapper.createObjectNode();
+            r.put("text", text);
+            partsNode.set("reasoning", r);
+            try {
+                existing.setParts(objectMapper.writeValueAsString(partsNode));
+            } catch (Exception e) {
+                log.warn("serialize parts failed (messageID={}): {}", messageID, e.toString());
+            }
+            persistMessage(existing);
         }
-        persistMessage(existing);
     }
 
     /** 按 (sessionId, opencodeMessageId) 查找消息;不存在则建 assistant 壳(message.updated 前的兜底)。 */
@@ -691,6 +769,8 @@ public class ChatMessageService {
         m.setSessionId(session.getId());
         m.setUserId(session.getUserId());
         m.setOpencodeMessageId(messageID);
+        m.setProviderId(session.getProviderId());
+        m.setModelId(session.getModelId());
         m.setRole("assistant");
         m.setContent("");
         m.setStatus("streaming");
@@ -703,10 +783,36 @@ public class ChatMessageService {
         if ("user".equals(m.getRole()) && m.getContent() != null && !m.getContent().isBlank()) {
             m.setCompactionSummary(0);
         }
+        applyDerivedMetrics(m);
         if (m.getId() != null) {
             chatMessageMapper.updateById(m);
         } else {
             chatMessageMapper.insert(m);
+        }
+    }
+
+    /**
+     * 从 tokens / parts JSON 抽取数值列(方案 A),写时调用,供驾驶舱直接 SUM 聚合、免运行时解析 JSON。
+     * tokens / parts 为空时不写对应字段(保持 null;MyBatis-Plus NOT_NULL 策略下 update 不会覆盖旧值)。
+     */
+    private void applyDerivedMetrics(ChatMessage m) {
+        if (m.getTokens() != null && !m.getTokens().isBlank()) {
+            JsonNode t = parseTokens(m.getTokens());
+            if (t != null) {
+                m.setInputTokens(t.path("input").isNumber() ? t.path("input").asLong() : null);
+                m.setOutputTokens(t.path("output").isNumber() ? t.path("output").asLong() : null);
+                m.setReasoningTokens(t.path("reasoning").isNumber() ? t.path("reasoning").asLong() : null);
+                JsonNode cache = t.path("cache");
+                m.setCacheReadTokens(cache.path("read").isNumber() ? cache.path("read").asLong() : null);
+                m.setCacheWriteTokens(cache.path("write").isNumber() ? cache.path("write").asLong() : null);
+            }
+        }
+        if (m.getParts() != null && !m.getParts().isBlank()) {
+            JsonNode parts = parseParts(m.getParts());
+            if (parts != null) {
+                JsonNode tc = parts.path("toolCalls");
+                m.setToolCallCount(tc.isArray() ? tc.size() : 0);
+            }
         }
     }
 
@@ -745,6 +851,7 @@ public class ChatMessageService {
                     changed = true;
                 }
                 if (changed) {
+                    applyDerivedMetrics(db);
                     chatMessageMapper.updateById(db);
                 }
             }
@@ -950,28 +1057,30 @@ public class ChatMessageService {
         JsonNode tool = properties.has("tool") ? properties.get("tool") : null;
         String messageID = (tool != null && tool.has("messageID")) ? tool.get("messageID").asText() : null;
 
-        ChatMessage msg = findTargetAssistantMessage(session.getId(), messageID);
-        if (msg == null) {
-            return;
-        }
+        synchronized (partsLock(session.getId())) {
+            ChatMessage msg = findTargetAssistantMessage(session.getId(), messageID);
+            if (msg == null) {
+                return;
+            }
 
-        ObjectNode partsNode = parsePartsObject(msg.getParts());
-        ObjectNode pending = objectMapper.createObjectNode();
-        pending.put("requestId", requestId);
-        if (properties.has("questions")) {
-            pending.set("questions", properties.get("questions"));
-        }
-        if (tool != null) {
-            pending.set("tool", tool);
-        }
-        pending.put("version", properties.has("questions") && isV2Question(properties.get("questions")) ? "v2" : "v1");
-        partsNode.set("pendingQuestion", pending);
+            ObjectNode partsNode = parsePartsObject(msg.getParts());
+            ObjectNode pending = objectMapper.createObjectNode();
+            pending.put("requestId", requestId);
+            if (properties.has("questions")) {
+                pending.set("questions", properties.get("questions"));
+            }
+            if (tool != null) {
+                pending.set("tool", tool);
+            }
+            pending.put("version", properties.has("questions") && isV2Question(properties.get("questions")) ? "v2" : "v1");
+            partsNode.set("pendingQuestion", pending);
 
-        try {
-            msg.setParts(objectMapper.writeValueAsString(partsNode));
-            chatMessageMapper.updateById(msg);
-        } catch (Exception e) {
-            log.warn("serialize pendingQuestion failed (messageID={}): {}", messageID, e.toString());
+            try {
+                msg.setParts(objectMapper.writeValueAsString(partsNode));
+                chatMessageMapper.updateById(msg);
+            } catch (Exception e) {
+                log.warn("serialize pendingQuestion failed (messageID={}): {}", messageID, e.toString());
+            }
         }
     }
 
@@ -993,78 +1102,112 @@ public class ChatMessageService {
         JsonNode tool = properties.has("tool") ? properties.get("tool") : null;
         String messageID = (tool != null && tool.has("messageID")) ? tool.get("messageID").asText() : null;
 
-        ChatMessage msg = findTargetAssistantMessage(session.getId(), messageID);
-        if (msg == null) {
-            return;
-        }
+        synchronized (partsLock(session.getId())) {
+            ChatMessage msg = findTargetAssistantMessage(session.getId(), messageID);
+            if (msg == null) {
+                return;
+            }
 
-        ObjectNode partsNode = parsePartsObject(msg.getParts());
-        ObjectNode pending = objectMapper.createObjectNode();
-        pending.put("requestId", requestId);
-        if (properties.has("action")) {
-            pending.put("version", "v2");
-            pending.set("action", properties.get("action"));
-            if (properties.has("resources")) pending.set("resources", properties.get("resources"));
-            if (properties.has("save")) pending.set("save", properties.get("save"));
-            if (properties.has("metadata")) pending.set("metadata", properties.get("metadata"));
-            if (properties.has("source")) pending.set("source", properties.get("source"));
-        } else {
-            pending.put("version", "v1");
-            if (properties.has("permission")) pending.set("permission", properties.get("permission"));
-            if (properties.has("patterns")) pending.set("patterns", properties.get("patterns"));
-            if (properties.has("metadata")) pending.set("metadata", properties.get("metadata"));
-            if (properties.has("always")) pending.set("always", properties.get("always"));
-        }
-        if (tool != null) {
-            pending.set("tool", tool);
-        }
-        partsNode.set("pendingPermission", pending);
+            ObjectNode partsNode = parsePartsObject(msg.getParts());
+            ObjectNode pending = objectMapper.createObjectNode();
+            pending.put("requestId", requestId);
+            if (properties.has("action")) {
+                pending.put("version", "v2");
+                pending.set("action", properties.get("action"));
+                if (properties.has("resources")) pending.set("resources", properties.get("resources"));
+                if (properties.has("save")) pending.set("save", properties.get("save"));
+                if (properties.has("metadata")) pending.set("metadata", properties.get("metadata"));
+                if (properties.has("source")) pending.set("source", properties.get("source"));
+            } else {
+                pending.put("version", "v1");
+                if (properties.has("permission")) pending.set("permission", properties.get("permission"));
+                if (properties.has("patterns")) pending.set("patterns", properties.get("patterns"));
+                if (properties.has("metadata")) pending.set("metadata", properties.get("metadata"));
+                if (properties.has("always")) pending.set("always", properties.get("always"));
+            }
+            if (tool != null) {
+                pending.set("tool", tool);
+            }
+            // 多个并发权限各自独立:按 requestId 去重追加到 pendingPermissions 数组,不互相覆盖
+            ArrayNode list = partsNode.has("pendingPermissions") && partsNode.get("pendingPermissions").isArray()
+                    ? (ArrayNode) partsNode.get("pendingPermissions")
+                    : objectMapper.createArrayNode();
+            int existIdx = -1;
+            for (int i = 0; i < list.size(); i++) {
+                JsonNode item = list.get(i);
+                if (item.isObject() && requestId.equals(item.path("requestId").asText(null))) {
+                    existIdx = i;
+                    break;
+                }
+            }
+            if (existIdx >= 0) {
+                list.set(existIdx, pending);
+            } else {
+                list.add(pending);
+            }
+            partsNode.set("pendingPermissions", list);
 
-        try {
-            msg.setParts(objectMapper.writeValueAsString(partsNode));
-            chatMessageMapper.updateById(msg);
-        } catch (Exception e) {
-            log.warn("serialize pendingPermission failed (messageID={}): {}", messageID, e.toString());
+            try {
+                msg.setParts(objectMapper.writeValueAsString(partsNode));
+                chatMessageMapper.updateById(msg);
+            } catch (Exception e) {
+                log.warn("serialize pendingPermission failed (messageID={}): {}", messageID, e.toString());
+            }
         }
     }
 
     /** 清除指定会话中指定 requestId 的 pendingQuestion */
     public void clearPendingQuestion(Long sessionId, String requestId) {
-        ChatMessage msg = findMessageWithPendingField(sessionId, "pendingQuestion", requestId);
-        if (msg == null) {
-            log.warn("clearPendingQuestion: no message found, sessionId={}, requestId={}", sessionId, requestId);
-            return;
-        }
-        ObjectNode partsNode = parsePartsObject(msg.getParts());
-        partsNode.remove("pendingQuestion");
-        try {
-            String newParts = objectMapper.writeValueAsString(partsNode);
-            int rows = chatMessageMapper.update(null, new LambdaUpdateWrapper<ChatMessage>()
-                    .eq(ChatMessage::getId, msg.getId())
-                    .set(ChatMessage::getParts, newParts));
-            log.info("clearPendingQuestion: sessionId={}, requestId={}, msgId={}, rows={}", sessionId, requestId, msg.getId(), rows);
-        } catch (Exception e) {
-            log.warn("clear pendingQuestion failed (msgId={}): {}", msg.getId(), e.toString());
+        synchronized (partsLock(sessionId)) {
+            ChatMessage msg = findMessageWithPendingField(sessionId, "pendingQuestion", requestId);
+            if (msg == null) {
+                log.warn("clearPendingQuestion: no message found, sessionId={}, requestId={}", sessionId, requestId);
+                return;
+            }
+            ObjectNode partsNode = parsePartsObject(msg.getParts());
+            partsNode.remove("pendingQuestion");
+            try {
+                String newParts = objectMapper.writeValueAsString(partsNode);
+                int rows = chatMessageMapper.update(null, new LambdaUpdateWrapper<ChatMessage>()
+                        .eq(ChatMessage::getId, msg.getId())
+                        .set(ChatMessage::getParts, newParts));
+                log.info("clearPendingQuestion: sessionId={}, requestId={}, msgId={}, rows={}", sessionId, requestId, msg.getId(), rows);
+            } catch (Exception e) {
+                log.warn("clear pendingQuestion failed (msgId={}): {}", msg.getId(), e.toString());
+            }
         }
     }
 
-    /** 清除指定会话中指定 permissionId 的 pendingPermission */
+    /** 清除指定会话中指定 permissionId 的 pendingPermission(支持 pendingPermissions 数组与旧 pendingPermission 单字段) */
     public void clearPendingPermission(Long sessionId, String permissionId) {
-        ChatMessage msg = findMessageWithPendingField(sessionId, "pendingPermission", permissionId);
-        if (msg == null) {
-            log.warn("clearPendingPermission: no message found, sessionId={}, permissionId={}", sessionId, permissionId);
-            return;
-        }
-        ObjectNode partsNode = parsePartsObject(msg.getParts());
-        partsNode.remove("pendingPermission");
-        try {
-            String newParts = objectMapper.writeValueAsString(partsNode);
-            int rows = chatMessageMapper.update(null, new LambdaUpdateWrapper<ChatMessage>()
-                    .eq(ChatMessage::getId, msg.getId())
-                    .set(ChatMessage::getParts, newParts));
-            log.info("clearPendingPermission: sessionId={}, permissionId={}, msgId={}, rows={}", sessionId, permissionId, msg.getId(), rows);
-        } catch (Exception e) {
-            log.warn("clear pendingPermission failed (msgId={}): {}", msg.getId(), e.toString());
+        synchronized (partsLock(sessionId)) {
+            ChatMessage msg = findMessageWithPendingPermission(sessionId, permissionId);
+            if (msg == null) {
+                log.warn("clearPendingPermission: no message found, sessionId={}, permissionId={}", sessionId, permissionId);
+                return;
+            }
+            ObjectNode partsNode = parsePartsObject(msg.getParts());
+            JsonNode arr = partsNode.get("pendingPermissions");
+            if (arr != null && arr.isArray()) {
+                ArrayNode kept = objectMapper.createArrayNode();
+                for (JsonNode item : arr) {
+                    if (!permissionId.equals(item.path("requestId").asText(null))) {
+                        kept.add(item);
+                    }
+                }
+                if (kept.size() > 0) partsNode.set("pendingPermissions", kept);
+                else partsNode.remove("pendingPermissions");
+            }
+            partsNode.remove("pendingPermission");
+            try {
+                String newParts = objectMapper.writeValueAsString(partsNode);
+                int rows = chatMessageMapper.update(null, new LambdaUpdateWrapper<ChatMessage>()
+                        .eq(ChatMessage::getId, msg.getId())
+                        .set(ChatMessage::getParts, newParts));
+                log.info("clearPendingPermission: sessionId={}, permissionId={}, msgId={}, rows={}", sessionId, permissionId, msg.getId(), rows);
+            } catch (Exception e) {
+                log.warn("clear pendingPermission failed (msgId={}): {}", msg.getId(), e.toString());
+            }
         }
     }
 
@@ -1087,30 +1230,32 @@ public class ChatMessageService {
         JsonNode tool = properties.has("tool") ? properties.get("tool") : null;
         String messageID = (tool != null && tool.has("messageID")) ? tool.get("messageID").asText() : null;
 
-        ChatMessage msg = null;
-        if (requestId != null) {
-            msg = findMessageWithPendingField(session.getId(), "pendingQuestion", requestId);
-        }
-        // 回退:按 tool.messageID 精确匹配(部分 replied 事件可能不带 id)
-        if (msg == null && messageID != null) {
-            msg = chatMessageMapper.selectOne(new LambdaQueryWrapper<ChatMessage>()
-                    .eq(ChatMessage::getSessionId, session.getId())
-                    .eq(ChatMessage::getOpencodeMessageId, messageID)
-                    .last("limit 1"));
-        }
-        if (msg == null) {
-            return;
-        }
-        ObjectNode partsNode = parsePartsObject(msg.getParts());
-        if (!partsNode.has("pendingQuestion")) {
-            return;
-        }
-        partsNode.remove("pendingQuestion");
-        try {
-            msg.setParts(objectMapper.writeValueAsString(partsNode));
-            chatMessageMapper.updateById(msg);
-        } catch (Exception e) {
-            log.warn("clear pendingQuestion failed (messageID={}): {}", messageID, e.toString());
+        synchronized (partsLock(session.getId())) {
+            ChatMessage msg = null;
+            if (requestId != null) {
+                msg = findMessageWithPendingField(session.getId(), "pendingQuestion", requestId);
+            }
+            // 回退:按 tool.messageID 精确匹配(部分 replied 事件可能不带 id)
+            if (msg == null && messageID != null) {
+                msg = chatMessageMapper.selectOne(new LambdaQueryWrapper<ChatMessage>()
+                        .eq(ChatMessage::getSessionId, session.getId())
+                        .eq(ChatMessage::getOpencodeMessageId, messageID)
+                        .last("limit 1"));
+            }
+            if (msg == null) {
+                return;
+            }
+            ObjectNode partsNode = parsePartsObject(msg.getParts());
+            if (!partsNode.has("pendingQuestion")) {
+                return;
+            }
+            partsNode.remove("pendingQuestion");
+            try {
+                msg.setParts(objectMapper.writeValueAsString(partsNode));
+                chatMessageMapper.updateById(msg);
+            } catch (Exception e) {
+                log.warn("clear pendingQuestion failed (messageID={}): {}", messageID, e.toString());
+            }
         }
     }
 
@@ -1132,29 +1277,49 @@ public class ChatMessageService {
         JsonNode tool = properties.has("tool") ? properties.get("tool") : null;
         String messageID = (tool != null && tool.has("messageID")) ? tool.get("messageID").asText() : null;
 
-        ChatMessage msg = null;
-        if (requestId != null) {
-            msg = findMessageWithPendingField(session.getId(), "pendingPermission", requestId);
-        }
-        if (msg == null && messageID != null) {
-            msg = chatMessageMapper.selectOne(new LambdaQueryWrapper<ChatMessage>()
-                    .eq(ChatMessage::getSessionId, session.getId())
-                    .eq(ChatMessage::getOpencodeMessageId, messageID)
-                    .last("limit 1"));
-        }
-        if (msg == null) {
-            return;
-        }
-        ObjectNode partsNode = parsePartsObject(msg.getParts());
-        if (!partsNode.has("pendingPermission")) {
-            return;
-        }
-        partsNode.remove("pendingPermission");
-        try {
-            msg.setParts(objectMapper.writeValueAsString(partsNode));
-            chatMessageMapper.updateById(msg);
-        } catch (Exception e) {
-            log.warn("clear pendingPermission failed (messageID={}): {}", messageID, e.toString());
+        synchronized (partsLock(session.getId())) {
+            ChatMessage msg = null;
+            if (requestId != null) {
+                msg = findMessageWithPendingPermission(session.getId(), requestId);
+            }
+            if (msg == null && messageID != null) {
+                msg = chatMessageMapper.selectOne(new LambdaQueryWrapper<ChatMessage>()
+                        .eq(ChatMessage::getSessionId, session.getId())
+                        .eq(ChatMessage::getOpencodeMessageId, messageID)
+                        .last("limit 1"));
+            }
+            if (msg == null) {
+                return;
+            }
+            ObjectNode partsNode = parsePartsObject(msg.getParts());
+            // 从 pendingPermissions 数组移除该 requestId;兼容旧单字段
+            JsonNode arr = partsNode.get("pendingPermissions");
+            boolean removed = false;
+            if (arr != null && arr.isArray()) {
+                ArrayNode kept = objectMapper.createArrayNode();
+                for (JsonNode item : arr) {
+                    if (requestId == null || !requestId.equals(item.path("requestId").asText(null))) {
+                        kept.add(item);
+                    } else {
+                        removed = true;
+                    }
+                }
+                if (kept.size() > 0) partsNode.set("pendingPermissions", kept);
+                else partsNode.remove("pendingPermissions");
+            }
+            if (partsNode.has("pendingPermission")) {
+                partsNode.remove("pendingPermission");
+                removed = true;
+            }
+            if (!removed) {
+                return;
+            }
+            try {
+                msg.setParts(objectMapper.writeValueAsString(partsNode));
+                chatMessageMapper.updateById(msg);
+            } catch (Exception e) {
+                log.warn("clear pendingPermission failed (messageID={}): {}", messageID, e.toString());
+            }
         }
     }
 
@@ -1191,6 +1356,34 @@ public class ChatMessageService {
                     if (field.has("requestId") && requestId.equals(field.get("requestId").asText())) {
                         return m;
                     }
+                }
+            } catch (Exception ignored) {}
+        }
+        return null;
+    }
+
+    /** 查找 parts 中 pendingPermissions 数组(或旧 pendingPermission 单字段)含指定 requestId 的消息 */
+    private ChatMessage findMessageWithPendingPermission(Long sessionId, String permissionId) {
+        List<ChatMessage> candidates = chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
+                .eq(ChatMessage::getSessionId, sessionId)
+                .eq(ChatMessage::getRole, "assistant")
+                .isNotNull(ChatMessage::getParts)
+                .orderByDesc(ChatMessage::getId));
+        for (ChatMessage m : candidates) {
+            try {
+                JsonNode parts = objectMapper.readTree(m.getParts());
+                if (parts == null) continue;
+                JsonNode arr = parts.get("pendingPermissions");
+                if (arr != null && arr.isArray()) {
+                    for (JsonNode item : arr) {
+                        if (permissionId.equals(item.path("requestId").asText(null))) {
+                            return m;
+                        }
+                    }
+                }
+                JsonNode single = parts.get("pendingPermission");
+                if (single != null && permissionId.equals(single.path("requestId").asText(null))) {
+                    return m;
                 }
             } catch (Exception ignored) {}
         }
@@ -1239,6 +1432,43 @@ public class ChatMessageService {
     }
 
     /**
+     * 把会话中所有 status=running 的 toolCall 标记为 error。
+     * <p>
+     * 自动拒绝未答权限后调用:opencode 拒绝权限不一定立刻回写 tool.updated(error),
+     * 若不把遗留的 running 工具清掉,看门狗会误判为「工具卡死」而 abort 整轮。
+     */
+    public void markRunningToolsError(Long sessionId) {
+        List<ChatMessage> list = chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
+                .eq(ChatMessage::getSessionId, sessionId)
+                .eq(ChatMessage::getRole, "assistant")
+                .isNotNull(ChatMessage::getParts)
+                .like(ChatMessage::getParts, "running")
+                .last("limit 20"));
+        for (ChatMessage m : list) {
+            try {
+                JsonNode partsNode = objectMapper.readTree(m.getParts());
+                if (partsNode == null || !partsNode.isObject()) continue;
+                ObjectNode obj = (ObjectNode) partsNode;
+                JsonNode toolCalls = obj.get("toolCalls");
+                if (toolCalls == null || !toolCalls.isArray()) continue;
+                boolean changed = false;
+                for (JsonNode tc : toolCalls) {
+                    if (tc != null && tc.isObject() && "running".equals(tc.path("status").asText(""))) {
+                        ((ObjectNode) tc).put("status", "error");
+                        changed = true;
+                    }
+                }
+                if (changed) {
+                    m.setParts(objectMapper.writeValueAsString(obj));
+                    chatMessageMapper.updateById(m);
+                }
+            } catch (Exception ignored) {
+                // 单条 parts 解析失败不影响其余消息
+            }
+        }
+    }
+
+    /**
      * 把会话中所有 status=streaming 的 assistant 消息标记为 aborted。
      * <p>
      * abort 成功后调用:工具卡死/用户停止时 opencode 不会对该消息补发定稿事件,
@@ -1264,7 +1494,7 @@ public class ChatMessageService {
         return count != null && count > 0;
     }
 
-    /** 该会话当前是否存在未回答的 pendingPermission(parts 含 pendingPermission 的最新 assistant 消息)。看门狗判定卡死用。 */
+    /** 该会话当前是否存在未回答的 pendingPermission(parts 含 pendingPermissions/pendingPermission 的最新 assistant 消息)。看门狗判定卡死用。 */
     public boolean hasUnresolvedPending(Long sessionId) {
         List<ChatMessage> candidates = chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
                 .eq(ChatMessage::getSessionId, sessionId)
@@ -1276,7 +1506,12 @@ public class ChatMessageService {
         for (ChatMessage m : candidates) {
             try {
                 JsonNode parts = objectMapper.readTree(m.getParts());
-                if (parts != null && parts.has("pendingPermission")) {
+                if (parts == null) continue;
+                if (parts.has("pendingPermissions") && parts.get("pendingPermissions").isArray()
+                        && parts.get("pendingPermissions").size() > 0) {
+                    return true;
+                }
+                if (parts.has("pendingPermission")) {
                     return true;
                 }
             } catch (Exception ignored) {}
@@ -1299,7 +1534,14 @@ public class ChatMessageService {
             try {
                 JsonNode parts = objectMapper.readTree(m.getParts());
                 if (parts == null) continue;
-                if (parts.has("pendingPermission") && parts.get("pendingPermission").has("requestId")) {
+                if (parts.has("pendingPermissions") && parts.get("pendingPermissions").isArray()) {
+                    for (JsonNode pp : parts.get("pendingPermissions")) {
+                        if (pp.isObject() && pp.has("requestId")) {
+                            out.add(new StalePending(m.getSessionId(), m.getOpencodeMessageId(),
+                                    pp.get("requestId").asText(), "permission"));
+                        }
+                    }
+                } else if (parts.has("pendingPermission") && parts.get("pendingPermission").has("requestId")) {
                     out.add(new StalePending(m.getSessionId(), m.getOpencodeMessageId(),
                             parts.get("pendingPermission").get("requestId").asText(), "permission"));
                 }

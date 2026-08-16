@@ -56,8 +56,9 @@ public class StuckToolWatcher {
     }
 
     /** 未回答的权限/问题请求超时(默认 5 分钟)后自动拒绝,让 AI 继续。
-     *  避免用户长时间不操作 → 容器被空闲回收 → 回来点提交时 requestId 已失效卡住。 */
-    @Scheduled(fixedDelayString = "${opencode.stuck-permission-timeout-ms:300000}")
+     *  避免用户长时间不操作 → 容器被空闲回收 → 回来点提交时 requestId 已失效卡住。
+     *  扫描间隔须远小于超时值(见 stuckPermissionSweepMs),保证在看门狗 abort 之前先拒绝。 */
+    @Scheduled(fixedDelayString = "${opencode.stuck-permission-sweep-ms:30000}")
     public void rejectStalePendingSweep() {
         long timeoutMs = props.getStuckPermissionTimeoutMs();
         if (timeoutMs <= 0) {
@@ -78,9 +79,11 @@ public class StuckToolWatcher {
                 } else {
                     opencodeClient.rejectQuestion(userId, session.getOpencodeSessionId(), sp.requestId());
                 }
-                // 本地清掉 pending,避免重复扫描
+                // 本地清掉 pending,避免重复扫描;同时把遗留的 running 工具标记 error,
+                // 避免看门狗随后把「工具卡死」误判而 abort 整轮。
                 chatMessageService.clearPendingPermission(sp.sessionId(), sp.requestId());
                 chatMessageService.clearPendingQuestion(sp.sessionId(), sp.requestId());
+                chatMessageService.markRunningToolsError(sp.sessionId());
                 log.info("stale-pending: auto-rejected {} {} (session {}) after {}ms",
                         sp.kind(), sp.requestId(), sp.sessionId(), timeoutMs);
             } catch (com.aiworkbench.common.BusinessException e) {
@@ -149,10 +152,16 @@ public class StuckToolWatcher {
         if (ageMs < props.getStuckPermissionPromptMs()) {
             return;
         }
-        if (ageMs < props.getStuckToolTimeoutMs()) {
+        // 在途工具(无未答权限):bash 命令自带超时(bashTimeoutMs),超时后仍 running = 后台子进程占管道
+        // (前台起了个 server 之类),在 bash 超时 + 缓冲后提前 abort 解卡;未答权限则交给 auto-reject(120s),
+        // 看门狗用较长兜底。
+        long abortThreshold = (runningTool && !pending)
+                ? props.getBashTimeoutMs() + 30_000
+                : props.getStuckToolTimeoutMs();
+        if (ageMs < abortThreshold) {
             log.warn("stuck-tool: user {} session {} {} unanswered for {}ms, will abort at {}ms",
                     userId, sessionId, pending ? "permission" : "running tool",
-                    ageMs, props.getStuckToolTimeoutMs());
+                    ageMs, abortThreshold);
             return;
         }
         abort(userId, sessionId, ageMs);

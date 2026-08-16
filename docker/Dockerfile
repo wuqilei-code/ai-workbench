@@ -100,16 +100,16 @@ ENV TZ=Asia/Shanghai
 # 技能文档(document-generation / data-analysis)从该固定路径注册字体,不再依赖 app.jar。
 COPY backend/src/main/resources/fonts/simhei.ttf /usr/share/fonts/truetype/simhei.ttf
 
-# Python 常用依赖(与 runtime 阶段同清单):文档操作 / 数据处理 / API / 图表 + 测试框架(pytest/coverage)
+# Python 常用依赖(与 runtime 阶段同清单):文档操作 / 数据处理 / API 客户端 / 图表 + 测试框架(pytest/coverage)
+# 注意:不引入 flask/fastapi/uvicorn/pydantic 等 Web 服务端框架——预览服务已弃用,agent 只做生成/创建任务。
 RUN pip3 install --no-cache-dir --break-system-packages \
       --index-url ${PIP_INDEX_URL} \
       python-docx python-pptx openpyxl reportlab PyPDF2 pdfplumber markdown \
       numpy pandas matplotlib \
       requests httpx aiohttp \
-      flask fastapi uvicorn pydantic \
       beautifulsoup4 lxml Pillow \
       pytest coverage \
- && python3 -c "import docx, pptx, openpyxl, reportlab, PyPDF2, pdfplumber, markdown, numpy, pandas, matplotlib, requests, httpx, aiohttp, flask, fastapi, uvicorn, pydantic, bs4, lxml, PIL, pytest, coverage; print('agent python deps ok')"
+ && python3 -c "import docx, pptx, openpyxl, reportlab, PyPDF2, pdfplumber, markdown, numpy, pandas, matplotlib, requests, httpx, aiohttp, bs4, lxml, PIL, pytest, coverage; print('agent python deps ok')"
 
 # 运行时禁止 AI 自行 pip install(与 runtime 阶段一致):移除 pip/ensurepip,预装依赖不受影响。
 RUN rm -f /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.11 \

@@ -8,6 +8,8 @@ spring:
     init:
       mode: always
       schema-locations: classpath:db/schema.sql
+      # 以 UTF-8 读取 schema.sql,否则容器默认 locale(POSIX)下中文种子(模板/技能描述/技能附加文件)会乱码成 ?。
+      encoding: UTF-8
       # Phase 1:users.uid 迁移用 ALTER TABLE 补列;MySQL 8 不支持 ADD COLUMN IF NOT EXISTS,
       # 依赖此选项忽略重复列(1060)/重复索引(1061)错误。schema.sql 全文均为 CREATE TABLE IF NOT EXISTS,
       # 故此开关仅放行这两条 ALTER 的良性重复错误,不会掩盖其他真实错误。

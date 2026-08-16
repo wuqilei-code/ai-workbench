@@ -1,6 +1,6 @@
 ---
 name: skill-creator
-description: Use this skill when the user asks to create, add, define, or generate a new skill (a reusable capability package), or says "新建/添加/写一个技能". It creates a compliant SKILL.md — workspace skill at .opencode/skills/<name>/SKILL.md (per-user, user-editable) or, only when the user explicitly asks for a system-wide built-in skill, tells them it must be handled by the admin and added to the image. Covers YAML frontmatter rules, naming constraints, description length, and length limits so opencode discovers and loads it via the native skill tool.
+description: 当用户要求创建、添加、定义或生成一个新技能(可复用的能力包),或者说「新建/添加/写一个技能」时使用。它创建一个合规的 SKILL.md——默认是工作区技能 .opencode/skills/<name>/SKILL.md(每用户、可编辑);只有用户明确要系统级内置技能时才说明须由管理员加进镜像。覆盖 YAML frontmatter 规则、命名约束、描述长度等,确保 opencode 能通过原生 skill 工具发现并加载它。
 license: MIT
 compatibility: opencode
 metadata:
@@ -8,90 +8,83 @@ metadata:
   workflow: skill-authoring
 ---
 
-# Skill Creator
+# 技能创建器
 
-Help the user create a new reusable skill that opencode discovers automatically.
+帮用户创建一个 opencode 能自动发现并加载的可复用技能。
 
-## Two kinds of skills — know which one the user wants
+## 两种技能——先搞清楚用户要哪种
 
-- **工作区技能(workspace skill)**: lives in the user's own workspace at `.opencode/skills/<name>/SKILL.md`. Per-user, git-tracked, visible in the workbench's **「技能」tab**, user-editable/deletable anytime. **This is the default for normal requests.**
-- **内置全局技能(built-in global skill)**: lives at `~/.config/opencode/skills/<name>/SKILL.md` in the container, baked into the image for every user (e.g. `skill-creator`, `document-generation`, `data-analysis`). The user **cannot** create or edit these from the workbench — only the admin can, by adding them to `docker/opencode/skills/` in the source repo and redeploying the image.
+- **工作区技能(workspace skill)**:放在用户自己工作区的 `.opencode/skills/<name>/SKILL.md`。每用户独立、可 git 管理、在工作台「技能」tab 可见、随时可编辑/删除。**普通请求默认创建这种。**
+- **内置全局技能(built-in global skill)**:放在容器内 `~/.config/opencode/skills/<name>/SKILL.md`,烘焙进镜像对所有用户生效(如 `skill-creator`、`document-generation`、`data-analysis`、`test-analysis`)。用户**无法**从工作台创建/编辑这种——只有管理员能,把技能加进源码仓库 `docker/opencode/skills/` 后重新构建镜像。
 
-Unless the user explicitly says "内置/全局/系统级技能" or "要所有用户都能用", create a **workspace skill** at `.opencode/skills/<name>/SKILL.md`. If they ask for a built-in one, do not write into `~/.config/opencode/skills/` (the running user's config copy is overwritten by the template on every seed anyway); instead tell the user this requires the admin to add it to `docker/opencode/skills/` and redeploy.
+除非用户明确说「内置/全局/系统级技能」或「所有用户都能用」,否则创建**工作区技能**。用户要内置技能时,不要写进运行中用户配置目录(每次播种都会被模板覆盖),而是告知这需要管理员加进 `docker/opencode/skills/` 并重新部署。
 
-## Where workspace skills live
+## 工作区技能的位置
 
-User-created skills are stored **in the workspace file area** at:
+用户自建技能存在工作区文件区:
 
 ```
 .opencode/skills/<name>/SKILL.md
 ```
 
-opencode walks the workspace (a git worktree) and discovers every `skills/*/SKILL.md` under `.opencode/`. Each skill is one folder containing exactly one `SKILL.md`. Skills are loaded on-demand by the `skill` tool — the agent sees the name + description and calls `skill({ name: "<name>" })` when relevant.
+opencode 遍历工作区(git 工作树),发现 `.opencode/` 下每个 `skills/*/SKILL.md`。一个技能 = 一个目录 + 一个 `SKILL.md`。技能按需由 `skill` 工具加载——agent 看到 name + description,相关时调用 `skill({ name: "<name>" })`。
 
-## How to create a skill
+## 创建步骤
 
-1. Agree on a skill `name` with the user. The name MUST satisfy:
-   - 1–64 characters
-   - lowercase letters and digits only, single hyphens allowed as separators
-   - regex: `^[a-z0-9]+(-[a-z0-9]+)*$`
-   - must equal the folder name (the `<name>` in `.opencode/skills/<name>/`)
-   - examples: `note-summarizer`, `sql-format`, `release-notes` (NOT `Note Summarizer`, `note_summarizer`, `-notes`)
+1. 和用户确认技能 `name`,必须满足:
+   - 1–64 字符
+   - 仅小写字母和数字,连字符 `-` 作分隔
+   - 正则 `^[a-z0-9]+(-[a-z0-9]+)*$`
+   - 必须等于目录名(即 `.opencode/skills/<name>/` 里的 `<name>`)
+   - 示例:`note-summarizer`、`sql-format`、`release-notes`(不要 `Note Summarizer`、`note_summarizer`、`-notes`)
 
-2. Write the file `.opencode/skills/<name>/SKILL.md` using the `write` tool. The file MUST start with YAML frontmatter delimited by `---` lines, followed by the markdown body:
+2. 用 `write` 工具写 `.opencode/skills/<name>/SKILL.md`。文件必须以 `---` 包裹的 YAML frontmatter 开头,再接 markdown 正文:
 
-```
----
-name: <name>
-description: <one concise sentence describing what the skill does and when to use it>
----
+   ```
+   ---
+   name: <name>
+   description: <一句简洁的话,说明技能做什么、何时使用>
+   ---
 
-## What I do
-- <concrete behavior>
+   ## 我做什么
+   - <具体行为>
 
-## When to use me
-- <trigger conditions>
-```
+   ## 何时使用我
+   - <触发条件>
+   ```
 
-3. Frontmatter rules:
-   - `name` (required): must match the folder name, see rules above.
-   - `description` (required): 1–1024 characters. Keep it specific enough that the agent can choose correctly. Mention what it does and when to use it. Third person: "Use when ...", not "I help with ...".
-   - `license`, `compatibility`, `metadata` are optional; unknown fields are ignored.
+3. frontmatter 规则:
+   - `name`(必填):必须与目录名一致,规则见上。
+   - `description`(必填):1–1024 字符,足够具体让 agent 能正确选择。说明做什么、何时用。用第三人称「当…时使用」,不要写「我来帮你…」。
+   - `license`、`compatibility`、`metadata` 可选;未知字段被忽略。
 
-4. The body is markdown guidance the agent follows when the skill is loaded. Be concrete and actionable: steps, constraints, output format. Do not put secrets in a skill.
+4. 正文是技能被加载后 agent 遵循的 markdown 指引。要具体、可执行:步骤、约束、输出格式。**不要把密钥写进技能。**
 
-5. After writing, tell the user:
-   - the skill path (`.opencode/skills/<name>/SKILL.md`)
-   - that it appears in the workbench **「技能」tab** (right drawer → 工作区 → 技能), where they can view/edit/delete it — the tab also lists built-in global skills read-only
-   - that it is available immediately; if it does not appear in the current session, starting a new session guarantees discovery
+5. 写完告诉用户:
+   - 技能路径(`.opencode/skills/<name>/SKILL.md`)
+   - 它会在工作台「技能」tab(右侧抽屉 → 工作区 → 技能)出现,可查看/编辑/删除;该 tab 也列出内置全局技能(只读)
+   - 立即可用;当前会话若没出现,新开会话一定发现
 
-## UI alternative
+## UI 替代
 
-The workbench **「技能」tab → 「新建技能」** button creates the same structure (directory + `SKILL.md` with `name`/`description` frontmatter) without the agent. If the user prefers clicking, point them there; the result is identical and fully editable afterwards.
+工作台「技能」tab 的「新建技能」按钮会创建同样的结构(目录 + 带 name/description 的 `SKILL.md`),无需 agent。用户喜欢点按钮就指过去;结果一致且之后可编辑。
 
-## Rules
+## 打包脚本和其他文件(可选)
 
-- Create exactly one `SKILL.md` per folder. Do not create skills outside `.opencode/skills/`.
-- Never overwrite an existing skill without confirming with the user.
-- If the user only describes a vague goal, propose a concrete name + description and confirm before writing.
-- Keep the body focused; a skill is a reusable method, not a full application.
+技能就是个目录——opencode 只要求 `SKILL.md`,但可以在旁边放辅助资源。agent 不会自动运行 `scripts/` 目录,它用自身的 `bash`/`read` 工具,所以正文里要显式引用这些文件。
 
-## Bundling scripts and other files (optional)
+## 技能内的长任务(异步,别阻塞对话)
 
-A skill is just a folder — opencode only requires `SKILL.md`, but you MAY add helper resources alongside it. The agent does not auto-run any `scripts/` directory; it uses its own `bash`/`read` tools, so you must reference files explicitly in the body.
+如果技能的工作流可能要几分钟到几小时,让 agent 用**后台任务约定**,而不是在对话轮内轮询(会占住会话、烧上下文)。指引 agent:
 
-## Long-running tasks inside a skill (async, do not block the turn)
+1. `mkdir -p tasks`,然后后台启动:`nohup <command> > tasks/<id>.log 2>&1 & echo $! > tasks/<id>.pid`(`<id>` 须匹配 `[A-Za-z0-9._-]+`)。
+2. 任务结束写 `tasks/<id>.done`:内容以 `failed` 开头=失败,其他任意内容(或空文件)=完成;pid 退出但没有 `.done` 时后端 watcher 也视为完成。下游读取方要把非 `failed` 当作就绪。
+3. 写 `tasks/<id>.json`:`{ "id": "<id>", "continue": "<后续步骤指示>", "sessionId": "" }`——`continue` 告诉 agent 拿到结果后做什么。
+4. 立即回复「任务已在后台启动」并结束本轮。后端 `BackgroundTaskWatcher`(约每 5s)检测完成,把结果注入对话,agent **自动继续 `continue` 里的步骤**。
+5. 校验脚本只用有界命令(`bash -n`、`timeout 20 <cmd>`);**绝不在对话轮的前台跑 wait/依赖循环脚本去测试**——会一直阻塞到工具超时。这种测试走后台任务路径或给个短等待预算(如 `PIPE_DEP_TIMEOUT_S=20`)。
+6. 结果被注入的后续步骤消费后,清理 `tasks/` 文件。
 
-If a skill's workflow can take a long time (minutes to hours), instruct the agent to use the **background-task convention** instead of blocking the conversation turn with in-turn polling (which holds the session busy and burns context). Tell the agent:
-
-1. `mkdir -p tasks`, then launch detached: `nohup <command> > tasks/<id>.log 2>&1 & echo $! > tasks/<id>.pid` (`<id>` must match `[A-Za-z0-9._-]+`).
-2. The job must write `tasks/<id>.done` when it finishes: content starting with `failed` means failure, any other content (or an empty file) means done; an exited pid without `.done` is also treated as done by the backend watcher. Downstream readers must treat non-`failed` as ready.
-3. Write `tasks/<id>.json`: `{ "id": "<id>", "continue": "<后续步骤指示>", "sessionId": "" }` — `continue` tells the agent what to do next with the result.
-4. Reply "任务已在后台启动" immediately and end the turn. The backend `BackgroundTaskWatcher` (every ~5s) detects completion and injects the result into the conversation, so the agent **automatically continues the `continue` steps**.
-5. Validate scripts with bounded commands only (`bash -n`, `timeout 20 <cmd>`); **never** run a wait/dependency-loop script in the foreground of a turn to test it — that blocks the turn until the tool timeout. Run such tests through the background-task path or with a short wait budget (e.g. `PIPE_DEP_TIMEOUT_S=20`).
-6. Clean up the `tasks/` files after the continuation has consumed the result.
-
-Layout example:
+目录结构示例:
 
 ```
 .opencode/skills/<name>/
@@ -102,11 +95,18 @@ Layout example:
     schema.json
 ```
 
-In `SKILL.md`, tell the agent exactly how to use them with paths relative to the workspace root, e.g.:
+在 `SKILL.md` 里用相对工作区根的路径告诉 agent 怎么用,例如:
 
 ```
-Run the linter with: bash .opencode/skills/<name>/scripts/lint.sh <file>
-Refer to the schema at .opencode/skills/<name>/references/schema.json when validating.
+运行 linter:bash .opencode/skills/<name>/scripts/lint.sh <file>
+校验时参考 .opencode/skills/<name>/references/schema.json。
 ```
 
-Only add scripts/files when they genuinely help. A pure-instruction `SKILL.md` is perfectly valid and is the common case.
+只在真正有用时才加脚本/文件。纯指令的 `SKILL.md` 完全合法,也是最常见的情况。
+
+## 规则
+
+- 一个目录只建一个 `SKILL.md`。不要建到 `.opencode/skills/` 之外。
+- 未经确认不要覆盖已有技能。
+- 用户只说了模糊目标时,先给出具体的 name + description 方案,确认后再写。
+- 正文保持聚焦;技能是可复用方法,不是完整应用。

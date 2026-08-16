@@ -334,18 +334,23 @@ const pendingQuestionHost = computed<PendingQuestionHost | null>(() => {
   return null
 })
 
-const pendingPermissionHost = computed<PendingPermissionHost | null>(() => {
-  // 同 pendingQuestionHost:仅最后一个轮次才展示,避免历史轮次残留的 pendingPermission 重复弹框
-  if (!isLastTurn.value) return null
+/** 当前轮次所有未回复的权限(一条命令可能同时触发多个:external_directory + bash 等,逐一展示) */
+const pendingPermissions = computed<PendingPermission[]>(() => {
+  if (!isLastTurn.value) return []
   const allSteps: Step[] = [...props.turn.steps]
   if (props.turn.finalAnswer) allSteps.push(props.turn.finalAnswer)
+  const out: PendingPermission[] = []
   for (const s of allSteps) {
-    const pp = s.message.parts?.pendingPermission
-    if (pp && !pp._replied) {
-      return { pp }
+    for (const pp of s.message.parts?.pendingPermissions || []) {
+      if (!pp._replied) out.push(pp)
     }
   }
-  return null
+  return out
+})
+
+const pendingPermissionHost = computed<PendingPermissionHost | null>(() => {
+  const first = pendingPermissions.value[0]
+  return first ? { pp: first } : null
 })
 
 // ---------- 本地选项状态 ----------
@@ -410,9 +415,11 @@ function clearStepPendingPermission(requestId: string) {
   const allSteps: Step[] = [...props.turn.steps]
   if (props.turn.finalAnswer) allSteps.push(props.turn.finalAnswer)
   for (const s of allSteps) {
-    if (s.message.parts?.pendingPermission?.requestId === requestId) {
+    const list = s.message.parts?.pendingPermissions
+    if (list && list.some((p) => p.requestId === requestId)) {
       if (s.message.parts) {
-        ;(s.message.parts as any).pendingPermission = null
+        const rest = list.filter((p) => p.requestId !== requestId)
+        ;(s.message.parts as any).pendingPermissions = rest.length ? rest : null
       }
     }
   }
@@ -474,10 +481,10 @@ async function rejectQuestion(host: PendingQuestionHost) {
   }
 }
 
-async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'always' | 'reject') {
+async function submitPermission(pp: PendingPermission, reply: 'once' | 'always' | 'reject') {
   console.log('[AssistantTurn] submitPermission clicked', {
     sessionId: props.sessionId,
-    requestId: host.pp.requestId,
+    requestId: pp.requestId,
     reply,
   })
   if (!props.sessionId) {
@@ -485,7 +492,6 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
     return
   }
   if (submittingPermission.value) return
-  const { pp } = host
   submittingPermission.value = true
   try {
     await chatApi.replyPermission(props.sessionId, pp.requestId, reply)
@@ -524,9 +530,14 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
   </template>
   <!-- 多步模式:单气泡 = 可折叠思考区 + 最终答案 + pending UI -->
   <div v-else class="msg assistant">
-    <div class="avatar">AI</div>
+    <div class="avatar">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2.5l1.9 5.9 6.1 1.9-5 4.4 1.5 6.3L12 17.5l-4.5 3.5 1.5-6.3-5-4.4 6.1-1.9L12 2.5z"/></svg>
+    </div>
     <div class="bubble">
-      <span v-if="faTime" class="msg-time">{{ fmtMessageTime(faTime) }}</span>
+      <div class="msg-head">
+        <span class="author">AI</span>
+        <span v-if="faTime" class="msg-time">{{ fmtMessageTime(faTime) }}</span>
+      </div>
       <!-- 思考过程(可折叠) -->
       <NCollapse
         v-if="turn.steps.length > 0 || (turn.finalAnswer && (turn.finalAnswer.toolCalls.length || turn.finalAnswer.reasoning))"
@@ -737,9 +748,10 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
         </div>
       </div>
 
-      <!-- Pending Permission 区块 (自定义 div) -->
+      <!-- Pending Permission 区块 (自定义 div);多条权限逐一展示 -->
       <div
-        v-if="pendingPermissionHost"
+        v-for="pp in pendingPermissions"
+        :key="pp.requestId"
         class="pending-block permission-block"
       >
         <div class="pending-block-header">
@@ -749,22 +761,22 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
           <span class="pending-title">请求权限</span>
         </div>
         <div class="pending-block-body">
-          <template v-if="pendingPermissionHost.pp.version === 'v1'">
+          <template v-if="pp.version === 'v1'">
             <div class="perm-title">
-              {{ (pendingPermissionHost.pp as any).permission }}
+              {{ (pp as any).permission }}
             </div>
-            <ul v-if="(pendingPermissionHost.pp as any).patterns?.length" class="perm-list">
-              <li v-for="(p, pi) in (pendingPermissionHost.pp as any).patterns" :key="pi">
+            <ul v-if="(pp as any).patterns?.length" class="perm-list">
+              <li v-for="(p, pi) in (pp as any).patterns" :key="pi">
                 {{ p }}
               </li>
             </ul>
           </template>
           <template v-else>
             <div class="perm-title">
-              操作: <strong>{{ (pendingPermissionHost.pp as any).action }}</strong>
+              操作: <strong>{{ (pp as any).action }}</strong>
             </div>
-            <ul v-if="(pendingPermissionHost.pp as any).resources?.length" class="perm-list">
-              <li v-for="(r, ri) in (pendingPermissionHost.pp as any).resources" :key="ri">
+            <ul v-if="(pp as any).resources?.length" class="perm-list">
+              <li v-for="(r, ri) in (pp as any).resources" :key="ri">
                 {{ r }}
               </li>
             </ul>
@@ -776,14 +788,14 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
               type="error"
               quaternary
               :disabled="submittingPermission"
-              @click="submitPermission(pendingPermissionHost, 'reject')"
+              @click="submitPermission(pp, 'reject')"
             >
               拒绝
             </n-button>
             <n-button
               size="small"
               :disabled="submittingPermission"
-              @click="submitPermission(pendingPermissionHost, 'once')"
+              @click="submitPermission(pp, 'once')"
             >
               允许本次
             </n-button>
@@ -791,7 +803,7 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
               size="small"
               type="primary"
               :loading="submittingPermission"
-              @click="submitPermission(pendingPermissionHost, 'always')"
+              @click="submitPermission(pp, 'always')"
             >
               始终允许
             </n-button>
@@ -819,7 +831,13 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
 </template>
 
 <style scoped>
-.msg { display: flex; gap: 12px; margin-bottom: 20px; }
+.msg {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 26px;
+  padding: 0 4px;
+}
 .followups { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
 .fu-label { font-size: 12px; color: var(--text-3); }
 .fu-chip {
@@ -830,36 +848,42 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
 }
 .fu-chip:hover { border-color: var(--accent); color: var(--accent); }
 .avatar {
-  width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+  width: 32px; height: 32px; border-radius: 10px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  font-size: 11px; font-weight: 600; background: var(--surface-hover);
-  color: var(--text-3);
-}
-.msg.assistant .avatar {
-  background: var(--surface-hover);
+  background: var(--accent); color: #fff;
+  margin-top: 1px;
 }
 .bubble {
   position: relative;
-  max-width: 92%;
+  flex: 1;
   min-width: 0;
-  padding: 14px 16px; border-radius: 12px;
-  background: var(--ai-bubble-bg); line-height: 1.6; word-break: break-word;
-  border: 1px solid var(--border-soft);
-  box-shadow: none;
-  overflow: hidden;
-}
-/* 请求权限/提问等操作块需要更宽空间,避免内部按钮被 overflow 裁切 */
-.bubble:has(.pending-block) {
-  max-width: 92%;
-}
-.msg-time {
-  display: block; font-size: 11px; color: var(--text-3); opacity: .7;
-  margin-bottom: 4px;
-}
-.bubble:hover {
+  background: transparent;
+  line-height: 1.6; word-break: break-word;
+  border: none;
   box-shadow: none;
 }
-.content { position: relative; }
+.msg-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+  min-height: 20px;
+}
+.author { font-size: 13px; font-weight: 600; color: var(--text); }
+.msg-time { font-size: 11px; color: var(--text-3); }
+.content { position: relative; font-size: 14px; line-height: 1.8; letter-spacing: 0.01em; color: var(--text); }
+.content :deep(p) { margin: 8px 0; }
+.content :deep(p:first-child) { margin-top: 0; }
+.content :deep(p:last-child) { margin-bottom: 0; }
+.content :deep(ul),
+.content :deep(ol) { padding-left: 20px; margin: 8px 0; }
+.content :deep(li) { margin: 5px 0; line-height: 1.75; }
+.content :deep(li > p) { margin: 2px 0; }
+.content :deep(hr) {
+  border: none;
+  border-top: 1px solid var(--border-soft);
+  margin: 14px 0;
+}
 /* 最终答案工具条:水平排列,悬停显示 */
 .fa-tools {
   position: absolute; top: -6px; right: -6px; z-index: 2;
@@ -871,6 +895,10 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
   opacity: 0; transition: opacity .15s;
 }
 .content:hover .fa-tools { opacity: 1; }
+/* 触屏:最终答案工具条常显 */
+@media (hover: none) {
+  .fa-tools { opacity: 1; }
+}
 .copy-btn {
   background: transparent; border: none; cursor: pointer;
   padding: 4px; border-radius: 4px; line-height: 1;
@@ -879,11 +907,33 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
 .copy-btn:hover { background: var(--surface-hover); color: var(--text-2); }
 .copy-btn.star-btn.on { color: #f0b429; }
 .copy-btn.regen-btn:hover { color: var(--accent); }
-.content :deep(p) { margin: 6px 0; }
-.content :deep(pre.hljs) { background: #1e1e1e; border-radius: var(--radius-sm); padding: 12px; overflow-x: auto; }
+.content :deep(pre.hljs) { background: var(--code-bg); border-radius: var(--radius-sm); padding: 12px; overflow-x: auto; }
 .content :deep(code) { font-family: ui-monospace, monospace; font-size: 13px; }
 .content :deep(pre code) { background: none; }
 .content :deep(code:not(pre code)) { background: var(--surface-hover); padding: 2px 5px; border-radius: 4px; }
+.content :deep(table) {
+  border-collapse: collapse;
+  margin: 10px 0;
+  width: 100%;
+  display: block;
+  overflow-x: auto;
+  font-size: 13px;
+}
+.content :deep(th),
+.content :deep(td) {
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+.content :deep(th) {
+  background: var(--surface-hover);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+.content :deep(td) { color: var(--text-2); }
+.content :deep(tr:nth-child(even) td) { background: var(--surface); }
 
 /* 思考区 */
 .think-header {
@@ -916,7 +966,7 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
   font-size: 13px; color: var(--text-2); opacity: .85;
 }
 .step-narration :deep(p) { margin: 4px 0; }
-.step-narration :deep(pre.hljs) { background: #1e1e1e; border-radius: var(--radius-sm); padding: 8px; overflow-x: auto; }
+.step-narration :deep(pre.hljs) { background: var(--code-bg); border-radius: var(--radius-sm); padding: 8px; overflow-x: auto; }
 .step-narration :deep(code) { font-family: ui-monospace, monospace; font-size: 12px; }
 
 .tool-calls { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
@@ -1039,5 +1089,12 @@ async function submitPermission(host: PendingPermissionHost, reply: 'once' | 'al
   flex-wrap: wrap;
   width: 100%;
   box-sizing: border-box;
+}
+
+/* 移动端:消息布局收紧 */
+@media (max-width: 768px) {
+  .msg { gap: 8px; margin-bottom: 18px; padding: 0 2px; }
+  .avatar { width: 26px; height: 26px; border-radius: 8px; }
+  .msg-head { min-height: 18px; margin-bottom: 4px; }
 }
 </style>

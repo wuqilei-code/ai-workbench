@@ -48,11 +48,13 @@ public class OpencodeProperties {
     private String templateDir = "/data/opencode/template";
 
     // ---- 工具在途看门狗(StuckToolWatcher):兜底「卡死但无人回答」的权限/工具在途 ----
-    // 注意:opencode bash 工具自带 2 分钟默认超时(OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS,超时后
-    // kill 命令并把超时提示返回给 agent,agent 可继续/说明)。看门狗阈值必须**大于** bash 超时,
-    // 让 bash 的超时先生效(agent 得以继续),而不是看门狗 90s 提前 abort 整个生成(那会导致任务中断无后续)。
-    /** 判定阈值:生成中且在途但超过该时长(ms)无任何事件 → 视为卡死(须 > bash 2min 默认超时) */
-    private long stuckToolTimeoutMs = 150_000;
+    // 注意:opencode bash 工具超时由 OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS 控制(见 bashTimeoutMs),
+    // 超时后 kill 命令并把超时提示返回给 agent,agent 可继续/说明。看门狗阈值必须**大于** bash 超时,
+    // 让 bash 的超时先生效(agent 得以继续),而不是看门狗提前 abort 整个生成(那会导致任务中断无后续)。
+    /** bash 工具默认超时(ms),注入 agent 容器环境 OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS */
+    private long bashTimeoutMs = 300_000;
+    /** 判定阈值:生成中且在途但超过该时长(ms)无任何事件 → 视为卡死(须 > bash 默认超时) */
+    private long stuckToolTimeoutMs = 360_000;
     /** 权限未被回答的兜底阈值(ms):超过即在对话中注入提示(不自动 abort) */
     private long stuckPermissionPromptMs = 30_000;
     /** 看门狗扫描间隔(ms) */
@@ -60,7 +62,10 @@ public class OpencodeProperties {
     /** 同一用户连续 abort 的最小间隔(ms),避免误杀后立刻再杀 */
     private long stuckCooldownMs = 120_000;
     /** 未回答的权限/问题请求超过该时长(ms)自动拒绝(需 < 容器 idle 回收,让拒绝先于回收生效;0=禁用) */
-    private long stuckPermissionTimeoutMs = 300_000;
+    private long stuckPermissionTimeoutMs = 120_000;
+    /** 未回答权限/问题的扫描间隔(ms)。须远小于 stuckPermissionTimeoutMs 与 stuckToolTimeoutMs,
+     *  否则自动拒绝永远来不及在看门狗 abort 之前触发(历史事故:扫描间隔曾等于超时值导致从不生效)。 */
+    private long stuckPermissionSweepMs = 30_000;
 
     // ---- 定时任务(JobScheduler / JobQueueDispatcher) ----
     /** 同时运行的任务容器上限(容器资源有限,默认 1,超出排队) */

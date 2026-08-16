@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
-import { summarizeToolCall, extractFilePath, isFileProducingTool } from '@/utils/turns'
+import { summarizeToolCall } from '@/utils/turns'
 import type { ToolCall } from '@/types'
 
 const props = defineProps<{ tc: ToolCall }>()
@@ -51,12 +51,6 @@ const statusIcon = computed(() => {
   return '…'
 })
 
-const downloadPath = computed(() =>
-  props.tc.status === 'completed' && isFileProducingTool(props.tc)
-    ? extractFilePath(props.tc)
-    : null,
-)
-
 const lineCount = computed(() => {
   const t = output.value.trim()
   return t ? t.split('\n').length : 0
@@ -94,12 +88,6 @@ function downloadOutput() {
     <span class="chip" :class="chipClass">
       🔧 {{ tc.tool }} <span class="chip-arg">{{ summarizeToolCall(tc) }}</span>
       <span class="chip-status">{{ statusIcon }}</span>
-      <a
-        v-if="downloadPath"
-        class="chip-download"
-        title="下载该文件"
-        @click.stop="emit('download', downloadPath)"
-      >📥</a>
     </span>
 
     <div v-if="output" class="tool-output">
@@ -139,12 +127,6 @@ function downloadOutput() {
 .chip:hover { border-color: var(--border); background: var(--surface-hover); }
 .chip-arg { color: var(--accent); }
 .chip .chip-status { font-weight: bold; }
-.chip-download {
-  margin-left: 2px; padding: 0 2px; cursor: pointer;
-  font-size: 13px; line-height: 1; text-decoration: none;
-  border-radius: 4px;
-}
-.chip-download:hover { background: var(--surface-hover); }
 .chip.run .chip-status { color: var(--text-3); animation: chip-pulse 1.6s ease-in-out infinite; }
 .chip.ok .chip-status { color: var(--ok); }
 .chip.err .chip-status { color: var(--err); }

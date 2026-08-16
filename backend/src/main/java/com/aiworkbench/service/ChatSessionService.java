@@ -72,6 +72,9 @@ public class ChatSessionService {
         s.setPinned(0);
         chatSessionMapper.insert(s);
 
+        // created_at/updated_at 由 DB DEFAULT 维护,insert 后实体里仍是 null;
+        // 回查一次拿到真实时间戳,否则前端新会话的 updatedAt 为空、列表排序会把它归到「更早」沉底。
+        s = chatSessionMapper.selectById(s.getId());
         return toVo(s);
     }
 

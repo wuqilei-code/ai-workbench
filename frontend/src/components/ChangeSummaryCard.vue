@@ -98,12 +98,13 @@ function restoreTo(sha = props.summary.sha) {
 <template>
   <div class="summary-card">
     <div class="summary-head">
-      <span class="icon">📝</span>
-      <span class="title">AI 变更总结</span>
+      <span class="icon">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg>
+      </span>
+      <span class="title">文件变动</span>
       <span v-if="summary.files?.length" class="count">本轮改动 {{ summary.files.length }} 个文件</span>
       <span v-if="summary.sha" class="count" :title="summary.sha">@{{ shortSha(summary.sha) }}</span>
     </div>
-    <div class="summary-text">{{ summary.summary }}</div>
     <div v-if="summary.files?.length" class="summary-files">
       <span
         v-for="(f, i) in visibleFiles"
@@ -148,7 +149,7 @@ function restoreTo(sha = props.summary.sha) {
 
 <style scoped>
 .summary-card {
-  margin: 4px 0 16px;
+  margin: 4px 0 16px 48px;
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent);
   border-radius: var(--radius);
@@ -156,11 +157,15 @@ function restoreTo(sha = props.summary.sha) {
   padding: 12px 16px;
   max-width: 75%;
 }
+
+/* 移动端:头像变小(26px)+间距收紧(8px)+消息内边距(2px),内容列左缩进变为 36px,同步对齐「结果文件」 */
+@media (max-width: 768px) {
+  .summary-card { margin-left: 36px; max-width: 82%; }
+}
 .summary-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
 .summary-head .icon { font-size: 14px; }
 .summary-head .title { font-size: 13px; font-weight: 600; color: var(--accent-text); }
 .summary-head .count { font-size: 12px; color: var(--text-3); }
-.summary-text { font-size: 14px; line-height: 1.6; color: var(--text); word-break: break-word; }
 .summary-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .file-chip {
   font-size: 12px; padding: 3px 10px; border-radius: 10px;

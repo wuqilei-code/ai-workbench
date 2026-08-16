@@ -34,12 +34,12 @@ public class TemplateService {
     private final PromptTemplateMapper templateMapper;
     private final UserTemplateMapper userTemplateMapper;
 
-    /** 新用户首启默认启用的内置模板数量(前 N 个按 sort_order) */
-    private static final int DEFAULT_ENABLE_COUNT = 6;
-    /** 首页最大展示数 */
+    /** 首页最大展示/启用数 */
     private static final int HOME_MAX = 12;
     /** 无启用时的兜底内置数量 */
     private static final int HOME_FALLBACK = 6;
+    /** 特殊模板(源码测试分析,由 Test 页触发,不算常规首页模板),默认不启用、也不计入默认 12 个 */
+    private static final String TEST_ANALYSIS_TITLE = "源码测试分析";
 
     /** 当前用户的模板列表(内置 + 自建),各带 enabled 状态。 */
     public List<TemplateVo> listMine(Long userId) {
@@ -99,7 +99,7 @@ public class TemplateService {
                 .eq(UserTemplate::getUserId, userId)
                 .eq(UserTemplate::getTemplateId, templateId));
         if (enabled) {
-            // 限制首页最多启用 HOME_MAX(12)个:已启用达到上限且该模板未启用时拒绝
+            // 限制首页最多启用 HOME_MAX 个:已启用达到上限且该模板未启用时拒绝
             Long currentEnabled = userTemplateMapper.selectCount(new LambdaQueryWrapper<UserTemplate>()
                     .eq(UserTemplate::getUserId, userId)
                     .eq(UserTemplate::getEnabled, 1));
@@ -132,7 +132,7 @@ public class TemplateService {
         }
     }
 
-    /** 新用户首启:若没有任何 user_template 记录,自动启用内置前 DEFAULT_ENABLE_COUNT 个。 */
+    /** 新用户首启:若没有任何 user_template 记录,默认启用全部常规内置模板(不含「源码测试分析」特殊模板)。 */
     public void ensureDefaults(Long userId) {
         Long count = userTemplateMapper.selectCount(new LambdaQueryWrapper<UserTemplate>()
                 .eq(UserTemplate::getUserId, userId));
@@ -140,10 +140,11 @@ public class TemplateService {
         List<PromptTemplate> builtin = templateMapper.selectList(
                 new LambdaQueryWrapper<PromptTemplate>()
                         .isNull(PromptTemplate::getUserId)
-                        .orderByAsc(PromptTemplate::getSortOrder)
-                        .last("limit " + DEFAULT_ENABLE_COUNT));
+                        .orderByAsc(PromptTemplate::getSortOrder));
         int sort = 10;
+        int enabled = 0;
         for (PromptTemplate t : builtin) {
+            if (TEST_ANALYSIS_TITLE.equals(t.getTitle())) continue;
             UserTemplate ut = new UserTemplate();
             ut.setUserId(userId);
             ut.setTemplateId(t.getId());
@@ -151,8 +152,9 @@ public class TemplateService {
             ut.setSortOrder(sort);
             userTemplateMapper.insert(ut);
             sort += 10;
+            enabled++;
         }
-        log.info("seeded default templates for user {} ({} enabled)", userId, builtin.size());
+        log.info("seeded default templates for user {} ({} enabled)", userId, enabled);
     }
 
     public TemplateVo create(Long userId, TemplateRequest req) {

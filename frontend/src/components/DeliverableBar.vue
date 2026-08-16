@@ -73,6 +73,7 @@ function fileColor(name: string): string {
 <style scoped>
 .deliverable-bar {
   margin-top: 10px;
+  max-width: 80%;
   border: 1px solid rgba(88, 196, 155, 0.3);
   border-radius: var(--radius-sm);
   background: rgba(88, 196, 155, 0.05);

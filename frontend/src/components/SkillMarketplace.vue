@@ -56,7 +56,7 @@ async function load() {
   try {
     list.value = await chatApi.listMarketplaceSkills()
   } catch (e: any) {
-    msg.error(e?.message || '加载技能广场失败')
+    msg.error(e?.message || '加载技能市场失败')
   } finally {
     loading.value = false
   }
@@ -137,8 +137,8 @@ async function importSkill(name: string) {
       const icon = pick('icon')
       if (icon) pubIcon.value = icon
     }
-    // 递归读取附加文件(SKILL.md 之外的全部)
-    pubFiles.value = await collectFiles(root)
+    // 递归读取附加文件(SKILL.md 之外的全部;SKILL.md 已作为 content 单独提交,不能重复)
+    pubFiles.value = (await collectFiles(root)).filter((f) => f.path !== 'SKILL.md')
     msg.success(`已导入技能「${name}」,共 ${pubFiles.value.length} 个附加文件`)
   } catch (e: any) {
     msg.error(e?.message || '导入失败')
@@ -225,7 +225,7 @@ async function submitPublish() {
       content: pubContent.value,
       files: validFiles.value.map((f) => ({ path: f.path.trim().replace(/\\/g, '/').replace(/^\/+/, ''), content: f.content })),
     })
-    msg.success('已发布到技能广场')
+    msg.success('已发布到技能市场')
     publishVisible.value = false
     await load()
   } catch (e: any) {
@@ -340,7 +340,7 @@ onMounted(() => {
   <n-modal
     :show="show"
     preset="card"
-    title="技能广场"
+    title="技能市场"
     style="width: 1080px; max-width: 96vw"
     :bordered="false"
     @update:show="(v: boolean) => emit('update:show', v)"
@@ -406,7 +406,7 @@ onMounted(() => {
     <n-modal
       v-model:show="publishVisible"
       preset="card"
-      title="发布技能到广场"
+      title="发布技能到市场"
       style="width: 760px; max-width: 96vw"
       :bordered="false"
     >
@@ -542,7 +542,10 @@ onMounted(() => {
 
 <style scoped>
 .mp-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
-.mp-note { font-size: 12px; color: var(--text-3); flex: 1; min-width: 0; }
+.mp-note {
+  font-size: 12px; color: var(--text-3); flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 /* 分类标签 */
 .mp-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
@@ -585,6 +588,8 @@ onMounted(() => {
 .mp-card-desc {
   font-size: 12px; color: var(--text-2); line-height: 1.5;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .mp-card-meta { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 11px; color: var(--text-3); flex-wrap: wrap; }
 .mp-cat { color: var(--accent-text); }
@@ -640,7 +645,7 @@ onMounted(() => {
 .dt-name { font-size: 18px; font-weight: 700; color: var(--text); }
 .dt-sub { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .dt-installs { font-size: 12px; color: var(--text-3); }
-.dt-desc { font-size: 13px; color: var(--text-2); margin-bottom: 10px; line-height: 1.6; }
+.dt-desc { font-size: 13px; color: var(--text-2); margin-bottom: 10px; line-height: 1.6; word-break: break-word; overflow-wrap: anywhere; }
 .dt-structure { border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--surface); }
 .dt-tabs { padding: 0 10px; }
 .dt-content {

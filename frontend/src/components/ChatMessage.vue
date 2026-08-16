@@ -146,25 +146,31 @@ async function submitEdit() {
 
 <template>
   <div class="msg" :class="isUser ? 'user' : 'assistant'">
-    <div class="avatar">{{ isUser ? '我' : 'AI' }}</div>
-    <div class="bubble">
-      <div class="bubble-tools">
-        <button v-if="starable" class="copy-btn star-btn" :class="{ on: isStarred }" :title="isStarred ? '取消收藏' : '收藏该消息'" @click="toggleStar">
-          <svg width="14" height="14" viewBox="0 0 24 24" :fill="isStarred ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-        </button>
-        <button v-if="editable" class="copy-btn edit-btn" title="编辑并重新发送" @click="startEdit">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-        </button>
-        <button class="copy-btn" title="复制内容" @click="copyContent">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-        </button>
-        <button v-if="!isUser" class="copy-btn export-btn" title="导出为 Markdown 文件" @click="exportAsMarkdown">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        </button>
+    <div class="avatar">
+      <svg v-if="isUser" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2.5l1.9 5.9 6.1 1.9-5 4.4 1.5 6.3L12 17.5l-4.5 3.5 1.5-6.3-5-4.4 6.1-1.9L12 2.5z"/></svg>
+    </div>
+    <div class="msg-body">
+      <div class="msg-head">
+        <span class="author">{{ isUser ? '你' : 'AI' }}</span>
+        <span v-if="messageTime" class="msg-time">{{ messageTime }}</span>
+        <div class="bubble-tools">
+          <button v-if="starable" class="copy-btn star-btn" :class="{ on: isStarred }" :title="isStarred ? '取消收藏' : '收藏该消息'" @click="toggleStar">
+            <svg width="14" height="14" viewBox="0 0 24 24" :fill="isStarred ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          </button>
+          <button v-if="editable" class="copy-btn edit-btn" title="编辑并重新发送" @click="startEdit">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+          <button class="copy-btn" title="复制内容" @click="copyContent">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
+          <button v-if="!isUser" class="copy-btn export-btn" title="导出为 Markdown 文件" @click="exportAsMarkdown">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </button>
+        </div>
       </div>
       <div v-if="message._pending" class="status">发送中…</div>
       <div v-else-if="message.status === 'error'" class="status err">{{ message.error || '发送失败' }}</div>
-      <span v-if="messageTime" class="msg-time">{{ messageTime }}</span>
       <template v-if="editing">
         <textarea
           ref="editInputRef"
@@ -181,63 +187,70 @@ async function submitEdit() {
         </div>
       </template>
       <template v-else>
-        <div v-if="parsed.text" class="content" v-html="html" />
-        <div v-if="parsed.attachments.length" class="att-list">
-          <a
-            v-for="a in parsed.attachments"
-            :key="a.path"
-            class="att-link"
-            :class="{ busy: downloading !== null }"
-            :title="`下载 ${a.path}`"
-            @click="downloadAttachment(a.path)"
-          >{{ downloading === a.path ? '⏳ ' : '📎 ' }}{{ a.name }}</a>
+        <div class="content-area" :class="{ card: isUser }">
+          <div v-if="parsed.text" class="content" v-html="html" />
+          <div v-if="parsed.attachments.length" class="att-list">
+            <a
+              v-for="a in parsed.attachments"
+              :key="a.path"
+              class="att-link"
+              :class="{ busy: downloading !== null }"
+              :title="`下载 ${a.path}`"
+              @click="downloadAttachment(a.path)"
+            >{{ downloading === a.path ? '⏳ ' : '📎 ' }}{{ a.name }}</a>
+          </div>
+          <span v-if="streaming" class="cursor">▋</span>
         </div>
-        <span v-if="streaming" class="cursor">▋</span>
       </template>
     </div>
   </div>
 </template>
 
 <style scoped>
-.msg { display: flex; gap: 12px; margin-bottom: 20px; }
+.msg {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 26px;
+  padding: 0 4px;
+}
 .msg.user { flex-direction: row-reverse; }
 .avatar {
-  width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+  width: 32px; height: 32px; border-radius: 10px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  font-size: 11px; font-weight: 600; background: var(--surface);
-  color: var(--text-3);
-  border: 1px solid var(--border-soft);
+  margin-top: 1px;
 }
 .msg.user .avatar {
-  background: var(--accent);
-  color: #fff; border: none;
+  background: var(--surface);
+  color: var(--text-2);
+  border: 1px solid var(--border-soft);
 }
 .msg.assistant .avatar {
-  background: var(--surface-hover);
-  color: var(--text-3);
+  background: var(--accent);
+  color: #fff;
 }
-.bubble {
-  position: relative;
-  max-width: 70%; padding: 10px 14px; border-radius: var(--radius);
-  line-height: 1.6; word-break: break-word;
-  background: transparent;
-  border: none;
-  box-shadow: none;
+.msg-body { flex: 1; min-width: 0; position: relative; }
+.msg.user .msg-body { display: flex; flex-direction: column; align-items: flex-end; }
+.msg-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+  min-height: 20px;
 }
-.bubble:hover {
-  box-shadow: none;
-}
+.msg.user .msg-head { flex-direction: row-reverse; }
+.author { font-size: 13px; font-weight: 600; color: var(--text); }
+.msg-time { font-size: 11px; color: var(--text-3); }
 .bubble-tools {
-  position: absolute; top: 4px; right: 6px; opacity: 0; transition: opacity .15s;
-  z-index: 10; display: flex; gap: 2px; background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity .15s;
 }
-.bubble:hover .bubble-tools { opacity: 1; }
-.bubble-tools .copy-btn { pointer-events: auto; }
-/* 消息时间:气泡内顶部左侧,弱化,与右上悬浮工具避免遮挡 */
-.msg-time {
-  display: block; font-size: 11px; color: var(--text-3); opacity: .7;
-  margin-bottom: 4px;
-}
+.msg.user .bubble-tools { margin-left: 0; }
+.msg:hover .bubble-tools { opacity: 1; }
 .copy-btn {
   background: transparent; border: none; cursor: pointer;
   padding: 4px; border-radius: 4px; line-height: 1;
@@ -245,6 +258,15 @@ async function submitEdit() {
 }
 .copy-btn:hover { background: var(--surface-hover); color: var(--text-2); }
 .star-btn.on { color: #f0b429; }
+.content-area { min-width: 0; max-width: 100%; }
+.msg.user .content-area { max-width: 78%; }
+.msg.assistant .content-area { max-width: 96%; }
+.content-area.card {
+  background: var(--user-bubble-bg);
+  border-radius: 12px;
+  padding: 10px 14px;
+}
+.content { font-size: 14px; line-height: 1.8; letter-spacing: 0.01em; color: var(--text); }
 .edit-box {
   width: 100%; box-sizing: border-box;
   background: var(--bg-elev); color: var(--text);
@@ -255,18 +277,18 @@ async function submitEdit() {
 .edit-box:focus { outline: none; border-color: var(--accent); }
 .edit-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 6px; }
 .edit-hint { font-size: 11px; color: var(--text-3); margin-right: auto; }
-.msg.user .bubble {
-  background: var(--user-bubble-bg);
-  border-radius: 12px 12px 2px 12px;
+.content :deep(p) { margin: 8px 0; }
+.content :deep(p:first-child) { margin-top: 0; }
+.content :deep(p:last-child) { margin-bottom: 0; }
+.content :deep(ul),
+.content :deep(ol) { padding-left: 20px; margin: 8px 0; }
+.content :deep(li) { margin: 5px 0; line-height: 1.75; }
+.content :deep(li > p) { margin: 2px 0; }
+.content :deep(hr) {
+  border: none;
+  border-top: 1px solid var(--border-soft);
+  margin: 14px 0;
 }
-.msg.assistant .bubble {
-  background: var(--ai-bubble-bg);
-  border: 1px solid var(--border-soft);
-  border-radius: 12px;
-  max-width: 92%;
-  padding: 12px 14px;
-}
-.content :deep(p) { margin: 6px 0; }
 .content :deep(a.preview-link) {
   display: inline-block; margin: 2px 0;
   padding: 5px 12px; border-radius: 6px;
@@ -274,10 +296,33 @@ async function submitEdit() {
   border: 1px solid var(--border); text-decoration: none; font-size: 13px;
 }
 .content :deep(a.preview-link:hover) { background: var(--accent); color: #fff; }
-.content :deep(pre.hljs) { background: #1e1e1e; border-radius: var(--radius-sm); padding: 12px; overflow-x: auto; }
+.content :deep(pre.hljs) { background: var(--code-bg); border-radius: var(--radius-sm); padding: 12px; overflow-x: auto; }
 .content :deep(code) { font-family: ui-monospace, monospace; font-size: 13px; }
 .content :deep(pre code) { background: none; }
 .content :deep(code:not(pre code)) { background: var(--surface-hover); padding: 2px 5px; border-radius: 4px; }
+.content :deep(table) {
+  border-collapse: collapse;
+  margin: 10px 0;
+  width: 100%;
+  display: block;
+  overflow-x: auto;
+  font-size: 13px;
+}
+.content :deep(th),
+.content :deep(td) {
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+.content :deep(th) {
+  background: var(--surface-hover);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+.content :deep(td) { color: var(--text-2); }
+.content :deep(tr:nth-child(even) td) { background: var(--surface); }
 .status { font-size: 12px; color: var(--text-3); margin-bottom: 4px; }
 .status.err { color: var(--err); }
 .cursor { animation: blink 1s steps(2) infinite; color: var(--accent); }
@@ -294,4 +339,19 @@ async function submitEdit() {
 }
 .att-link:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
 .att-link.busy { opacity: .55; pointer-events: none; }
+
+/* 触屏:工具按钮常显(hover 不生效) */
+@media (hover: none) {
+  .bubble-tools { opacity: 1; }
+}
+
+/* 移动端:消息布局收紧,用户气泡放宽 */
+@media (max-width: 768px) {
+  .msg { gap: 8px; margin-bottom: 18px; padding: 0 2px; }
+  .avatar { width: 26px; height: 26px; border-radius: 8px; }
+  .msg-head { min-height: 18px; margin-bottom: 4px; }
+  .msg.user .content-area { max-width: 88%; }
+  .msg.assistant .content-area { max-width: 100%; }
+  .content { font-size: 14px; }
+}
 </style>

@@ -21,6 +21,7 @@ import JobRunsPanel from '@/components/JobRunsPanel.vue'
 import NotificationCenter from '@/components/NotificationCenter.vue'
 import UserMenu from '@/components/UserMenu.vue'
 import ChangeSummaryCard from '@/components/ChangeSummaryCard.vue'
+import DashboardView from '@/views/DashboardView.vue'
 import { chatApi } from '@/api/chat'
 import type { MessageVo, SkillInfo } from '@/types'
 import type { VirtualListInst } from 'naive-ui'
@@ -33,6 +34,7 @@ const fav = useFavoritesStore()
 const msg = useMessage()
 const virtualListRef = ref<VirtualListInst | null>(null)
 const showFiles = ref(true)
+const dashboardShow = ref(false)
 /** 工作区右侧面板当前标签(文件/技能/任务/定时任务/收藏) */
 const workspaceTab = ref('files')
 
@@ -65,18 +67,24 @@ function onSkillInstalled() {
 }
 
 /** 侧边栏导航事件监听 */
-const sidebarEvents = inject<Ref<{openPluginMarket:boolean; openTemplateLib:boolean; openMyFiles:boolean; openAutomation:boolean; openFind:boolean; openMyMcp:boolean}>>('sidebarEvents')
+const sidebarEvents = inject<Ref<{openPluginMarket:boolean; openTemplateLib:boolean; openMyFiles:boolean; openAutomation:boolean; openFind:boolean; openMyMcp:boolean; openDashboard:boolean}>>('sidebarEvents')
 if (sidebarEvents) {
   watch(() => sidebarEvents.value.openPluginMarket, (v) => { if (v) marketplaceShow.value = true })
   watch(() => sidebarEvents.value.openTemplateLib, (v) => { if (v) templateLibShow.value = true })
   watch(() => sidebarEvents.value.openMyFiles, (v) => { if (v) showFiles.value = true })
   watch(() => sidebarEvents.value.openFind, (v) => { if (v) openFind() })
   watch(() => sidebarEvents.value.openMyMcp, (v) => { if (v) mcpShow.value = true })
-  watch(() => sidebarEvents.value.openAutomation, (v) => { if (v) openAutomationModal() })}
+  watch(() => sidebarEvents.value.openAutomation, (v) => { if (v) openAutomationModal() })
+  watch(() => sidebarEvents.value.openDashboard, (v) => { if (v) dashboardShow.value = true })}
 
 /** 侧边栏折叠状态(由 ChatLayout provide):顶部「展开侧边栏」按钮使用 */
 const sidebarCollapsed = inject<Ref<boolean>>('sidebarCollapsed', ref(false))
 const toggleSidebar = inject<() => void>('toggleSidebar', () => {})
+/** 是否移动端(由 ChatLayout provide):工作区改为底部抽屉、顶栏精简 */
+const isMobile = inject<Ref<boolean>>('isMobile', ref(false))
+
+// 移动端:工作区默认收起为底部抽屉
+watch(isMobile, (m) => { if (m) showFiles.value = false }, { immediate: true })
 
 /** 空会话判断:会话已建但尚无任何消息(turn 为空)。 */
 const isNewSession = computed(() => chat.currentSessionId != null && chat.turns.length === 0)
@@ -299,6 +307,29 @@ function scrollToBottom() {
   })
 }
 
+/** 同步滚到底(用于会话切换:遮罩摘掉、列表刚挂载的那一帧立即定位,避免"先顶部后底部"闪烁) */
+function scrollToBottomNow() {
+  const vl = virtualListRef.value
+  if (!vl) return
+  if (!virtualItems.value.length) return
+  const el = vl.getScrollContainer?.()
+  if (el) {
+    el.scrollTop = el.scrollHeight
+    return
+  }
+  vl.scrollTo({ position: 'bottom' })
+}
+
+// 会话切换:switching=true 时列表被 v-else-if 卸载、遮罩覆盖;false 时列表重新挂载(默认滚到顶部)。
+// 在切换完成的同一帧立即滚到底,并用延迟再滚兜底 item-resizable 的高度测量,消除"闪一下顶部"。
+watch(() => chat.switching, (now, prev) => {
+  if (!now && prev) {
+    scrollToBottomNow()
+    setTimeout(scrollToBottomNow, 120)
+    setTimeout(scrollToBottomNow, 350)
+  }
+}, { flush: 'post' })
+
 /** 用户提交/拒绝权限或问题后(resumeStreaming 置 isStreaming=true),agent 会继续输出。
  *  此时把用户拉回底部,避免"确认后看不到后续输出"。
  *  nextTick 滚动可能早于虚拟列表渲染新项,故延迟再滚一次保证到位。 */
@@ -390,6 +421,7 @@ type VirtualListItem =
   | { key: string; kind: 'top-space' }
   | { key: string; kind: 'compact-divider' }
   | { key: string; kind: 'compact-progress' }
+  | { key: string; kind: 'interrupted-divider' }
 
 const virtualItems = computed<VirtualListItem[]>(() => {
   const items: VirtualListItem[] = []
@@ -408,6 +440,27 @@ const virtualItems = computed<VirtualListItem[]>(() => {
   const compactionMarks = msgs
     .filter((m) => m.role === 'compaction')
     .map((m) => ({ id: m.id, status: m.status }))
+  // 中断点:用户中断生成时后端落库 role=interrupted 记录,前端渲染为"已中断"分割线。
+  const interruptedMarks = msgs
+    .filter((m) => m.role === 'interrupted')
+    .map((m) => ({ id: m.id }))
+  // 统一归并:压缩/中断标记都按 id 插到对应 flow 项之前。
+  // 进行中(status=compacting)的压缩由末尾浮动动画表示;压缩已结束(compacting=false)时
+  // 即使前端拿到的是 compacting 状态(刷新竞态)也按"已压缩"分割线渲染,避免不显示。
+  const dividerMarks = [
+    ...compactionMarks
+      .filter((m) => (chat.compacting ? m.status !== 'compacting' : true))
+      .map((m) => ({
+        id: m.id,
+        kind: 'compact-divider' as VirtualListItem['kind'],
+        key: '__compact__-' + m.id,
+      })),
+    ...interruptedMarks.map((m) => ({
+      id: m.id,
+      kind: 'interrupted-divider' as VirtualListItem['kind'],
+      key: '__interrupted__-' + m.id,
+    })),
+  ].sort((a, b) => (a.id ?? 0) - (b.id ?? 0))
   // flow 每项的锚点消息 id:turn 用其 user 消息 id;summary 按 sha/at 反查 messages 里的 id。
   const summaryIdOf = (sha: string | undefined, at: string | undefined): number => {
     if (!sha && !at) return -1
@@ -433,27 +486,30 @@ const virtualItems = computed<VirtualListItem[]>(() => {
           summary: it.summary,
         },
   )
-  // 双指针归并:compaction 记录按 id 插到对应 flow 项之前
+  // 双指针归并:压缩/中断标记按 id 插到对应 flow 项之前。
+  // 本地乐观消息(id 为负,发送中的用户消息/未刷新定稿)必定是最新的,
+  // 任何已落库的标记记录都在它之前 → 负 id 一律判定"标记在前",否则按 id 比较。
+  const dividerBeforeFlow = (divId: number, flowId: number): boolean => {
+    if (flowId < 0) return true
+    return divId < flowId
+  }
   let fi = 0
   let ci = 0
-  while (fi < flowItems.length || ci < compactionMarks.length) {
-    const cm = compactionMarks[ci]
+  while (fi < flowItems.length || ci < dividerMarks.length) {
+    const cm = dividerMarks[ci]
     const nextFlowId = flowKeyById[fi] ?? Number.MAX_SAFE_INTEGER
-    if (cm && (fi >= flowItems.length || cm.id < nextFlowId)) {
-      items.push({
-        key: '__compact__-' + cm.id,
-        kind: cm.status === 'compacting' ? 'compact-progress' : 'compact-divider',
-      })
+    if (cm && (fi >= flowItems.length || dividerBeforeFlow(cm.id ?? 0, nextFlowId))) {
+      items.push({ key: cm.key, kind: cm.kind })
       ci++
     } else {
       items.push(flowItems[fi])
       fi++
     }
   }
-  // 压缩进行中且尚无落库记录(事件先于 DB 落库):追加"正在压缩…"占位
-  if (chat.compacting && compactionMarks.length === 0) {
+  // 压缩进行中:消息流末尾固定显示"正在压缩…"动画(压缩完成由 session.compacted 清除)
+  if (chat.compacting) {
     items.push({ key: '__compact-progress__', kind: 'compact-progress' })
-  } else if (!chat.compacting && compactionMarks.length === 0) {
+  } else if (compactionMarks.length === 0) {
     // agent 冷启动(空闲回收后发首条消息):后端已经 SSE dispatch session.starting,
     // 在流式内容出现前固定显示「正在连接智能体…」,首个流式事件到达即消失
     if (chat.agentStarting && !chat.streamingText && !activeTurnExists.value) {
@@ -475,14 +531,15 @@ const itemSize = 120
   <div class="chat-view">
     <div class="chat-head">
       <div class="head-left">
-        <n-button v-if="sidebarCollapsed" size="small" quaternary title="展开侧边栏" @click="toggleSidebar()">
+        <n-button v-if="sidebarCollapsed || isMobile" size="small" quaternary title="展开侧边栏" @click="toggleSidebar()">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/></svg>
         </n-button>
         <span class="title">{{ chat.currentSession?.title || 'AI Workbench' }}</span>
-        <n-tag :type="chat.connected ? 'success' : (chat.reconnecting ? 'warning' : 'default')" size="tiny" round>
+        <span class="conn-badge" :class="{ ok: chat.connected, warn: chat.reconnecting }">
+          <span class="conn-dot"></span>
           {{ chat.connected ? '已连接' : (chat.reconnecting ? '重连中…' : '未连接') }}
-        </n-tag>
-        <n-button size="small" quaternary title="会话内查找 (Ctrl+F)" @click="openFind">
+        </span>
+        <n-button class="find-btn" size="small" quaternary title="会话内查找 (Ctrl+F)" @click="openFind">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           查找
         </n-button>
@@ -557,21 +614,10 @@ const itemSize = 120
     </div>
 
     <div class="chat-main">
+      <DashboardView v-if="dashboardShow" @close="dashboardShow = false" />
       <div class="chat-col">
         <div class="chat-body">
-          <template v-if="chat.switching">
-            <div class="switching-mask">
-              <n-spin size="small" />
-              <span>正在加载会话…</span>
-            </div>
-          </template>
-          <template v-else-if="locating">
-            <div class="switching-mask">
-              <n-spin size="small" />
-              <span>正在定位消息…</span>
-            </div>
-          </template>
-          <template v-else-if="chat.currentSessionId && !isNewSession">
+          <template v-if="chat.currentSessionId && !isNewSession">
             <n-virtual-list
               ref="virtualListRef"
               class="chat-virtual"
@@ -615,7 +661,10 @@ const itemSize = 120
                 <!-- 压缩分割线:此前的早期内容已总结,不展示在对话里(文案固定,压缩中状态由底部占位单独表示) -->
                 <div v-else-if="item.kind === 'compact-divider'" class="compact-divider">
                   <span class="cd-line"></span>
-                  <span class="cd-label">📦 会话已压缩:早期内容已总结</span>
+                  <span class="cd-label">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+                    会话已压缩:早期内容已总结
+                  </span>
                   <span class="cd-line"></span>
                 </div>
                 <!-- 压缩进行中:消息流末尾的状态占位(当前可视区域可见) -->
@@ -623,11 +672,25 @@ const itemSize = 120
                   <span class="spinner"></span>
                   <span>正在压缩会话,总结早期内容…</span>
                 </div>
+                <!-- 中断分割线:用户中断了本轮生成 -->
+                <div v-else-if="item.kind === 'interrupted-divider'" class="interrupted-divider">
+                  <span class="id-line"></span>
+                  <span class="id-label">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>
+                    已中断
+                  </span>
+                  <span class="id-line"></span>
+                </div>
               </template>
             </n-virtual-list>
           </template>
           <WelcomeBoard v-else-if="chat.currentSessionId" @select="onScenarioSelect" />
           <n-empty v-else description="选择左侧会话或点击「新会话」开始" style="margin-top: 80px" />
+          <!-- 切换/定位遮罩:绝对定位覆盖在列表之上,不卸载列表,避免切换时闪一下顶部 -->
+          <div v-if="chat.switching || locating" class="switching-mask">
+            <n-spin size="small" />
+            <span>{{ chat.switching ? '正在加载会话…' : '正在定位消息…' }}</span>
+          </div>
         </div>
 
         <ChatInput v-if="chat.currentSessionId" ref="chatInputRef" @open-doc-gen="docGenShow = true" @open-error-diagnose="errorDiagnoseShow = true" @open-test-analysis="onTestAnalysis" />
@@ -705,7 +768,7 @@ const itemSize = 120
 </template>
 
 <style scoped>
-.chat-view { display: flex; flex-direction: column; height: 100vh; background: var(--chat-bg); }
+.chat-view { display: flex; flex-direction: column; height: 100vh; height: 100dvh; background: var(--chat-bg); }
 .chat-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 20px; border-bottom: 1px solid var(--border-soft);
@@ -713,10 +776,43 @@ const itemSize = 120
 }
 .head-left { display: flex; align-items: center; gap: 10px; }
 .head-left .title { font-weight: 600; color: var(--text); font-size: 15px; }
+/* 连接状态徽标:与主题一致的小圆点 + 文字 */
+.conn-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 9px; border-radius: 10px;
+  font-size: 11px; line-height: 1.6;
+  color: var(--text-3); background: var(--surface-hover);
+  border: 1px solid var(--border-soft);
+  white-space: nowrap;
+}
+.conn-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--text-4);
+  flex-shrink: 0;
+}
+.conn-badge.ok { color: var(--ok); }
+.conn-badge.ok .conn-dot { background: var(--ok); }
+.conn-badge.warn { color: var(--warn); }
+.conn-badge.warn .conn-dot { background: var(--warn); animation: conn-pulse 1.2s ease-in-out infinite; }
+@keyframes conn-pulse { 0%, 100% { opacity: .4; } 50% { opacity: 1; } }
 .head-right { display: flex; align-items: center; gap: 6px; }
 
+/* 移动端顶栏精简:隐藏查找按钮与连接徽标,标题单行截断 */
+@media (max-width: 768px) {
+  .chat-head { padding: 10px 12px; gap: 8px; }
+  .find-btn { display: none; }
+  .conn-badge { display: none; }
+  .head-left { flex: 1; gap: 6px; min-width: 0; }
+  .head-left .title {
+    flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .head-right .ws-tab-icons { display: none; }
+  .head-right { flex-shrink: 0; }
+}
+
 /* 左右两栏:左=对话区(自适应),右=工作区(固定宽,可收起) */
-.chat-main { flex: 1; display: flex; min-height: 0; }
+.chat-main { flex: 1; display: flex; min-height: 0; position: relative; }
 .chat-col { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .chat-body { flex: 1; overflow: hidden; min-height: 0; position: relative; }
 .chat-virtual { height: 100%; }
@@ -755,10 +851,12 @@ const itemSize = 120
   to { transform: rotate(360deg); }
 }
 
-/* 会话切换加载遮罩 */
+/* 会话切换加载遮罩:绝对定位覆盖在列表上,不卸载列表,避免切换时闪一下顶部 */
 .switching-mask {
-  height: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;
+  position: absolute; inset: 0; z-index: 20;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
   color: var(--text-3); font-size: 13px;
+  background: var(--chat-bg, var(--bg));
 }
 
 /* 工作区面板 */
@@ -773,6 +871,28 @@ const itemSize = 120
 .workspace-tabs { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 8px 12px; }
 .workspace-tabs :deep(.n-tabs) { min-width: 0; }
 .workspace-tabs :deep(.n-tabs-pane-wrapper), .workspace-tabs :deep(.n-tab-pane) { min-width: 0; width: 100%; box-sizing: border-box; overflow-x: hidden; }
+
+/* 移动端:工作区从右侧常驻面板变为底部抽屉 */
+@media (max-width: 768px) {
+  .workspace-panel,
+  .workspace-panel.workspace-collapsed {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    height: 55%;
+    width: auto;
+    border-left: none;
+    border-top: 1px solid var(--border-soft);
+    border-radius: 12px 12px 0 0;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.15);
+    z-index: 100;
+    transition: transform .18s ease;
+  }
+  .workspace-panel.workspace-collapsed {
+    transform: translateY(100%);
+    border-top: none;
+    pointer-events: none;
+  }
+}
 
 /* 顶部收起态:工作区小图标组 */
 .ws-tab-icons {
@@ -829,6 +949,19 @@ const itemSize = 120
   width: 12px; height: 12px; border: 2px solid rgba(245, 158, 11, 0.3);
   border-top-color: var(--warn); border-radius: 50%;
   animation: compact-spin 0.8s linear infinite;
+}
+
+/* 中断分割线:用户中断了本轮生成 */
+.interrupted-divider {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 0; font-size: 12px;
+}
+.interrupted-divider .id-line {
+  flex: 1; height: 1px; background: var(--border-soft);
+}
+.interrupted-divider .id-label {
+  display: inline-flex; align-items: center; gap: 6px;
+  white-space: nowrap; color: var(--text-3);
 }
 
 /* 会话内查找栏 */
