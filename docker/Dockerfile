@@ -13,6 +13,8 @@ RUN npm run build
 # ---------- Stage 2: backend ----------
 FROM ${DOCKER_REGISTRY}/maven:3.9-eclipse-temurin-21 AS backend-build
 WORKDIR /build
+# 国内网络:容器内 Maven 无法直连 repo.maven.apache.org,改用阿里云镜像
+COPY docker/settings.xml /root/.m2/settings.xml
 COPY backend/pom.xml ./
 RUN mvn -B -q dependency:go-offline -DfailOnMissingWebXml=false || true
 COPY backend/src ./src

@@ -1,0 +1,5 @@
+# 容器内 shell/配置脚本必须使用 LF 行尾,避免 Windows 检出 CRLF 导致 shebang 失败
+*.sh text eol=lf
+docker/supervisord.conf text eol=lf
+docker/nginx.conf text eol=lf
+docker/settings.xml text eol=lf
