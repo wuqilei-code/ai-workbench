@@ -390,7 +390,8 @@ public class ChatMessageService {
         PromptAsyncBody body = PromptAsyncBody.builder()
                 .parts(List.of(PromptAsyncBody.Part.builder().type("text").text(req.getText()).build()))
                 .agent(s.getAgent())
-                .model((providerId != null && modelId != null)
+                // 空串/空 providerId+modelId 不传模型引用(否则 opencode 卡在空 model prompt 循环)
+                .model((providerId != null && !providerId.isBlank() && modelId != null && !modelId.isBlank())
                         ? PromptAsyncBody.ModelRef.builder().providerID(providerId).modelID(modelId).build()
                         : null)
                 .build();
@@ -913,6 +914,8 @@ public class ChatMessageService {
      * <ul>
      *   <li>tool → 构造 {partId,tool,status,input,output,time},按 partId 在 toolCalls 去重替换</li>
      *   <li>step-finish → partsNode.stepFinish = {reason}</li>
+     *   <li>reasoning → partsNode.reasoning = {text}</li>
+     *   <li>image → 追加到 partsNode.images(按 partId 去重)</li>
      *   <li>其他 → 忽略(文本已在 setContent 处理)</li>
      * </ul>
      * tool part 的 pending/running/completed 共用同一 part.id,故按 partId 去重。
@@ -984,6 +987,40 @@ public class ChatMessageService {
                     r.put("text", part.get("text").asText());
                 }
                 partsNode.set("reasoning", r);
+            }
+            case "image" -> {
+                // 图片 part(如浏览器 MCP 的截图):持久化到 partsNode.images,供前端在对应步骤渲染。
+                // opencode image part 结构:{type:"image", id, data( base64 或 data URI), mimeType/mediaType};
+                // data 原样存储,前端直接 <img :src="data">。
+                ObjectNode img = objectMapper.createObjectNode();
+                if (part.has("id")) {
+                    img.put("partId", part.get("id").asText());
+                }
+                String mime = part.has("mimeType") ? part.get("mimeType").asText()
+                        : (part.has("mediaType") ? part.get("mediaType").asText() : "");
+                if (!mime.isBlank()) {
+                    img.put("mimeType", mime);
+                }
+                if (part.has("data")) {
+                    img.set("data", part.get("data"));
+                }
+                ArrayNode images = partsNode.withArray("images");
+                String pid = img.has("partId") ? img.get("partId").asText() : null;
+                int imgIdx = -1;
+                if (pid != null) {
+                    for (int k = 0; k < images.size(); k++) {
+                        if (images.get(k).has("partId")
+                                && pid.equals(images.get(k).get("partId").asText())) {
+                            imgIdx = k;
+                            break;
+                        }
+                    }
+                }
+                if (imgIdx >= 0) {
+                    images.set(imgIdx, img);
+                } else {
+                    images.add(img);
+                }
             }
             default -> {
                 // 其他 part 类型不写入 parts(文本已在 setContent 处理)

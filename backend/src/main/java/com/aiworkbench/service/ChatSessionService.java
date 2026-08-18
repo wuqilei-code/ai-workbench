@@ -49,7 +49,7 @@ public class ChatSessionService {
         CreateSessionBody body = CreateSessionBody.builder()
                 .title(req.getTitle() != null ? req.getTitle() : "New Chat")
                 .agent(req.getAgent() != null ? req.getAgent() : "chat")
-                .model((req.getProviderId() != null && req.getModelId() != null)
+                .model(isModelRef(req.getProviderId(), req.getModelId())
                         ? CreateSessionBody.ModelRef.builder()
                             .id(req.getModelId())
                             .providerID(req.getProviderId()).build()
@@ -66,8 +66,8 @@ public class ChatSessionService {
         s.setOpencodeSessionId(oc.getId());
         s.setTitle(oc.getTitle() != null ? oc.getTitle() : body.getTitle());
         s.setAgent(body.getAgent());
-        s.setProviderId(req.getProviderId());
-        s.setModelId(req.getModelId());
+        s.setProviderId(isModelRef(req.getProviderId(), req.getModelId()) ? req.getProviderId() : null);
+        s.setModelId(isModelRef(req.getProviderId(), req.getModelId()) ? req.getModelId() : null);
         s.setArchived(0);
         s.setPinned(0);
         chatSessionMapper.insert(s);
@@ -76,6 +76,12 @@ public class ChatSessionService {
         // 回查一次拿到真实时间戳,否则前端新会话的 updatedAt 为空、列表排序会把它归到「更早」沉底。
         s = chatSessionMapper.selectById(s.getId());
         return toVo(s);
+    }
+
+    /** provider/model 是否构成有效模型引用(空串视为未指定,避免 opencode 拿到空 model ref 卡住 prompt)。 */
+    private boolean isModelRef(String providerId, String modelId) {
+        return providerId != null && !providerId.isBlank()
+                && modelId != null && !modelId.isBlank();
     }
 
     /** 导入会话:解析导出的 JSON,创建新会话并批量恢复历史消息。 */

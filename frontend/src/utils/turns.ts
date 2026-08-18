@@ -134,6 +134,7 @@ function toStep(msg: MessageVo): Step {
     toolCalls: parts?.toolCalls ?? [],
     finishReason: parts?.stepFinish?.reason,
     reasoning: parts?.reasoning?.text || '',
+    images: parts?.images ?? [],
   }
 }
 

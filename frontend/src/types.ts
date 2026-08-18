@@ -213,12 +213,21 @@ export interface PendingPermissionV2 {
 
 export type PendingPermission = PendingPermissionV1 | PendingPermissionV2
 
+/** 图片 part(如浏览器 MCP 截图):data 为 base64 或 data URI,前端直接 <img :src> */
+export interface ImagePart {
+  partId?: string
+  mimeType?: string
+  data?: string
+}
+
 /** 消息的 parts JSON 容器(对齐后端落库结构) */
 export interface StepParts {
   toolCalls?: ToolCall[]
   stepFinish?: { reason?: 'tool-calls' | 'stop' } | null
   /** 模型思维链(reasoning part 的 text);模型不输出思维链则不存在 */
   reasoning?: { text?: string } | null
+  /** 图片列表(浏览器截图等,按 partId 去重维护) */
+  images?: ImagePart[]
   pendingQuestion?: PendingQuestion | null
   /** 多个并发待确认权限(一条命令可能同时触发 external_directory + bash 等多个,按 requestId 各自独立) */
   pendingPermissions?: PendingPermission[]
@@ -232,6 +241,8 @@ export interface Step {
   finishReason?: string
   /** 该步的思维链文本(来自 parts.reasoning.text) */
   reasoning?: string
+  /** 该步的图片(来自 parts.images,如浏览器截图) */
+  images: ImagePart[]
 }
 
 /** 一个用户任务 = 一条 user 消息 + 其后连续的 assistant 消息 */

@@ -18,6 +18,7 @@ import FileTree from '@/components/FileTree.vue'
 import TaskPanel from '@/components/TaskPanel.vue'
 import AutomationManager from '@/components/AutomationManager.vue'
 import JobRunsPanel from '@/components/JobRunsPanel.vue'
+import BrowserCanvas from '@/components/BrowserCanvas.vue'
 import NotificationCenter from '@/components/NotificationCenter.vue'
 import UserMenu from '@/components/UserMenu.vue'
 import ChangeSummaryCard from '@/components/ChangeSummaryCard.vue'
@@ -35,8 +36,18 @@ const msg = useMessage()
 const virtualListRef = ref<VirtualListInst | null>(null)
 const showFiles = ref(true)
 const dashboardShow = ref(false)
-/** 工作区右侧面板当前标签(文件/技能/任务/定时任务/收藏) */
-const workspaceTab = ref('files')
+/** 工作区右侧面板已打开的标签(可关闭),默认只打开「文件」 */
+const openTabs = ref<string[]>(['files'])
+/** 当前激活的标签 */
+const activeTab = ref('files')
+/** 工作区面板宽度(px),可拖动调整 */
+const wsWidth = ref(420)
+/** 拖动调整宽度中(禁用 transition 避免拖拽卡顿) */
+const wsResizing = ref(false)
+/** 工作区面板最小宽度(px) */
+const WS_MIN = 260
+/** 拖动中残留的事件清理(组件卸载时兜底) */
+let _resizeCleanup: (() => void) | null = null
 
 /** 工作区标签(收起后顶部显示的小图标,点击展开并切换) */
 const workspaceTabs = [
@@ -45,10 +56,85 @@ const workspaceTabs = [
   { key: 'tasks', label: '任务', icon: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z' },
   { key: 'jobs', label: '定时任务', icon: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2' },
   { key: 'favorites', label: '收藏', icon: 'M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 21 12 17.77 5.82 21 7 14.14 2 9.27l6.91-1.01z' },
+  { key: 'browser', label: '浏览器', icon: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 2.07A8 8 0 0 1 20 12h-7zM4.9 5.8l3.4 3.4A3 3 0 0 0 8 9H5.5A8 8 0 0 1 4.9 5.8zM4 12a8 8 0 0 1 .5-2.8H8a3 3 0 0 0-3 3v.5H4zm0 1h1v1h-1zm3 4.2A8 8 0 0 0 12 20c-1.7 0-3.3-.5-4.6-1.4L9 16.9zM20 12a8 8 0 0 1-.5 2.8H16a3 3 0 0 0 3-3v-.5h1zm-8 8a8 8 0 0 1-3-.6L10 17.6a4 4 0 0 0 2-.6c1 .6 1.9 1 3 1.2zm-1-6a3 3 0 1 1 0-6 3 3 0 0 1 0 6z' },
 ]
 function openWorkspaceTab(key: string) {
   showFiles.value = true
-  workspaceTab.value = key
+  if (!openTabs.value.includes(key)) openTabs.value.push(key)
+  activeTab.value = key
+  // 打开浏览器时自动加宽面板,避免浏览器窗口太小
+  if (key === 'browser') widenForBrowser()
+}
+
+/** 顶部入口按钮:未激活则打开;再次点击已激活的面板则收起工作区 */
+function onLauncherClick(key: string) {
+  if (showFiles.value && activeTab.value === key) {
+    showFiles.value = false
+  } else {
+    openWorkspaceTab(key)
+  }
+}
+
+/** 关闭工作区标签;关闭当前激活标签时自动切到相邻标签 */
+function closeTab(key: string) {
+  const idx = openTabs.value.indexOf(key)
+  if (idx < 0) return
+  openTabs.value.splice(idx, 1)
+  if (activeTab.value === key) {
+    activeTab.value = openTabs.value.length ? openTabs.value[Math.max(0, idx - 1)] : ''
+  }
+}
+
+/** 已打开标签的元信息(图标+文案),供标签栏渲染 */
+const openTabList = computed(() => workspaceTabs.filter((t) => openTabs.value.includes(t.key)))
+
+/** 顶部入口按钮:浏览器面板只由技能(browser-operate)唤出,不提供手动入口 */
+const launcherTabs = computed(() => workspaceTabs.filter((t) => t.key !== 'browser'))
+
+/** agent 调用浏览器工具时自动唤出浏览器面板,让用户实时看到浏览器操作 */
+watch(
+  () => chat.browserToolSignal,
+  () => {
+    if (!showFiles.value) showFiles.value = true
+    if (activeTab.value !== 'browser') {
+      openWorkspaceTab('browser')
+    }
+  },
+)
+
+/** agent 正在流式执行且近期调用过浏览器工具 → 浏览器面板保持强制实时(鼠标不在面板内也推帧) */
+const browserFollowing = computed(
+  () => chat.isStreaming && Date.now() - chat.lastBrowserToolAt < 120000,
+)
+
+/** 拖动面板左缘调整宽度:按住 → 随鼠标移动计算新宽度(限制最小/最大),松开结束。 */
+function startResize(e: MouseEvent) {
+  e.preventDefault()
+  wsResizing.value = true
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  const move = (ev: MouseEvent) => {
+    const w = window.innerWidth - ev.clientX
+    wsWidth.value = Math.round(Math.max(WS_MIN, Math.min(window.innerWidth * 0.7, w)))
+  }
+  const up = () => {
+    wsResizing.value = false
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    document.removeEventListener('mousemove', move)
+    document.removeEventListener('mouseup', up)
+    _resizeCleanup = null
+  }
+  document.addEventListener('mousemove', move)
+  document.addEventListener('mouseup', up)
+  _resizeCleanup = up
+}
+
+/** 打开浏览器面板时,若面板过窄则自动加宽到视口 55%(便于浏览器全区域展示) */
+function widenForBrowser() {
+  if (isMobile.value) return
+  const target = Math.round(window.innerWidth * 0.55)
+  if (wsWidth.value < target) wsWidth.value = target
 }
 const chatInputRef = ref<InstanceType<typeof ChatInput> | null>(null)
 const templateLibShow = ref(false)
@@ -174,8 +260,7 @@ function openAutomationModal() {
 
 /** 跳转到工作区「定时任务」tab(消息中心点击后查看执行记录/报告)。 */
 function openJobTab() {
-  showFiles.value = true
-  workspaceTab.value = 'jobs'
+  openWorkspaceTab('jobs')
 }
 function closeFind() {
   findOpen.value = false
@@ -288,6 +373,7 @@ watch(sessionId, () => {
 })
 onBeforeUnmount(() => {
   chat.closeStream()
+  _resizeCleanup?.()
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('aiwb:test-analysis', onTestAnalysis)
 })
@@ -545,16 +631,19 @@ const itemSize = 120
         </n-button>
       </div>
       <div class="head-right">
-        <div v-if="!showFiles" class="ws-tab-icons">
+        <!-- 顶部面板入口:与用户信息同区,点击打开/切换;再次点击已激活的面板则收起工作区 -->
+        <div class="ws-launcher">
           <n-button
-            v-for="t in workspaceTabs"
+            v-for="t in launcherTabs"
             :key="t.key"
             size="small"
             quaternary
+            :type="showFiles && activeTab === t.key ? 'primary' : 'default'"
             :title="t.label"
-            @click="openWorkspaceTab(t.key)"
+            @click="onLauncherClick(t.key)"
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path :d="t.icon"/></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path :d="t.icon"/></svg>
+            <span class="ws-launcher-label">{{ t.label }}</span>
           </n-button>
         </div>
         <n-button size="small" quaternary :title="showFiles ? '收起工作区' : '展开工作区'" @click="showFiles = !showFiles">
@@ -696,43 +785,66 @@ const itemSize = 120
         <ChatInput v-if="chat.currentSessionId" ref="chatInputRef" @open-doc-gen="docGenShow = true" @open-error-diagnose="errorDiagnoseShow = true" @open-test-analysis="onTestAnalysis" />
       </div>
 
-      <!-- 工作区:常驻右侧面板,可向右收起 -->
-      <div class="workspace-panel" :class="{ 'workspace-collapsed': !showFiles }">
+      <!-- 工作区:常驻右侧面板,可拖动左缘调整宽度 -->
+      <div
+        class="workspace-panel"
+        :class="{ 'workspace-collapsed': !showFiles, 'ws-resizing': wsResizing }"
+        :style="{ width: wsWidth + 'px' }"
+      >
+        <!-- 宽度拖动条(拖动改变工作区宽度) -->
+        <div v-if="showFiles && !isMobile" class="ws-divider" :title="'拖动调整宽度'" @mousedown.prevent="startResize"></div>
         <div class="workspace-body" v-if="showFiles">
-          <div class="workspace-tabs">
-            <n-tabs v-model:value="workspaceTab" type="line" animated size="small">
-              <n-tab-pane name="files" tab="文件">
-                <FileTree :changed-paths="Array.from(chat.changedFilePaths)" @ask-ai="onAskAIFile" />
-              </n-tab-pane>
-                <n-tab-pane name="skills" tab="技能">
-                  <n-collapse :default-expanded-names="[]" :bordered="false" class="builtin-collapse">
-                    <n-collapse-item name="builtin" title="内置技能">
-                      <template #header-extra>
-                        <span class="builtin-note">{{ builtinLoading ? '加载中…' : builtinSkills.length + ' 个 · 随系统内置,只读' }}</span>
-                      </template>
-                      <div v-if="builtinLoading" class="builtin-empty">加载中…</div>
-                      <div v-else-if="builtinSkills.length" class="builtin-list">
-                        <div v-for="s in builtinSkills" :key="s.name" class="builtin-item">
-                          <span class="builtin-name">{{ s.name }}</span>
-                          <span class="builtin-desc">{{ s.description }}</span>
-                        </div>
-                      </div>
-                      <div v-else class="builtin-empty">暂无内置技能</div>
-                    </n-collapse-item>
-                  </n-collapse>
-                  <n-divider style="margin: 10px 0" />
-                  <FileTree :key="skillTreeKey" root=".opencode/skills" skills-mode :changed-paths="Array.from(chat.changedFilePaths)" @ask-ai="onAskAIFile" />
-                </n-tab-pane>
-                <n-tab-pane name="tasks" tab="任务">
-                  <TaskPanel @open-session="onOpenSession" />
-                </n-tab-pane>
-                <n-tab-pane name="jobs" tab="定时任务">
-                  <JobRunsPanel />
-                </n-tab-pane>
-                <n-tab-pane name="favorites" tab="收藏">
-                  <FavoritesPanel @open-session="onOpenFavorite" />
-                </n-tab-pane>
-            </n-tabs>
+          <!-- 已打开的标签栏(可关闭) -->
+          <div v-if="openTabList.length" class="ws-tabbar">
+            <div
+              v-for="t in openTabList"
+              :key="t.key"
+              class="ws-tab"
+              :class="{ active: activeTab === t.key }"
+              @click="activeTab = t.key"
+            >
+              <span class="ws-tab-label">{{ t.label }}</span>
+              <span class="ws-tab-close" title="关闭" @click.stop="closeTab(t.key)">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </span>
+            </div>
+          </div>
+          <div class="workspace-tabs" :class="{ 'ws-full': activeTab === 'browser' }">
+            <template v-if="activeTab === 'files'">
+              <FileTree :changed-paths="Array.from(chat.changedFilePaths)" @ask-ai="onAskAIFile" />
+            </template>
+            <template v-else-if="activeTab === 'skills'">
+              <n-collapse :default-expanded-names="[]" :bordered="false" class="builtin-collapse">
+                <n-collapse-item name="builtin" title="内置技能">
+                  <template #header-extra>
+                    <span class="builtin-note">{{ builtinLoading ? '加载中…' : builtinSkills.length + ' 个 · 随系统内置,只读' }}</span>
+                  </template>
+                  <div v-if="builtinLoading" class="builtin-empty">加载中…</div>
+                  <div v-else-if="builtinSkills.length" class="builtin-list">
+                    <div v-for="s in builtinSkills" :key="s.name" class="builtin-item">
+                      <span class="builtin-name">{{ s.name }}</span>
+                      <span class="builtin-desc">{{ s.description }}</span>
+                    </div>
+                  </div>
+                  <div v-else class="builtin-empty">暂无内置技能</div>
+                </n-collapse-item>
+              </n-collapse>
+              <n-divider style="margin: 10px 0" />
+              <FileTree :key="skillTreeKey" root=".opencode/skills" skills-mode :changed-paths="Array.from(chat.changedFilePaths)" @ask-ai="onAskAIFile" />
+            </template>
+            <template v-else-if="activeTab === 'tasks'">
+              <TaskPanel @open-session="onOpenSession" />
+            </template>
+            <template v-else-if="activeTab === 'jobs'">
+              <JobRunsPanel />
+            </template>
+            <template v-else-if="activeTab === 'favorites'">
+              <FavoritesPanel @open-session="onOpenFavorite" />
+            </template>
+            <template v-else-if="activeTab === 'browser'">
+              <BrowserCanvas auto-active :follow="browserFollowing" />
+            </template>
+            <n-empty v-else description="从上方按钮打开面板" style="margin-top: 40px" />
           </div>
         </div>
       </div>
@@ -807,11 +919,16 @@ const itemSize = 120
     flex: 1; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .head-right .ws-tab-icons { display: none; }
+  .head-right .ws-launcher { display: none; }
   .head-right { flex-shrink: 0; }
 }
 
-/* 左右两栏:左=对话区(自适应),右=工作区(固定宽,可收起) */
+/* 中窄屏顶栏拥挤:隐藏面板入口按钮的文字,只保留图标(悬停有 title 提示) */
+@media (max-width: 1200px) {
+  .ws-launcher-label { display: none; }
+}
+
+/* 左右两栏:左=对话区(自适应),右=工作区(拖动左缘调整宽度) */
 .chat-main { flex: 1; display: flex; min-height: 0; position: relative; }
 .chat-col { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .chat-body { flex: 1; overflow: hidden; min-height: 0; position: relative; }
@@ -859,18 +976,66 @@ const itemSize = 120
   background: var(--chat-bg, var(--bg));
 }
 
-/* 工作区面板 */
+/* 工作区面板:宽度由内联 style 控制,拖动左缘调整 */
 .workspace-panel {
-  width: 300px; flex-shrink: 0;
+  position: relative;
+  flex-shrink: 0;
   display: flex; flex-direction: column;
   border-left: 1px solid var(--border-soft); background: var(--bg-elev);
   transition: width .18s ease;
 }
-.workspace-panel.workspace-collapsed { width: 0; border-left: none; }
+.workspace-panel.ws-resizing { transition: none; }
+.workspace-panel.workspace-collapsed { width: 0 !important; border-left: none; }
 .workspace-body { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+
+/* 宽度拖动条:面板左缘,拖拽调整宽度 */
+.ws-divider {
+  position: absolute;
+  left: -3px; top: 0; bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 5;
+}
+.ws-divider:hover { background: rgba(0, 0, 0, 0.12); }
+
+/* 顶栏面板入口:与用户信息同区,右侧收起按钮/消息中心之前 */
+.ws-launcher {
+  display: flex; align-items: center; gap: 2px;
+  padding-right: 4px; border-right: 1px solid var(--border-soft);
+  margin-right: 2px;
+}
+.ws-launcher .n-button { margin-right: 2px; }
+.ws-launcher .n-button svg { margin-right: 4px; }
+
+/* 已打开标签栏:类似编辑器标签,可关闭 */
+.ws-tabbar {
+  display: flex; gap: 2px;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--border-soft);
+  overflow-x: auto;
+}
+.ws-tab {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 8px; border-radius: 6px 6px 0 0;
+  font-size: 12px; color: var(--text-2);
+  cursor: pointer; white-space: nowrap;
+  border: 1px solid transparent; border-bottom: none;
+}
+.ws-tab:hover { background: var(--surface-hover); }
+.ws-tab.active {
+  color: var(--accent); background: var(--surface);
+  border-color: var(--border-soft);
+}
+.ws-tab-close {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; border-radius: 50%;
+  color: var(--text-3);
+}
+.ws-tab-close:hover { background: var(--border-soft); color: var(--text); }
+
 .workspace-tabs { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 8px 12px; }
-.workspace-tabs :deep(.n-tabs) { min-width: 0; }
-.workspace-tabs :deep(.n-tabs-pane-wrapper), .workspace-tabs :deep(.n-tab-pane) { min-width: 0; width: 100%; box-sizing: border-box; overflow-x: hidden; }
+/* 浏览器标签全区域展示:去掉内边距与滚动,画布铺满整个面板 */
+.workspace-tabs.ws-full { padding: 0; overflow: hidden; }
 
 /* 移动端:工作区从右侧常驻面板变为底部抽屉 */
 @media (max-width: 768px) {
@@ -879,7 +1044,7 @@ const itemSize = 120
     position: fixed;
     left: 0; right: 0; bottom: 0;
     height: 55%;
-    width: auto;
+    width: auto !important;
     border-left: none;
     border-top: 1px solid var(--border-soft);
     border-radius: 12px 12px 0 0;
@@ -892,12 +1057,6 @@ const itemSize = 120
     border-top: none;
     pointer-events: none;
   }
-}
-
-/* 顶部收起态:工作区小图标组 */
-.ws-tab-icons {
-  display: flex; align-items: center; gap: 2px;
-  padding-right: 4px; border-right: 1px solid var(--border-soft);
 }
 
 /* 登录过期横幅 */

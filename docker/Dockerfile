@@ -109,7 +109,10 @@ RUN pip3 install --no-cache-dir --break-system-packages \
       requests httpx aiohttp \
       beautifulsoup4 lxml Pillow \
       pytest coverage \
- && python3 -c "import docx, pptx, openpyxl, reportlab, PyPDF2, pdfplumber, markdown, numpy, pandas, matplotlib, requests, httpx, aiohttp, bs4, lxml, PIL, pytest, coverage; print('agent python deps ok')"
+ && python3 -c "import docx, pptx, openpyxl, reportlab, PyPDF2, pdfplumber, markdown, numpy, pandas, matplotlib, requests, httpx, aiohttp, bs4, lxml, PIL, pytest, coverage; print('agent python deps ok')" \
+ # 同一层内清掉字节码缓存(跨层删除不回收镜像体积)
+ && find /usr/local/lib/python3.11 -name '__pycache__' -type d -prune -exec rm -rf {} + \
+ && find /usr/local/lib/python3.11 -name '*.pyc' -delete
 
 # 运行时禁止 AI 自行 pip install(与 runtime 阶段一致):移除 pip/ensurepip,预装依赖不受影响。
 RUN rm -f /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.11 \
@@ -141,7 +144,26 @@ RUN set -eux; \
 RUN npm config set registry ${NPM_REGISTRY} --global \
   && npm install -g --no-audit --no-fund vite typescript tsx @benborla29/mcp-server-mysql \
   && npm config get registry \
-  && npm ls -g --depth=0
+  && npm ls -g --depth=0 \
+  # 同层清理:npm 缓存 + JS 源码映射(运行期不需要;跨层删不缩体积)
+  && npm cache clean --force \
+  && rm -rf /root/.npm \
+  && find /usr/local/lib/node_modules -name '*.map' -delete
+
+# ---------- Browser automation(Playwright MCP):通用网页自动化/研究 ----------
+# agent 容器以 --user 非 root 运行(/root 不可读),故浏览器二进制放共享可读路径 /usr/local/share/ms-playwright
+# (构建期 root 安装,0755/0644 子树对任意 uid 只读可执行);NODE_PATH 使 node -e 能 require 全局包。
+# 浏览器下载走 npmmirror 镜像(PLAYWRIGHT_DOWNLOAD_HOST),与 npm registry 同源内网可达。
+ENV PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/ms-playwright \
+    NODE_PATH=/usr/local/lib/node_modules
+RUN npm install -g --no-audit --no-fund playwright @playwright/mcp \
+  && PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright npx playwright install --with-deps chromium chrome \
+  && command -v playwright-mcp \
+  && node -e "const {chromium}=require('playwright');(async()=>{const b=await chromium.launch({headless:true,args:['--no-sandbox']});const p=await b.newPage();await p.goto('data:text/html,<h1>ok</h1>');console.log('playwright chromium smoke ok');await b.close()})().catch(e=>{console.error('playwright smoke failed:',e);process.exit(1)})" \
+  # 同层清理:npm 缓存 + 源码映射(同上)
+  && npm cache clean --force \
+  && rm -rf /root/.npm \
+  && find /usr/local/lib/node_modules -name '*.map' -delete
 
 # 下载 opencode 二进制(与 runtime 阶段同源同版本)
 RUN set -eux; \
@@ -160,6 +182,11 @@ RUN set -eux; \
     install -m 0755 "$bin" /usr/local/bin/opencode; \
     rm -rf "$tmpdir"; \
     opencode --version
+
+# 每用户 agent 容器入口 wrapper:后台常驻 playwright-mcp 共享浏览器 daemon 后 exec opencode serve
+# (网关创建容器时显式 --entrypoint /opt/aiworkbench/agent-entrypoint.sh;见 AgentContainerManager)
+COPY docker/opencode/agent-entrypoint.sh /opt/aiworkbench/agent-entrypoint.sh
+RUN chmod +x /opt/aiworkbench/agent-entrypoint.sh
 
 # 网关创建容器时会显式 --entrypoint opencode serve ...;此处仅保证直接 docker run 可运行
 ENTRYPOINT ["opencode"]

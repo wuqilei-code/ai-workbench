@@ -270,6 +270,12 @@ public class OpencodeProcessManager {
                     .block(Duration.ofMillis(1500));
             return h != null && Boolean.TRUE.equals(h.getHealthy());
         } catch (Exception e) {
+            // 线程被打断(如浏览器 WS 关闭触发 shutdown)→ 健康探测的 block() 会抛异常。
+            // 此时绝不能把「探测失败」当作「实例死亡」去回收重启,否则关个面板就停掉 agent 容器。
+            if (Thread.currentThread().isInterrupted()) {
+                Thread.currentThread().interrupt(); // 保留中断标记
+                throw e;
+            }
             return false;
         }
     }

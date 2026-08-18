@@ -155,6 +155,16 @@ public class McpConfigService {
         if (userId != null) {
             appendSection(mcpConfig, listPrivate(userId));
         }
+        // 内置浏览器自动化 MCP(remote HTTP,所有用户 agent 默认启用):
+        // agent 镜像内 playwright-mcp 以常驻 daemon 形式运行(见 docker/opencode/agent-entrypoint.sh),
+        // 监听容器内 8931(opencode 与网关都作为该 MCP 的客户端,PLAYWRIGHT_MCP_ISOLATED=false +
+        // --shared-browser-context 保证共享同一浏览器上下文,支撑实时面板与用户接管)。
+        // opencode 在本容器内经 127.0.0.1:8931/mcp 连接。
+        Map<String, Object> browser = new LinkedHashMap<>();
+        browser.put("enabled", true);
+        browser.put("type", "remote");
+        browser.put("url", "http://127.0.0.1:8931/mcp");
+        mcpConfig.put("browser", browser);
         return mcpConfig;
     }
 

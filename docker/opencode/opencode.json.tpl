@@ -53,6 +53,11 @@
         "MYSQL_PASS": "aiworkbench-pass",
         "MYSQL_DB": "ai_workbench"
       }
+    },
+    "browser": {
+      "type": "remote",
+      "url": "http://127.0.0.1:8931/mcp",
+      "enabled": true
     }
   },
   "command": {

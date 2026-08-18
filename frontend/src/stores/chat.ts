@@ -12,6 +12,7 @@ import type {
   ProviderVo,
   StepParts,
   ToolCall,
+  ImagePart,
   PendingQuestion,
   PendingPermission,
   PendingPermissionV1,
@@ -130,6 +131,10 @@ export const useChatStore = defineStore('chat', () => {
   const reasoningPartIds = new Set<string>()
   /** 当前正在流式输出思维链的 messageID(null=当前无活跃 reasoning);供 ReasoningBlock 判流式态,step 完成后自动收起 */
   const streamingReasoningMsgId = ref<string | null>(null)
+  /** agent 调用浏览器(browser_*)工具的信号:每次自增,供 UI 自动唤出浏览器面板 */
+  const browserToolSignal = ref(0)
+  /** 最近一次 browser_* 工具调用时间戳(ms),UI 据此判断是否处于「agent 正在操作浏览器」状态 */
+  const lastBrowserToolAt = ref(0)
   /** agent 实例冷启动中(后端 dispatch session.starting):首个真实事件到来即清除 */
   const agentStarting = ref(false)
   /**
@@ -835,6 +840,8 @@ export const useChatStore = defineStore('chat', () => {
         } else if (part.type === 'reasoning') {
           if (typeof part.id === 'string') reasoningPartIds.add(part.id)
           upsertReasoning(part.messageID, part)
+        } else if (part.type === 'image') {
+          upsertImagePart(part.messageID, part)
         }
         break
       }
@@ -1126,6 +1133,11 @@ export const useChatStore = defineStore('chat', () => {
       input: state.input,
       output: typeof state.output === 'string' && state.output ? state.output : runningOutput,
     }
+    // agent 开始调用浏览器工具 → 通知 UI 自动打开/保持浏览器面板实时画面
+    if (tc.tool.startsWith('browser_')) {
+      browserToolSignal.value++
+      lastBrowserToolAt.value = Date.now()
+    }
     if (idx >= 0) {
       const msg = messages.value[idx]
       const parts: StepParts = msg.parts ? { ...msg.parts } : { toolCalls: [] }
@@ -1176,6 +1188,34 @@ export const useChatStore = defineStore('chat', () => {
     const msg = messages.value[idx]
     const parts: StepParts = msg.parts ? { ...msg.parts } : { toolCalls: [] }
     parts.reasoning = { text: typeof part.text === 'string' ? part.text : '' }
+    messages.value[idx] = { ...msg, parts }
+  }
+
+  /** 图片 part 定稿(如浏览器截图):按 partId 去重 upsert 到对应消息的 parts.images */
+  function upsertImagePart(messageID: string, part: any) {
+    const idx = messages.value.findIndex((m) => m.opencodeMessageId === messageID)
+    const img: ImagePart = {
+      partId: typeof part.id === 'string' ? part.id : undefined,
+      mimeType:
+        typeof part.mimeType === 'string'
+          ? part.mimeType
+          : typeof part.mediaType === 'string'
+            ? part.mediaType
+            : undefined,
+      data: typeof part.data === 'string' ? part.data : undefined,
+    }
+    if (idx < 0) return
+    const msg = messages.value[idx]
+    const parts: StepParts = msg.parts ? { ...msg.parts } : { toolCalls: [] }
+    const images = parts.images ? [...parts.images] : []
+    const pid = img.partId
+    const existIdx = pid ? images.findIndex((im) => im.partId === pid) : -1
+    if (existIdx >= 0) {
+      images[existIdx] = { ...images[existIdx], ...img }
+    } else {
+      images.push(img)
+    }
+    parts.images = images
     messages.value[idx] = { ...msg, parts }
   }
 
@@ -1557,7 +1597,7 @@ export const useChatStore = defineStore('chat', () => {
   return {
     sessions, archivedSessions, agents, currentSessionId, currentSession, messages, turns, flow, summaries, compactedAt, compactCutoffId, compacting, streamingText,
     streamingMessageId, isStreaming, streamingStuckSeconds, streamingElapsedSeconds, runningActivity,
-    streamingReasoningMsgId,
+    streamingReasoningMsgId, browserToolSignal, lastBrowserToolAt,
     hasPendingInteraction, connected, reconnecting, forceReconnect, agentStarting,
     authExpired, switching, changedFilePaths,
     disconnectAborted, dismissDisconnectAbort,

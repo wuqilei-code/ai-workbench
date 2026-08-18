@@ -39,6 +39,14 @@ public class AgentContainerManager {
 
     private static final String NAME_PREFIX = "aiwb-agent-";
     private static final int SERVE_PORT = 4096;
+    /** 容器内 playwright-mcp 共享浏览器 daemon 端口(agent-entrypoint.sh 启动;网关经共享网络按容器名直连) */
+    public static final int BROWSER_MCP_PORT = 8931;
+    /** 容器内共享 Chromium 的 CDP 调试端口(agent-entrypoint.sh 以 --remote-debugging-port 启动;
+     *  新版 Chromium 强制只绑 127.0.0.1,entrypoint 内 node 转发 0.0.0.0:9223 → 127.0.0.1:9222;
+     *  网关经共享网络按容器名直连该端口做实时 screencast/输入接管) */
+    public static final int BROWSER_CDP_PORT = 9223;
+    /** agent 容器入口 wrapper:后台起 playwright-mcp daemon 后 exec opencode serve */
+    private static final String AGENT_ENTRYPOINT = "/opt/aiworkbench/agent-entrypoint.sh";
     private static final Duration CMD_TIMEOUT = Duration.ofSeconds(30);
 
     /** NSS wrapper 库路径(镜像已装 libnss-wrapper):拦截 getpwuid/getgrgid,让以 --user uid 运行
@@ -62,6 +70,16 @@ public class AgentContainerManager {
     /** app 容器经共享网络访问该用户 agent 容器的 serve 地址(容器内 DNS 按名解析)。 */
     public String serveUrl(Long userId) {
         return "http://" + containerName(userId) + ":" + SERVE_PORT;
+    }
+
+    /** agent 容器内 playwright-mcp 共享浏览器 daemon 的 MCP 端点(容器内 DNS 按名直连,无需发布端口)。 */
+    public String browserMcpUrl(Long userId) {
+        return "http://" + containerName(userId) + ":" + BROWSER_MCP_PORT + "/mcp";
+    }
+
+    /** agent 容器内共享 Chromium 的 CDP 调试端点(容器内 DNS 按名直连;/json/version、/json/list 等)。 */
+    public String browserCdpBaseUrl(Long userId) {
+        return "http://" + containerName(userId) + ":" + BROWSER_CDP_PORT;
     }
 
     /**
@@ -106,8 +124,10 @@ public class AgentContainerManager {
         args.add("NSS_WRAPPER_PASSWD=" + nssFile(userId, uid, "passwd"));
         args.add("-e");
         args.add("NSS_WRAPPER_GROUP=" + nssFile(userId, uid, "group"));
+        // agent 入口 wrapper:后台常驻 playwright-mcp 共享浏览器 daemon 后再 exec opencode serve,
+        // 使 opencode 的 remote browser MCP 与网关浏览器面板/接管共享同一浏览器上下文。
         args.add("--entrypoint");
-        args.add("opencode");
+        args.add(AGENT_ENTRYPOINT);
         args.add(props.getAgentImage());
         args.add("serve");
         args.add("--hostname");

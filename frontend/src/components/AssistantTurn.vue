@@ -245,6 +245,9 @@ function closePreview() {
   previewPath.value = null
 }
 
+/** 浏览器截图放大预览(base64/data URI,不经文件服务) */
+const zoomImage = ref<string | null>(null)
+
 /** 一键下载本 turn 全部结果文件:打包成 zip 一次下载,绕开浏览器多文件下载拦截。
  *  复用 fileApi.fetchBlob 拿每个文件 blob → JSZip 内存打包 → 单次 a.click() 触发下载。 */
 const downloadingAll = ref(false)
@@ -568,6 +571,18 @@ async function submitPermission(pp: PendingPermission, reply: 'once' | 'always' 
                 @download="downloadFile"
               />
             </div>
+            <div v-if="step.images.length" class="step-images">
+              <img
+                v-for="(im, ii) in step.images"
+                :key="im.partId ?? ii"
+                :src="im.data"
+                class="step-img"
+                alt="浏览器截图"
+                loading="lazy"
+                title="点击放大"
+                @click="zoomImage = im.data ?? null"
+              />
+            </div>
           </div>
           <div
             v-if="turn.finalAnswer && (turn.finalAnswer.toolCalls.length || turn.finalAnswer.reasoning)"
@@ -580,6 +595,18 @@ async function submitPermission(pp: PendingPermission, reply: 'once' | 'always' 
                 :key="tc.partId || tc.tool"
                 :tc="tc"
                 @download="downloadFile"
+              />
+            </div>
+            <div v-if="turn.finalAnswer.images.length" class="step-images">
+              <img
+                v-for="(im, ii) in turn.finalAnswer.images"
+                :key="im.partId ?? ii"
+                :src="im.data"
+                class="step-img"
+                alt="浏览器截图"
+                loading="lazy"
+                title="点击放大"
+                @click="zoomImage = im.data ?? null"
               />
             </div>
           </div>
@@ -828,6 +855,24 @@ async function submitPermission(pp: PendingPermission, reply: 'once' | 'always' 
       :path="previewPath"
     />
   </n-modal>
+
+  <!-- 浏览器截图放大预览 -->
+  <n-modal
+    :show="!!zoomImage"
+    preset="card"
+    title="浏览器截图"
+    :style="{ width: 'min(92vw, 1100px)' }"
+    :mask-closable="true"
+    :bordered="false"
+    @update:show="(v) => { if (!v) zoomImage = null }"
+  >
+    <img
+      v-if="zoomImage"
+      :src="zoomImage"
+      class="zoom-img"
+      alt="浏览器截图"
+    />
+  </n-modal>
 </template>
 
 <style scoped>
@@ -970,6 +1015,18 @@ async function submitPermission(pp: PendingPermission, reply: 'once' | 'always' 
 .step-narration :deep(code) { font-family: ui-monospace, monospace; font-size: 12px; }
 
 .tool-calls { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+
+/* 浏览器截图(步骤/最终答案内嵌,点击放大) */
+.step-images { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.step-img {
+  max-width: 320px; max-height: 400px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: #fff;
+  cursor: zoom-in;
+  object-fit: contain;
+}
+.zoom-img { width: 100%; border-radius: 8px; background: #fff; }
 
 .cursor { animation: blink 1s steps(2) infinite; color: var(--accent); }
 @keyframes blink { 50% { opacity: 0; } }
