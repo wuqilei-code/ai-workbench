@@ -29,6 +29,8 @@ FROM ${DOCKER_REGISTRY}/maven:3.9-eclipse-temurin-21 AS runtime
 
 # app 是纯 Java 服务(网关 + nginx + docker CLI 管理 agent 容器),不执行 AI 生成的 python 脚本,
 # 故不装 python/文档处理依赖(那些只在 agent 镜像需要)。只装运行所需:nginx/supervisor/docker CLI/git/curl。
+# DEBIAN_FRONTEND=noninteractive:避免 tzdata 安装时 debconf 交互询问时区导致构建失败(exit 100)。
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
        nginx supervisor curl ca-certificates git procps bash tzdata \
@@ -85,6 +87,9 @@ FROM ${DOCKER_REGISTRY}/python:3.11-slim-bookworm AS agent-runtime
 ARG OPENCODE_VERSION=1.18.8
 ARG OPENCODE_DOWNLOAD_URL=
 ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+
+# DEBIAN_FRONTEND=noninteractive:避免 tzdata 安装时 debconf 交互询问时区导致构建失败(exit 100)。
+ENV DEBIAN_FRONTEND=noninteractive
 
 RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
   && apt-get update \
