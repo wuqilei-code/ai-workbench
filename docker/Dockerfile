@@ -122,6 +122,37 @@ RUN pip3 install --no-cache-dir --break-system-packages \
  && find /usr/local/lib/python3.11 -name '*.pyc' -delete
 
 # 运行时禁止 AI 自行 pip install(与 runtime 阶段一致):移除 pip/ensurepip,预装依赖不受影响。
+# ---------- DeepSeek Harness (dsh) 运行时 ----------
+# 官方发布载体是 PyPI wheel(内含 linux-x64 单文件 Node 可执行程序 dsh-jsonrpc-agent-pkg-linux-x64,
+# 运行时本身无需 Node/npm);经 pip download 拉取(走 PIP_INDEX_URL,内网/阿里云镜像可达),
+# 解出可执行程序 + 权威 cordis.yml 固定到 /opt/aiworkbench/dsh/。仅支持 amd64;arm64 跳过。
+ARG DSH_RUNTIME_VERSION=0.1.0rc7
+ARG DSH_WHEEL_URL=
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    if [ "$arch" != "amd64" ]; then \
+      echo "warn: dsh wheel is linux-x64 only, skipping on $arch"; \
+    else \
+      mkdir -p /opt/aiworkbench/dsh/bin /tmp/dsh-wheel; \
+      if [ -n "$DSH_WHEEL_URL" ]; then \
+        curl -fsSL "$DSH_WHEEL_URL" -o /tmp/dsh-wheel/wheel.whl; \
+      else \
+        python3 -m pip download --no-deps --no-cache-dir --index-url ${PIP_INDEX_URL} "deepseek-harness-runtime-bin==${DSH_RUNTIME_VERSION}" -d /tmp/dsh-wheel; \
+      fi; \
+      wheel="$(ls /tmp/dsh-wheel/*.whl | head -n1)"; \
+      test -n "$wheel"; \
+      unzip -o "$wheel" -d /tmp/dsh-wheel/x; \
+      exe="$(find /tmp/dsh-wheel/x -type f -name 'dsh-jsonrpc-agent-pkg-linux-x64' | head -n1)"; \
+      test -n "$exe"; \
+      install -m 0755 "$exe" /opt/aiworkbench/dsh/bin/dsh-jsonrpc-agent; \
+      cordis="$(find /tmp/dsh-wheel/x -type f -name 'cordis.yml' | head -n1)"; \
+      test -n "$cordis"; \
+      install -m 0644 "$cordis" /opt/aiworkbench/dsh/cordis.yml; \
+      rm -rf /tmp/dsh-wheel; \
+      ls -lh /opt/aiworkbench/dsh/bin/dsh-jsonrpc-agent /opt/aiworkbench/dsh/cordis.yml; \
+    fi
+
+# 运行时禁止 AI 自行 pip install(与 runtime 阶段一致):移除 pip/ensurepip,预装依赖不受影响。
 RUN rm -f /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.11 \
   && rm -rf /usr/local/lib/python3.11/site-packages/pip* \
   && rm -rf /usr/local/lib/python3.11/ensurepip /usr/lib/python3*/ensurepip \
@@ -130,7 +161,7 @@ RUN rm -f /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.11 \
 # ---------- Node.js 前端支持(agent 容器) ----------
 # 官方 Node 22 LTS tarball(gz 格式,tar 直接解压,不依赖额外 xz 工具)。
 # apt 源只有已 EOL 的 node 18,故用官方 tarball 保证较新运行时。
-ARG NODE_VERSION=22.14.0
+ARG NODE_VERSION=22.19.0
 ARG NPM_REGISTRY=https://registry.npmmirror.com
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
@@ -194,6 +225,12 @@ RUN set -eux; \
 # (网关创建容器时显式 --entrypoint /opt/aiworkbench/agent-entrypoint.sh;见 AgentContainerManager)
 COPY docker/opencode/agent-entrypoint.sh /opt/aiworkbench/agent-entrypoint.sh
 RUN chmod +x /opt/aiworkbench/agent-entrypoint.sh
+
+# dsh 运行时桥(opencode 兼容 API 适配层,node 实现)+ 每用户 dsh 容器入口
+# (网关创建容器时按运行时选 --entrypoint;dsh 时用 /opt/aiworkbench/dsh-entrypoint.sh)
+COPY docker/opencode/dsh-bridge /opt/aiworkbench/dsh-bridge
+COPY docker/opencode/dsh-entrypoint.sh /opt/aiworkbench/dsh-entrypoint.sh
+RUN chmod +x /opt/aiworkbench/dsh-entrypoint.sh
 
 # 网关创建容器时会显式 --entrypoint opencode serve ...;此处仅保证直接 docker run 可运行
 ENTRYPOINT ["opencode"]

@@ -26,6 +26,9 @@ public class User {
     /** Phase 1 per-user uid 隔离:uid = uidBase + id,确定性分配;注册后由 UserProvisioningService 回填 */
     private Integer uid;
 
+    /** agent 运行时偏好:opencode(默认,可空) | dsh;非空时覆盖全局 OPENCODE_AGENT_RUNTIME(见 OpencodeProcessManager.resolveAgentRuntime) */
+    private String agentRuntime;
+
     /** 时间戳由 DB 默认值/ON UPDATE 管理,update 时 NEVER 不写入,避免覆盖自动值 */
     @TableField(value = "created_at", updateStrategy = FieldStrategy.NEVER)
     private LocalDateTime createdAt;

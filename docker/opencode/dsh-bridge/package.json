@@ -1,0 +1,7 @@
+{
+  "name": "dsh-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DeepSeek Harness (dsh) runtime adapter exposing the opencode HTTP+SSE API to the ai-workbench backend"
+}

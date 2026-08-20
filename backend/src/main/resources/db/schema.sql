@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS users (
     status      TINYINT      NOT NULL DEFAULT 1,
     -- Phase 1 per-user uid 隔离:uid = uidBase + user.id,确定性分配;老用户为 NULL,登录时回填
     uid         INT          NULL,
+    -- agent 运行时偏好:NULL/opencode=全局默认(OPENCODE_AGENT_RUNTIME),dsh=强制 dsh(DeepSeek Harness)
+    agent_runtime VARCHAR(16) NULL,
     created_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (id),
@@ -24,6 +26,8 @@ CREATE TABLE IF NOT EXISTS users (
 -- 新库由上面 CREATE TABLE 已建好 uid 列与索引,这两条 ALTER 报错忽略即可。
 ALTER TABLE users ADD COLUMN uid INT NULL;
 ALTER TABLE users ADD UNIQUE INDEX uk_users_uid (uid);
+-- Phase 1 迁移:为已存在的 users 表补 agent_runtime 列(重复列 1060 错误被 continue-on-error 忽略)。
+ALTER TABLE users ADD COLUMN agent_runtime VARCHAR(16) NULL;
 
 CREATE TABLE IF NOT EXISTS chat_session (
     id                  BIGINT       NOT NULL AUTO_INCREMENT,

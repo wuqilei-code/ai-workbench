@@ -6,6 +6,7 @@ import com.aiworkbench.common.audit.AuditLog;
 import com.aiworkbench.dto.admin.AdminUserVo;
 import com.aiworkbench.dto.admin.ResetUserPasswordRequest;
 import com.aiworkbench.dto.admin.UpdateUserRoleRequest;
+import com.aiworkbench.dto.admin.UpdateUserAgentRuntimeRequest;
 import com.aiworkbench.dto.admin.UpdateUserStatusRequest;
 import com.aiworkbench.service.UserService;
 import jakarta.validation.Valid;
@@ -52,6 +53,13 @@ public class AdminUserController {
     @AuditLog(action = "重置用户密码", targetSpel = "#id")
     public R<Void> resetPassword(@PathVariable Long id, @Valid @RequestBody ResetUserPasswordRequest req) {
         userService.resetPassword(SecurityUtil.currentUserId(), id, req.getPassword());
+        return R.ok();
+    }
+
+    @PutMapping("/{id}/agent-runtime")
+    @AuditLog(action = "设置用户 agent 运行时", targetSpel = "#id")
+    public R<Void> updateAgentRuntime(@PathVariable Long id, @Valid @RequestBody UpdateUserAgentRuntimeRequest req) {
+        userService.updateAgentRuntime(SecurityUtil.currentUserId(), id, req.getAgentRuntime());
         return R.ok();
     }
 }

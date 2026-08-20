@@ -177,6 +177,25 @@ public class UserService {
         log.info("admin {} reset password for user {}", operatorId, userId);
     }
 
+    /** 设置用户 agent 运行时偏好(null 清除,恢复全局默认;非法值拒绝)。改后下次实例启动生效。 */
+    public void updateAgentRuntime(Long operatorId, Long userId, String agentRuntime) {
+        requireUser(userId);
+        String target = null;
+        if (agentRuntime != null && !agentRuntime.isBlank()) {
+            String v = agentRuntime.trim();
+            if (!"opencode".equalsIgnoreCase(v) && !"dsh".equalsIgnoreCase(v)) {
+                throw new BusinessException(ResultCode.BAD_REQUEST.getCode(),
+                        "agent_runtime 仅支持 opencode | dsh(空值清除)");
+            }
+            target = v.toLowerCase();
+        }
+        User upd = new User();
+        upd.setId(userId);
+        upd.setAgentRuntime(target);
+        userMapper.updateById(upd);
+        log.info("admin {} set user {} agent_runtime={}", operatorId, userId, target);
+    }
+
     private User requireUser(Long userId) {
         User user = userMapper.selectById(userId);
         if (user == null) {
@@ -201,6 +220,7 @@ public class UserService {
                 .role(user.getRole())
                 .status(user.getStatus())
                 .uid(user.getUid())
+                .agentRuntime(user.getAgentRuntime())
                 .createdAt(user.getCreatedAt())
                 .updatedAt(user.getUpdatedAt())
                 .build();

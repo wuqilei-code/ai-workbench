@@ -3,6 +3,8 @@ package com.aiworkbench.service.opencode.process;
 import com.aiworkbench.common.BusinessException;
 import com.aiworkbench.common.ResultCode;
 import com.aiworkbench.config.OpencodeProperties;
+import com.aiworkbench.entity.User;
+import com.aiworkbench.mapper.UserMapper;
 import com.aiworkbench.service.ChatMessageService;
 import com.aiworkbench.service.ChangeSummaryService;
 import com.aiworkbench.service.WorkspaceService;
@@ -63,6 +65,7 @@ public class OpencodeProcessManager {
     private final WebClient.Builder webClientBuilder;
     private final com.aiworkbench.service.opencode.OpencodeStats stats;
     private final AgentContainerManager agentContainerManager;
+    private final UserMapper userMapper;
 
     public OpencodeProcessManager(OpencodeProperties props,
                                   PortAllocator portAllocator,
@@ -76,7 +79,8 @@ public class OpencodeProcessManager {
                                   ObjectMapper objectMapper,
                                   @Qualifier("opencodeWebClientBuilder") WebClient.Builder webClientBuilder,
                                   com.aiworkbench.service.opencode.OpencodeStats stats,
-                                  AgentContainerManager agentContainerManager) {
+                                  AgentContainerManager agentContainerManager,
+                                  UserMapper userMapper) {
         this.props = props;
         this.portAllocator = portAllocator;
         this.registry = registry;
@@ -90,6 +94,7 @@ public class OpencodeProcessManager {
         this.webClientBuilder = webClientBuilder;
         this.stats = stats;
         this.agentContainerManager = agentContainerManager;
+        this.userMapper = userMapper;
     }
 
     @PostConstruct
@@ -117,6 +122,10 @@ public class OpencodeProcessManager {
      * 失败:回收端口、清理实例,抛 OPENCODE_UNAVAILABLE。
      */
     public UserProcess start(Long userId) {
+        String runtime = resolveAgentRuntime(userId);
+        if ("dsh".equalsIgnoreCase(runtime) && !props.isContainerMode()) {
+            log.warn("agent runtime=dsh requires container mode (user {}); falling back to opencode serve", userId);
+        }
         int uid = props.uidOf(userId);
         int port;
         try {
@@ -129,8 +138,21 @@ public class OpencodeProcessManager {
         log.info("starting opencode for user {} (uid={} port={} mode={})",
                 userId, uid, port, props.isContainerMode() ? "container" : "process");
         return props.isContainerMode()
-                ? startContainer(userId, uid, port)
+                ? startContainer(userId, uid, port, runtime)
                 : startProcess(userId, uid, port);
+    }
+
+    /** 解析用户 agent 运行时:users.agent_runtime(非空时覆盖)→ 全局 OPENCODE_AGENT_RUNTIME。 */
+    private String resolveAgentRuntime(Long userId) {
+        try {
+            User user = userMapper.selectById(userId);
+            if (user != null && user.getAgentRuntime() != null && !user.getAgentRuntime().isBlank()) {
+                return user.getAgentRuntime();
+            }
+        } catch (Exception e) {
+            log.warn("resolve agent runtime failed for user {}: {}", userId, e.toString());
+        }
+        return props.getAgentRuntime();
     }
 
     /** 进程模式:ensure provisioning → seed 配置 → setpriv 启动 → 健康轮询 → 挂事件消费者。 */
@@ -197,7 +219,7 @@ public class OpencodeProcessManager {
     }
 
     /** 容器模式:ensure provisioning → seed 配置 → 创建并启动每用户 agent 容器 → 健康轮询 → 挂事件消费者。 */
-    private UserProcess startContainer(Long userId, int uid, int port) {
+    private UserProcess startContainer(Long userId, int uid, int port, String runtime) {
         int gid = uid;
 
         workspaceService.ensureUserWorkspace(userId);
@@ -205,8 +227,8 @@ public class OpencodeProcessManager {
 
         OpencodeInstanceEventConsumer consumer = null;
         try {
-            Map<String, String> env = computeEnv(userId, uid);
-            agentContainerManager.createAndStart(userId, uid, gid, env);
+            Map<String, String> env = computeEnv(userId, uid, runtime);
+            agentContainerManager.createAndStart(userId, uid, gid, env, runtime);
 
             // app 容器与 agent 容器共享 aiwb-agents 网络,按容器名 DNS 直连 serve(无需发布端口)
             WebClient instanceClient = instanceClient(agentContainerManager.serveUrl(userId), userId);
@@ -531,10 +553,10 @@ public class OpencodeProcessManager {
 
     /** 设置子进程/容器环境:HOME / XDG 三个目录(显式固定,避免依赖默认值漂移) / Basic auth 凭据 + 解析用户 opencode.env 里的 API key。 */
     private void configureEnv(Map<String, String> env, Long userId, int uid) {
-        env.putAll(computeEnv(userId, uid));
+        env.putAll(computeEnv(userId, uid, props.getAgentRuntime()));
     }
 
-    private Map<String, String> computeEnv(Long userId, int uid) {
+    private Map<String, String> computeEnv(Long userId, int uid, String runtime) {
         Map<String, String> env = new java.util.HashMap<>();
         Path home = Paths.get(props.getPerUserDataRoot(), String.valueOf(uid), "home");
         env.put("HOME", home.toString());
@@ -550,7 +572,24 @@ public class OpencodeProcessManager {
         // 解析用户 opencode.env 中的 KEY=VALUE(解密后的 API key),注入环境
         Path envFile = home.resolve(".config/opencode/opencode.env");
         parseEnvFile(envFile).forEach(env::put);
+        // dsh 运行时(DeepSeek Harness)专用环境:会话根落在每用户私有数据(HOME 下,与 opencode 同隔离),
+        // 工作目录与容器 -w 一致;DEEPSEEK_API_KEY/DEEPSEEK_BASE_URL 由用户 opencode.env 经上方注入。
+        if (isDshRuntime(runtime)) {
+            env.putIfAbsent("DSH_SESSION_ROOT", home.resolve(".local/share/dsh").toString());
+            env.putIfAbsent("DSH_CWD", Paths.get(props.getWorkspaceRoot(), "users",
+                    String.valueOf(userId), "project").toString());
+            env.putIfAbsent("DSH_PROVIDER", "deepseek-official");
+            env.putIfAbsent("DSH_MODEL", "deepseek-chat");
+            env.putIfAbsent("DSH_MAX_TOKENS_AS_SUCCESS", "20000");
+            env.put("DSH_CORDIS_CONFIG", "/opt/aiworkbench/dsh/cordis.yml");
+            env.put("DSH_RUNTIME_BIN", "/opt/aiworkbench/dsh/bin/dsh-jsonrpc-agent");
+        }
         return env;
+    }
+
+    /** dsh 运行时仅在容器模式可用(需 agent 镜像内置的单文件 exe + playwright/chromium 环境)。 */
+    private boolean isDshRuntime(String runtime) {
+        return "dsh".equalsIgnoreCase(runtime) && props.isContainerMode();
     }
 
     /** 每用户独立 opencode 密码:由共享 master password + userId 确定性派生,

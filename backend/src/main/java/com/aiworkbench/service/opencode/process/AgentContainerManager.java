@@ -47,6 +47,9 @@ public class AgentContainerManager {
     public static final int BROWSER_CDP_PORT = 9223;
     /** agent 容器入口 wrapper:后台起 playwright-mcp daemon 后 exec opencode serve */
     private static final String AGENT_ENTRYPOINT = "/opt/aiworkbench/agent-entrypoint.sh";
+    /** dsh 运行时容器入口 wrapper:同样起 playwright-mcp daemon,再 exec dsh-bridge(node)以 opencode 兼容 API 监听 4096 */
+    private static final String DSH_ENTRYPOINT = "/opt/aiworkbench/dsh-entrypoint.sh";
+    private static final String DSH_RUNTIME = "dsh";
     private static final Duration CMD_TIMEOUT = Duration.ofSeconds(30);
 
     /** NSS wrapper 库路径(镜像已装 libnss-wrapper):拦截 getpwuid/getgrgid,让以 --user uid 运行
@@ -61,6 +64,11 @@ public class AgentContainerManager {
 
     public AgentContainerManager(OpencodeProperties props) {
         this.props = props;
+    }
+
+    /** 是否启用 dsh 运行时(DeepSeek Harness):由调用方传入已解析的运行时(全局或 per-user 覆盖)。 */
+    private boolean isDshRuntime(String runtime) {
+        return DSH_RUNTIME.equalsIgnoreCase(runtime);
     }
 
     public String containerName(Long userId) {
@@ -87,7 +95,7 @@ public class AgentContainerManager {
      * 保留其健康进程与 opencode 会话状态);仅存在已停止/残留容器时才删除重建
      * (保证配置/env 最新)。幂等。
      */
-    public void createAndStart(Long userId, int uid, int gid, Map<String, String> env) {
+    public void createAndStart(Long userId, int uid, int gid, Map<String, String> env, String runtime) {
         String name = containerName(userId);
         if (isRunning(userId)) {
             return;
@@ -124,18 +132,21 @@ public class AgentContainerManager {
         args.add("NSS_WRAPPER_PASSWD=" + nssFile(userId, uid, "passwd"));
         args.add("-e");
         args.add("NSS_WRAPPER_GROUP=" + nssFile(userId, uid, "group"));
-        // agent 入口 wrapper:后台常驻 playwright-mcp 共享浏览器 daemon 后再 exec opencode serve,
-        // 使 opencode 的 remote browser MCP 与网关浏览器面板/接管共享同一浏览器上下文。
+        // agent 入口 wrapper:后台常驻 playwright-mcp 共享浏览器 daemon 后再 exec opencode serve(或 dsh-bridge),
+        // 使 opencode / dsh 的 remote browser MCP 与网关浏览器面板/接管共享同一浏览器上下文。
+        boolean dsh = isDshRuntime(runtime);
         args.add("--entrypoint");
-        args.add(AGENT_ENTRYPOINT);
+        args.add(dsh ? DSH_ENTRYPOINT : AGENT_ENTRYPOINT);
         args.add(props.getAgentImage());
-        args.add("serve");
-        args.add("--hostname");
-        args.add("0.0.0.0");
-        args.add("--port");
-        args.add(String.valueOf(SERVE_PORT));
-        args.add("--cors");
-        args.add("*");
+        if (!dsh) {
+            args.add("serve");
+            args.add("--hostname");
+            args.add("0.0.0.0");
+            args.add("--port");
+            args.add(String.valueOf(SERVE_PORT));
+            args.add("--cors");
+            args.add("*");
+        }
 
         Result created = run(args);
         if (!created.ok()) {

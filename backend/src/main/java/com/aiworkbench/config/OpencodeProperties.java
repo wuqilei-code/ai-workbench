@@ -47,6 +47,11 @@ public class OpencodeProperties {
     /** 配置模板真相源:/data/opencode/template/(root 0700),applyConfig 渲染、PerUserConfigWriter 拷贝 */
     private String templateDir = "/data/opencode/template";
 
+    // ---- agent 运行时选择(对应 OPENCODE_AGENT_RUNTIME) ----
+    /** 全局默认 agent 运行时:opencode(原版 serve)| dsh(DeepSeek Harness 单文件运行时,经桥暴露同款 API)。
+     *  容器模式下按运行时选容器入口与启动参数;dsh 会话降级见 dsh-README。 */
+    private String agentRuntime = "opencode";
+
     // ---- 工具在途看门狗(StuckToolWatcher):兜底「卡死但无人回答」的权限/工具在途 ----
     // 注意:opencode bash 工具超时由 OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS 控制(见 bashTimeoutMs),
     // 超时后 kill 命令并把超时提示返回给 agent,agent 可继续/说明。看门狗阈值必须**大于** bash 超时,

@@ -23,6 +23,8 @@ services:
       OPENCODE_AGENT_CPUS: "${OPENCODE_AGENT_CPUS:-1}"
       OPENCODE_AGENT_MEMORY_MB: "${OPENCODE_AGENT_MEMORY_MB:-2048}"
       OPENCODE_AGENT_STOP_GRACE: "${OPENCODE_AGENT_STOP_GRACE:-5}"
+      # --- agent 运行时选择:opencode(默认) | dsh(DeepSeek Harness 单文件运行时) ---
+      OPENCODE_AGENT_RUNTIME: "${OPENCODE_AGENT_RUNTIME:-opencode}"
       # --- JWT ---
       JWT_SECRET: ${JWT_SECRET:?set in .env}
       JWT_TTL_MINUTES: "1440"

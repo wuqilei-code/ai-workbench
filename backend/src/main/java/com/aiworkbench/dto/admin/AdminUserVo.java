@@ -17,6 +17,8 @@ public class AdminUserVo {
     private Integer status;
     /** per-user 隔离 uid;未分配时为 null */
     private Integer uid;
+    /** agent 运行时偏好(opencode|dsh|null=全局默认);null 时前端显示“跟随全局” */
+    private String agentRuntime;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }
