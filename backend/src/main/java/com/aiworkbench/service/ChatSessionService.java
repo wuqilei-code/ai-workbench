@@ -8,6 +8,7 @@ import com.aiworkbench.dto.chat.UpdateSessionRequest;
 import com.aiworkbench.entity.ChatSession;
 import com.aiworkbench.mapper.ChatSessionMapper;
 import com.aiworkbench.service.opencode.OpencodeClient;
+import com.aiworkbench.service.opencode.DeepagentsAgentBackend;
 import com.aiworkbench.service.opencode.dto.CreateSessionBody;
 import com.aiworkbench.service.opencode.dto.OpencodeSessionDto;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -30,6 +31,14 @@ public class ChatSessionService {
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     /**
+     * deepagents 轨道桥(懒代理):deepagents 会话不创建 opencode 会话,以合成 "da-" id 落库;
+     * update/delete 时跳过 opencode 侧调用,避免对不存在的实例报错。
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    @org.springframework.context.annotation.Lazy
+    private DeepagentsAgentBackend deepagentsBackend;
+
+    /**
      * opencodeSessionId → ChatSession 进程内缓存(访问序 LRU,容量 512)。
      * <p>
      * SSE 流式期间每条 part 事件都会经 {@link #findByOpencodeSessionId} 反查会话,
@@ -44,6 +53,23 @@ public class ChatSessionService {
     };
 
     public SessionVo create(CreateSessionRequest req, Long userId) {
+        if (deepagentsBackend != null && deepagentsBackend.isEnabled()) {
+            // deepagents 轨道:不创建 opencode 会话,合成 "da-" id 落库;
+            // SSE 路由与 DeepagentsAgentBackend 均以此 id 为 key(前端经 events 接口以该 id 订阅)。
+            // 工作区由 agent-service 按 user_id 自管(Java 侧无需 Linux 磁盘 provisioning)。
+            ChatSession s = new ChatSession();
+            s.setUserId(userId);
+            s.setOpencodeSessionId("da-" + java.util.UUID.randomUUID());
+            s.setTitle(req.getTitle() != null ? req.getTitle() : "New Chat");
+            s.setAgent(req.getAgent() != null ? req.getAgent() : "chat");
+            s.setProviderId(isModelRef(req.getProviderId(), req.getModelId()) ? req.getProviderId() : null);
+            s.setModelId(isModelRef(req.getProviderId(), req.getModelId()) ? req.getModelId() : null);
+            s.setArchived(0);
+            s.setPinned(0);
+            chatSessionMapper.insert(s);
+            return toVo(chatSessionMapper.selectById(s.getId()));
+        }
+
         workspaceService.ensureUserWorkspace(userId);
 
         CreateSessionBody body = CreateSessionBody.builder()
@@ -199,10 +225,15 @@ public class ChatSessionService {
         }
         // 切换 agent:opencode 侧切换失败不阻断本地持久化(下一条消息按 s.agent 透传,仍会生效)
         if (req.getAgent() != null) {
-            try {
-                opencodeClient.switchAgent(userId, s.getOpencodeSessionId(), req.getAgent());
-            } catch (Exception e) {
-                log.warn("switch agent on opencode failed (still persist local): {}", e.toString());
+            if (deepagentsBackend != null && deepagentsBackend.isEnabled()
+                    && deepagentsBackend.ownsSession(s.getOpencodeSessionId())) {
+                // deepagents:agent 由 agent-service 服务端配置,无 opencode 侧切换
+            } else {
+                try {
+                    opencodeClient.switchAgent(userId, s.getOpencodeSessionId(), req.getAgent());
+                } catch (Exception e) {
+                    log.warn("switch agent on opencode failed (still persist local): {}", e.toString());
+                }
             }
             s.setAgent(req.getAgent());
         }
@@ -212,10 +243,13 @@ public class ChatSessionService {
 
     public void delete(Long sessionId, Long userId) {
         ChatSession s = getOwned(sessionId, userId);
-        try {
-            opencodeClient.deleteSession(userId, s.getOpencodeSessionId());
-        } catch (Exception e) {
-            log.warn("delete opencode session failed, continue to delete local: {}", e.toString());
+        if (deepagentsBackend == null || !deepagentsBackend.isEnabled()
+                || !deepagentsBackend.ownsSession(s.getOpencodeSessionId())) {
+            try {
+                opencodeClient.deleteSession(userId, s.getOpencodeSessionId());
+            } catch (Exception e) {
+                log.warn("delete opencode session failed, continue to delete local: {}", e.toString());
+            }
         }
         chatSessionMapper.deleteById(sessionId);
         // 缓存失效:防止删除后残留会话仍被事件流反查命中

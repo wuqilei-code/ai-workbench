@@ -64,6 +64,9 @@ jwt:
 
 # 应用
 app:
+  # 对话后端引擎:opencode(默认) | deepagents
+  # deepagents 轨道由 python agent-service 驱动(每用户工作区/技能/脚本),不消耗 opencode 进程/容器。
+  agent-backend: ${AGENT_BACKEND:opencode}
   registration:
     enabled: ${APP_REGISTRATION_ENABLED:true}
   crypto:

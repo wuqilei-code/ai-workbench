@@ -9,6 +9,7 @@ import com.aiworkbench.entity.ChatSession;
 import com.aiworkbench.mapper.ChatMessageMapper;
 import com.aiworkbench.service.opencode.OpencodeClient;
 import com.aiworkbench.service.opencode.OpencodeEventRouter;
+import com.aiworkbench.service.opencode.DeepagentsAgentBackend;
 import com.aiworkbench.service.opencode.dto.CreateSessionBody;
 import com.aiworkbench.service.opencode.dto.OpencodeMessageDto;
 import com.aiworkbench.service.opencode.dto.OpencodeSessionDto;
@@ -30,6 +31,7 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 import java.io.ByteArrayOutputStream;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -58,6 +60,14 @@ public class ChatMessageService {
      * 按会话串行化这些写操作,消除竞态(锁粒度=会话,操作极短,无死锁风险)。
      */
     private final java.util.concurrent.ConcurrentHashMap<Long, Object> partsLocks = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * deepagents 轨道桥(懒代理,避免构造循环依赖:本组件是桥的调用方,桥又依赖本组件的 upsert 方法)。
+     * 仅 app.agent-backend=deepagents 时生效;opencode 轨道下保持 null 代理不用。
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    @org.springframework.context.annotation.Lazy
+    private DeepagentsAgentBackend deepagentsBackend;
 
     private Object partsLock(Long sessionId) {
         return partsLocks.computeIfAbsent(sessionId, k -> new Object());
@@ -378,6 +388,16 @@ public class ChatMessageService {
             throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "会话正在压缩中,请稍候再发送");
         }
 
+        // deepagents 轨道:绕过 opencode 进程/容器,由 python agent-service 执行(会话 id 为合成 "da-" 前缀)。
+        // 不上 work 区基线快照/压缩/重绑定等 opencode 专属逻辑;回复经 DeepagentsAgentBackend 翻译回同一前端。
+        // 先立即落库用户消息:deepagents 无 opencode 快照回流,不主动落库则刷新后历史里只有 AI 消息。
+        if (deepagentsBackend != null && deepagentsBackend.isEnabled()
+                && deepagentsBackend.ownsSession(s.getOpencodeSessionId())) {
+            persistUserMessage(s, req.getText());
+            deepagentsBackend.sendMessage(s, userId, req.getText() != null ? req.getText() : "");
+            return;
+        }
+
         // 基线快照:每轮对话开始前把工作区已存在的未提交变更(如用户手动删改文件)固化为
         // 独立 commit,使本轮结束时的变更总结只覆盖本会话真实产生的改动,避免把无关变更
         // 错误归因到当前会话(问题:会话 106 仅执行只读 ls,总结却出现"删除了模拟流水 Excel")。
@@ -430,7 +450,14 @@ public class ChatMessageService {
     /** 终止当前生成 */
     public boolean abort(Long sessionId, Long userId) {
         ChatSession s = chatSessionService.getOwned(sessionId, userId);
-        boolean ok = opencodeClient.abort(userId, s.getOpencodeSessionId());
+        boolean ok;
+        if (deepagentsBackend != null && deepagentsBackend.isEnabled()
+                && deepagentsBackend.ownsSession(s.getOpencodeSessionId())) {
+            // deepagents:无远端 abort 端点,只终止本地订阅与后续事件处理
+            ok = deepagentsBackend.abort(s.getOpencodeSessionId());
+        } else {
+            ok = opencodeClient.abort(userId, s.getOpencodeSessionId());
+        }
         // 用户中断输出:若有在途生成,插入"已中断"标记记录(前端渲染为分割线)。
         if (ok || countStreamingMessages(sessionId) > 0) {
             insertInterruptedMarker(sessionId, userId);
@@ -482,6 +509,12 @@ public class ChatMessageService {
      *  为"正在压缩/已压缩"分割线,不再需要前端锚点推断;压缩完成时由事件消费者更新为 completed。 */
     public boolean summarize(Long sessionId, Long userId) {
         ChatSession s = chatSessionService.getOwned(sessionId, userId);
+        if (deepagentsBackend != null && deepagentsBackend.isEnabled()
+                && deepagentsBackend.ownsSession(s.getOpencodeSessionId())) {
+            // deepagents 轨道无压缩概念:不落 compaction 标记(否则会永久停留在"压缩中"),直接返回。
+            log.info("summarize skipped (deepagents backend has no compaction), sessionId={}", sessionId);
+            return true;
+        }
         insertCompactionMarker(s.getId(), s.getUserId());
         // 异步触发 opencode 压缩:压缩在后台进行,不阻塞接口返回(避免前端 30s 超时)。
         // 完成/中断由 SSE 事件驱动前端状态,此处只管发起。
@@ -790,6 +823,24 @@ public class ChatMessageService {
         } else {
             chatMessageMapper.insert(m);
         }
+    }
+
+    /**
+     * deepagents 轨道:发送即落库用户消息。opencode 轨道靠会话快照回流落库,
+     * deepagents 无快照回流,不主动落库则刷新历史后只剩 AI 消息。
+     */
+    public void persistUserMessage(ChatSession session, String text) {
+        ChatMessage m = new ChatMessage();
+        m.setSessionId(session.getId());
+        m.setUserId(session.getUserId());
+        m.setOpencodeMessageId("da-user-" + UUID.randomUUID());
+        m.setProviderId(session.getProviderId());
+        m.setModelId(session.getModelId());
+        m.setRole("user");
+        m.setContent(text == null ? "" : text);
+        m.setStatus("completed");
+        m.setCompactionSummary(0);
+        persistMessage(m);
     }
 
     /**

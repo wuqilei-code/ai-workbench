@@ -13,6 +13,10 @@ services:
     ports:
       - "8080:80"
     environment:
+      # --- 对话后端引擎:opencode | deepagents(deepagents 轨道不消耗 opencode 进程/容器) ---
+      AGENT_BACKEND: "${AGENT_BACKEND:-opencode}"
+      # deepagents agent-service 地址:prod 走 compose 服务名;本机调试可指向 http://localhost:8000
+      DEEPAGENTS_BASE_URL: "${DEEPAGENTS_BASE_URL:-http://agent-service:8000}"
       # --- opencode 内部认证(网关 -> opencode) ---
       OPENCODE_SERVER_USERNAME: opencode
       OPENCODE_SERVER_PASSWORD: ${OPENCODE_SERVER_PASSWORD:?set in .env}
@@ -62,6 +66,56 @@ services:
     restart: "no"
     command: ["true"]
 
+  # --- deepagents 轨道:python agent-service(每用户独立工作区/技能 + 可执行脚本) ---
+  agent-service:
+    build:
+      context: ../agent-service
+      dockerfile: Dockerfile
+      args:
+        DOCKER_REGISTRY: "${DOCKER_REGISTRY:-docker.m.daocloud.io}"
+    image: ai-workbench-agent-service
+    ports:
+      # 宿主端口供本机运行的 Spring(dev)直连;prod 网关容器内经服务名 agent-service:8000 访问
+      - "${AGENT_SERVICE_PORT:-8000}:8000"
+    environment:
+      AGENT_MODEL: "${AGENT_MODEL:?set in .env}"
+      AGENT_MODEL_BASE_URL: "${AGENT_MODEL_BASE_URL:-}"
+      AGENT_MODEL_API_KEY: "${AGENT_MODEL_API_KEY:-}"
+      # 并发加固:多 worker + PG checkpoint 连接池
+      AGENT_WORKERS: "${AGENT_WORKERS:-4}"
+      AGENT_PG_POOL_MIN: "${AGENT_PG_POOL_MIN:-2}"
+      AGENT_PG_POOL_MAX: "${AGENT_PG_POOL_MAX:-10}"
+      AGENT_WS_ROOT: /shared-ws/users
+      AGENT_PG_DSN: "postgresql://aiworkbench:${POSTGRES_PASSWORD:-aiworkbench-pass}@postgres:5432/agent_workbench"
+      AGENT_HITL: "${AGENT_HITL:-false}"
+    volumes:
+      - user-data:/data/users
+      # 与 app 共用 workspace 卷:agent 写 /shared-ws/users/<uid>/project
+      # == app 前端文件树 /workspace/users/<uid>/project,保证 UI 可见。
+      - workspace:/shared-ws
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - default
+    restart: unless-stopped
+
+  # deepagents 持久化:线程 checkpoint + 跨线程 store
+  postgres:
+    image: docker.m.daocloud.io/postgres:16-alpine
+    environment:
+      POSTGRES_USER: aiworkbench
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-aiworkbench-pass}"
+      POSTGRES_DB: agent_workbench
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aiworkbench -d agent_workbench"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
   # 本机 MySQL 服务已接入后不再使用容器 MySQL;保留定义便于回退。
   # 需要重新启用时:去掉下面 profiles 行,并恢复 app 的 depends_on。
   mysql:
@@ -88,6 +142,8 @@ volumes:
   workspace:
   app-data:
   mysql-data:
+  user-data:
+  postgres-data:
 
 networks:
   # 每用户 agent 容器专用网络(app 容器亦接入):网关经容器名 DNS 直连各 agent 的 opencode serve

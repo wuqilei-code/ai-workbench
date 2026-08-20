@@ -48,6 +48,13 @@ public class UserProvisioningService {
             throw new BusinessException(ResultCode.INTERNAL_ERROR.getCode(), "user not found: " + userId);
         }
 
+        // Windows 本地开发:无 useradd/groupadd/chown,uid 隔离是 Linux 独有特性,直接跳过。
+        // 生产为容器内 root(Linux),不受影响。
+        if (java.io.File.separatorChar == '\\') {
+            log.info("skip user provisioning on Windows (uid isolation is Linux-only)");
+            return;
+        }
+
         int uid = props.getUidBase() + userId.intValue();
         int gid = uid; // gid 同 uid,确定性
         String acct = ACCT_PREFIX + userId;
