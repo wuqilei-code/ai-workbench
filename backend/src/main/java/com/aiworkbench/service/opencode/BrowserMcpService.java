@@ -2,7 +2,7 @@ package com.aiworkbench.service.opencode;
 
 import com.aiworkbench.common.BusinessException;
 import com.aiworkbench.common.ResultCode;
-import com.aiworkbench.service.opencode.process.AgentContainerManager;
+import com.aiworkbench.service.agent.BrowserContainerManager;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -40,7 +40,7 @@ public class BrowserMcpService {
     private static final Duration CALL_TIMEOUT = Duration.ofSeconds(35);
     private static final Duration INIT_TIMEOUT = Duration.ofSeconds(10);
 
-    private final AgentContainerManager agentContainerManager;
+    private final BrowserContainerManager agentContainerManager;
     private final ObjectMapper objectMapper;
 
     private final AtomicLong idSeq = new AtomicLong();

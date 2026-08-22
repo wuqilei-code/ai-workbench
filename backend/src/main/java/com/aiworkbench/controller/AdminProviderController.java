@@ -65,12 +65,4 @@ public class AdminProviderController {
         providerConfigService.deleteModel(id);
         return R.ok();
     }
-
-    /** 渲染 opencode.json/env 并重启 opencode,使配置生效 */
-    @PostMapping("/providers/apply")
-    @AuditLog(action = "应用配置")
-    public R<Void> apply() {
-        providerConfigService.applyConfig();
-        return R.ok();
-    }
 }

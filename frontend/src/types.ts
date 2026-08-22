@@ -1,4 +1,4 @@
-// 共享类型(对齐后端 VO)
+// 共享类型(对齐后端 VO,deepagents 单轨)
 
 export interface UserVo {
   id: number
@@ -26,9 +26,12 @@ export interface AuthResponse {
 
 export interface SessionVo {
   id: number
-  opencodeSessionId: string
+  /** 执行轨道外部会话 id("da-" 前缀,SSE 订阅 key) */
+  agentSessionId: string
   title: string
   agent: string
+  /** 会话勾选启用的自定义技能名(空=仅内置技能) */
+  skills?: string[]
   providerId: string | null
   modelId: string | null
   archived: number
@@ -39,14 +42,13 @@ export interface SessionVo {
 
 export interface MessageVo {
   id: number
-  opencodeMessageId?: string
-  role: 'user' | 'assistant' | 'tool' | 'system' | 'summary' | 'compaction' | 'interrupted'
+  /** 执行轨道外部消息 id(assistant 为 "da-msg-...",user 为 "da-user-...") */
+  agentMessageId?: string
+  role: string
   content: string
-  /** 结构化 part:工具调用 & 步骤结束标记;旧消息为 null */
+  /** 结构化 parts:{toolCalls:[{id,name,args,output,status}]};旧消息为 null */
   parts?: StepParts | null
-  /** assistant 消息真实 token 用量 {input,output,reasoning,cache:{read,write}};无则 null */
-  tokens?: { input: number; output: number; reasoning: number; cache: { read: number; write: number } } | null
-  /** 压缩产生的总结消息(不展示,仅占位) */
+  /** 1=压缩产生的总结消息(不展示,仅占位;deepagents 轨道恒为 0) */
   compactionSummary?: boolean
   status: string
   createdAt: string
@@ -55,36 +57,59 @@ export interface MessageVo {
   _streaming?: boolean
   /** 前端本地态:生成失败时展示的错误文案 */
   error?: string
-  /** AI 变更总结附带的信息(role=summary 时由后端透传) */
-  summaryFiles?: { status: string; path: string }[]
-  /** AI 变更总结对应快照 commit sha(role=summary 时后端透传) */
-  summarySha?: string
-  /** 该快照的父提交 sha,用于展示"本轮(parent→sha)变更" */
-  summaryParentSha?: string
 }
 
-/** agent 选择项(opencode GET /agent 裁剪) */
-export interface AgentItem {
+/** 工具调用(后端持久化形状:assistant 一轮一个 message,parts.toolCalls 为这轮的调用序列) */
+export interface ToolCall {
+  /** 工具调用 id(agent-service 侧 stable call id;tool → tool_result 配对) */
+  id?: string
   name: string
-  description?: string
-  mode?: string
+  status: 'running' | 'completed' | 'error'
+  /** 工具入参(后端原样透传) */
+  args?: any
+  /** 工具输出(截断 2000 字符) */
+  output?: string
+  /** 结构化输出物(deepagents 写文件类工具给出):工作区相对路径,前端结果文件块优先用它 */
+  outputs?: { path: string }[]
 }
 
-/** slash 命令菜单项(opencode GET /command 裁剪) */
-export interface CommandItem {
-  name: string
-  description?: string
-  agent?: string
-  model?: string
-  source?: string
-  subtask?: boolean
-  hints?: string[]
+/** HITL 人工确认请求(危险操作需用户点击允许/拒绝) */
+export interface PendingPermission {
+  requestId: string
+  tool?: { name: string; args?: any; description?: string } | null
+  /** 允许的决策(approve/reject) */
+  allowed?: string[]
+  /** 前端本地态:已处置 */
+  _replied?: boolean
+}
+
+/** 消息的 parts JSON 容器(对齐后端落库结构) */
+export interface StepParts {
+  toolCalls?: ToolCall[]
+  /** 待确认的权限请求(危险操作 HITL) */
+  pendingPermission?: PendingPermission | null
 }
 
 /** 内置全局技能信息(只读展示) */
 export interface SkillInfo {
   name: string
   description: string
+}
+
+/** 用户技能(user_skill:自建/安装;安装款只读) */
+export interface UserSkill {
+  id: number
+  name: string
+  description?: string
+  content?: string
+  /** 附加文件(SKILL.md 之外的脚本/数据/参考) */
+  files?: SkillFileVo[]
+  /** 0=私有 1=公开 */
+  visibility: number
+  /** self=自建 installed=从市场安装 */
+  source: 'self' | 'installed'
+  createdAt?: string
+  updatedAt?: string
 }
 
 /** 技能附加文件(SKILL.md 之外的脚本/数据/参考) */
@@ -136,113 +161,11 @@ export interface TemplateVo {
   updatedAt: string
 }
 
-/** 后台任务状态项(「任务」面板展示) */
-export interface TaskInfo {
-  id: string
-  status: 'pending' | 'running' | 'done' | 'failed' | 'delivered'
-  statusText: string
-  doneContent?: string
-  delivered: boolean
-  startedAt: number
-  finishedAt?: number
-  runningSeconds?: number
-  logTail: string
-  /** 来源会话 DB id(可点击跳转;无归属时缺省) */
-  sessionId?: number
-  /** 来源会话标题 */
-  sessionTitle?: string
-  /** 会话归属是否确定(sidecar/json 明确指定;否则为最近会话推测) */
-  sessionConfirmed?: boolean
-  /** 触发任务的用户消息 DB id(可跳转定位) */
-  messageId?: number
-}
-
-/** 工具调用(part 级,同一 partId 的 pending→running→completed 共用) */
-export interface ToolCall {
-  partId?: string
-  tool: string
-  status: 'running' | 'completed' | 'error'
-  input?: any
-  output?: string
-}
-
-export interface QuestionOption {
-  label: string
-  description?: string
-}
-
-export interface QuestionItem {
-  question: string
-  header?: string
-  options: QuestionOption[]
-  multiple?: boolean
-  custom?: boolean
-}
-
-export interface PendingQuestion {
-  requestId: string
-  questions: QuestionItem[]
-  tool?: { messageID: string; callID?: string }
-  version?: 'v1' | 'v2'
-  _replies?: string[][]
-  _replied?: boolean
-}
-
-export interface PendingPermissionV1 {
-  requestId: string
-  version: 'v1'
-  permission: string
-  patterns: string[]
-  always?: string[]
-  metadata?: Record<string, any>
-  tool?: { messageID: string; callID?: string }
-  _replied?: boolean
-}
-
-export interface PendingPermissionV2 {
-  requestId: string
-  version: 'v2'
-  action: string
-  resources: string[]
-  save?: string[]
-  metadata?: Record<string, any>
-  source?: Record<string, any>
-  tool?: { messageID: string; callID?: string }
-  _replied?: boolean
-}
-
-export type PendingPermission = PendingPermissionV1 | PendingPermissionV2
-
-/** 图片 part(如浏览器 MCP 截图):data 为 base64 或 data URI,前端直接 <img :src> */
-export interface ImagePart {
-  partId?: string
-  mimeType?: string
-  data?: string
-}
-
-/** 消息的 parts JSON 容器(对齐后端落库结构) */
-export interface StepParts {
-  toolCalls?: ToolCall[]
-  stepFinish?: { reason?: 'tool-calls' | 'stop' } | null
-  /** 模型思维链(reasoning part 的 text);模型不输出思维链则不存在 */
-  reasoning?: { text?: string } | null
-  /** 图片列表(浏览器截图等,按 partId 去重维护) */
-  images?: ImagePart[]
-  pendingQuestion?: PendingQuestion | null
-  /** 多个并发待确认权限(一条命令可能同时触发 external_directory + bash 等多个,按 requestId 各自独立) */
-  pendingPermissions?: PendingPermission[]
-}
-
-/** Turn 内的一个步骤(中间思考步或最终答案) */
+/** Turn 内的一个步骤(一次 assistant 回复 = 一步) */
 export interface Step {
   message: MessageVo
   narration: string
   toolCalls: ToolCall[]
-  finishReason?: string
-  /** 该步的思维链文本(来自 parts.reasoning.text) */
-  reasoning?: string
-  /** 该步的图片(来自 parts.images,如浏览器截图) */
-  images: ImagePart[]
 }
 
 /** 一个用户任务 = 一条 user 消息 + 其后连续的 assistant 消息 */
@@ -251,6 +174,15 @@ export interface Turn {
   userMessage: MessageVo | null
   steps: Step[]
   finalAnswer: Step | null
+}
+
+/** AI 变更总结卡片(deepagents 轨道不再产生,保留形状供 flow 渲染空数组) */
+export interface ChangeSummary {
+  summary: string
+  files: { status: string; path: string }[]
+  at?: string
+  sha?: string
+  parentSha?: string
 }
 
 export interface ModelVo {
@@ -274,21 +206,6 @@ export interface ProviderVo {
   enabled: number
   sortOrder: number
   models: ModelVo[]
-}
-
-/** MCP Server 配置(local 命令进程 / remote HTTP/SSE URL) */
-export interface McpVo {
-  id: number
-  name: string
-  type: 'local' | 'remote'
-  command: string | null
-  url: string | null
-  headers: string | null
-  environment: string | null
-  enabled: number
-  sortOrder: number
-  createdAt: string
-  updatedAt: string
 }
 
 export interface FileNode {
@@ -319,17 +236,6 @@ export interface FileDiffResult {
   textDiff: boolean
   raw: string
   lines: DiffLine[]
-}
-
-/** AI 变更总结卡片(role=summary 消息 + SSE 事件) */
-export interface ChangeSummary {
-  summary: string
-  files: { status: string; path: string }[]
-  at?: string
-  /** 触发该总结的快照 commit sha(点击卡片看 diff/回滚用) */
-  sha?: string
-  /** 该快照的父提交 sha,与 sha 组成"本轮变更"的 diff 范围 */
-  parentSha?: string
 }
 
 /** 用量统计看板(admin) */

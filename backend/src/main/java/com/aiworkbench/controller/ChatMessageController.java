@@ -1,17 +1,14 @@
 package com.aiworkbench.controller;
 
+import com.aiworkbench.common.R;
 import com.aiworkbench.common.SecurityUtil;
 import com.aiworkbench.common.audit.AuditLog;
-import com.aiworkbench.dto.chat.CommandVo;
 import com.aiworkbench.dto.chat.MessageVo;
-import com.aiworkbench.dto.chat.RunCommandRequest;
 import com.aiworkbench.dto.chat.SendMessageRequest;
 import com.aiworkbench.entity.ChatSession;
-import com.aiworkbench.common.R;
 import com.aiworkbench.service.ChatMessageService;
 import com.aiworkbench.service.ChatSessionService;
-import com.aiworkbench.service.opencode.OpencodeClient;
-import com.aiworkbench.service.opencode.OpencodeEventRouter;
+import com.aiworkbench.service.agent.SessionEventHub;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -41,11 +38,10 @@ public class ChatMessageController {
 
     private final ChatMessageService chatMessageService;
     private final ChatSessionService chatSessionService;
-    private final OpencodeEventRouter router;
-    private final OpencodeClient opencodeClient;
+    private final SessionEventHub hub;
 
     /**
-     * 消息历史(从 MySQL 镜像加载),游标分页:
+     * 消息历史(从 MySQL 加载),游标分页:
      *  - 不传游标:取最新 limit 条(会话通常很长,进会话先看最近内容);
      *  - beforeId:取 id < beforeId 的最近 limit 条(向上翻页加载更早);
      *  - afterId:取 id > afterId 的最早 limit 条(增量追平/断线对账)。
@@ -67,7 +63,7 @@ public class ChatMessageController {
         return R.ok();
     }
 
-    /** 清空会话消息(仅删本地 MySQL 镜像,会话保留) */
+    /** 清空会话消息(仅删本地 MySQL 记录,会话保留) */
     @DeleteMapping("/messages")
     @AuditLog(action = "清空会话", targetSpel = "#id")
     public R<Void> clear(@PathVariable Long id) {
@@ -117,43 +113,6 @@ public class ChatMessageController {
                 .body(data);
     }
 
-    /**
-     * 该会话可用的 slash 命令列表(内置 + 用户 command/*.md,source=command)。
-     * 越权校验同 messages:getOwned 不属于当前用户则抛 SESSION_NOT_FOUND。
-     */
-    @GetMapping("/commands")
-    public R<List<CommandVo>> commands(@PathVariable Long id) {
-        Long userId = SecurityUtil.currentUserId();
-        chatSessionService.getOwned(id, userId);
-        List<CommandVo> commands = opencodeClient.listCommands(userId).stream()
-                .filter(c -> c.getSource() == null || "command".equals(c.getSource()))
-                .map(c -> CommandVo.builder()
-                        .name(c.getName())
-                        .description(c.getDescription())
-                        .agent(c.getAgent())
-                        .model(c.getModel())
-                        .source(c.getSource())
-                        .subtask(c.getSubtask())
-                        .hints(c.getHints())
-                        .build())
-                .toList();
-        return R.ok(commands);
-    }
-
-    /**
-     * 触发 slash 命令(fire-and-forget):用户消息与回复经 SSE 事件流镜像,与 prompt_async 同 UX。
-     * 命令不存在/执行失败时 opencode 发布 session.error 事件,前端展示。
-     */
-    @PostMapping("/commands")
-    @AuditLog(action = "执行命令", targetSpel = "#id")
-    public R<Void> runCommand(@PathVariable Long id, @Valid @RequestBody RunCommandRequest req) {
-        Long userId = SecurityUtil.currentUserId();
-        ChatSession s = chatSessionService.getOwned(id, userId);
-        chatMessageService.captureTurnBaseline(userId);
-        opencodeClient.runCommand(userId, s.getOpencodeSessionId(), req.getCommand(), req.getArguments());
-        return R.ok();
-    }
-
     /** 终止当前生成 */
     @PostMapping("/abort")
     @AuditLog(action = "终止生成", targetSpel = "#id")
@@ -161,88 +120,41 @@ public class ChatMessageController {
         return R.ok(chatMessageService.abort(id, SecurityUtil.currentUserId()));
     }
 
-    /** 主动压缩会话(项目侧检测到会话接近预算时调用) */
-    @PostMapping("/summarize")
-    @AuditLog(action = "压缩会话", targetSpel = "#id")
-    public R<Boolean> summarize(@PathVariable Long id) {
-        return R.ok(chatMessageService.summarize(id, SecurityUtil.currentUserId()));
+    /** 人工确认(HITL):允许/拒绝危险操作,续跑被中断的生成。 */
+    @PostMapping("/permission/{requestId}/reply")
+    @AuditLog(action = "处置权限确认", targetSpel = "#id")
+    public R<Boolean> replyPermission(@PathVariable Long id,
+                                      @PathVariable String requestId,
+                                      @RequestBody Map<String, String> body) {
+        String decision = body != null ? body.get("decision") : null;
+        if (!"approve".equals(decision) && !"reject".equals(decision)) {
+            throw new com.aiworkbench.common.BusinessException(
+                    com.aiworkbench.common.ResultCode.BAD_REQUEST.getCode(), "decision 只能为 approve 或 reject");
+        }
+        return R.ok(chatMessageService.resumePermission(id, SecurityUtil.currentUserId(), requestId, decision));
     }
 
     /**
-     * SSE 订阅该会话的实时事件(opencode /event 经路由转发)。
+     * SSE 订阅该会话的实时事件(deepagents 原生事件经 SessionEventHub 直通)。
      * 越权校验:getOwned 不属于当前用户则抛 SESSION_NOT_FOUND(404)。
      */
     @GetMapping(value = "/events", produces = org.springframework.http.MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter events(@PathVariable Long id) {
         Long userId = SecurityUtil.currentUserId();
         ChatSession s = chatSessionService.getOwned(id, userId);
+        String agentSessionId = s.getAgentSessionId();
         SseEmitter emitter = new SseEmitter(0L);
-        router.subscribe(s.getOpencodeSessionId(), emitter);
-        emitter.onCompletion(() -> router.unsubscribe(s.getOpencodeSessionId(), emitter));
+        hub.subscribe(agentSessionId, emitter);
+        emitter.onCompletion(() -> hub.unsubscribe(agentSessionId, emitter));
         emitter.onTimeout(() -> {
-            router.unsubscribe(s.getOpencodeSessionId(), emitter);
+            hub.unsubscribe(agentSessionId, emitter);
             emitter.complete();
         });
-        emitter.onError(e -> router.unsubscribe(s.getOpencodeSessionId(), emitter));
+        emitter.onError(e -> hub.unsubscribe(agentSessionId, emitter));
         try {
             emitter.send(SseEmitter.event().name("open")
-                    .data("{\"sessionID\":\"" + s.getOpencodeSessionId() + "\"}"));
+                    .data("{\"agentSessionId\":\"" + agentSessionId + "\"}"));
         } catch (Exception ignored) {}
         return emitter;
-    }
-
-    /** 回复问题 */
-    @PostMapping("/question/{requestId}/reply")
-    @AuditLog(action = "回复问题", targetSpel = "#id")
-    public R<Void> replyQuestion(@PathVariable Long id,
-                                 @PathVariable String requestId,
-                                 @RequestBody Map<String, Object> body) {
-        Long userId = SecurityUtil.currentUserId();
-        ChatSession s = chatSessionService.getOwned(id, userId);
-        @SuppressWarnings("unchecked")
-        List<List<String>> answers = (List<List<String>>) body.get("answers");
-        // opencode 调用失败不阻断本地清除:即便 opencode 返回 4xx/5xx(如 permission/question 已消费的 404),
-        // 也要清掉 DB 里的 pending,否则刷新历史时确认框会重复出现。工具实际多已执行,只是 reply 接口报错。
-        try {
-            opencodeClient.replyQuestion(userId, s.getOpencodeSessionId(), requestId, answers);
-        } catch (Exception e) {
-            log.warn("reply question to opencode failed (still clear local pending): {}", e.toString());
-        }
-        chatMessageService.clearPendingQuestion(id, requestId);
-        return R.ok();
-    }
-
-    /** 拒绝问题 */
-    @PostMapping("/question/{requestId}/reject")
-    @AuditLog(action = "拒绝问题", targetSpel = "#id")
-    public R<Void> rejectQuestion(@PathVariable Long id,
-                                  @PathVariable String requestId) {
-        Long userId = SecurityUtil.currentUserId();
-        ChatSession s = chatSessionService.getOwned(id, userId);
-        try {
-            opencodeClient.rejectQuestion(userId, s.getOpencodeSessionId(), requestId);
-        } catch (Exception e) {
-            log.warn("reject question to opencode failed (still clear local pending): {}", e.toString());
-        }
-        chatMessageService.clearPendingQuestion(id, requestId);
-        return R.ok();
-    }
-
-    /** 回复权限 */
-    @PostMapping("/permission/{permissionId}/reply")
-    @AuditLog(action = "回复权限", targetSpel = "#id")
-    public R<Void> replyPermission(@PathVariable Long id,
-                                   @PathVariable String permissionId,
-                                   @RequestBody Map<String, Object> body) {
-        Long userId = SecurityUtil.currentUserId();
-        ChatSession s = chatSessionService.getOwned(id, userId);
-        String reply = (String) body.get("reply");
-        try {
-            opencodeClient.replyPermission(userId, s.getOpencodeSessionId(), permissionId, reply);
-        } catch (Exception e) {
-            log.warn("reply permission to opencode failed (still clear local pending): {}", e.toString());
-        }
-        chatMessageService.clearPendingPermission(id, permissionId);
-        return R.ok();
     }
 }

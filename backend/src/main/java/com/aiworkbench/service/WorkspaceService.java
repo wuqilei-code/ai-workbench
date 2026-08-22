@@ -1,6 +1,6 @@
 package com.aiworkbench.service;
 
-import com.aiworkbench.config.OpencodeProperties;
+import com.aiworkbench.config.WorkspaceProperties;
 import com.aiworkbench.common.BusinessException;
 import com.aiworkbench.common.ResultCode;
 import com.aiworkbench.service.user.UserProvisioningService;
@@ -20,17 +20,18 @@ import java.util.List;
 import java.util.stream.Stream;
 
 /**
- * 用户工作目录管理 + 文件操作(限定在 /workspace/users/<userId> 内)。
+ * 用户工作目录管理 + 文件操作(限定在 /workspace/users/<userId>/project 内)。
  * <p>
- * 隔离关键:所有 opencode 请求带 header x-opencode-directory: 该目录。
- * 文件读写均做路径越权校验,禁止逃逸出用户目录。
+ * 隔离关键:所有文件读写均做路径越权校验,禁止逃逸出用户目录。
+ * 工作区与 agent-service 沙箱共享同一卷(见 compose AGENT_SANDBOX_VOLUME_ROOT),
+ * 用户在此目录上传/编辑的文件即时对 agent 可见。
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class WorkspaceService {
 
-    private final OpencodeProperties props;
+    private final WorkspaceProperties props;
     private final UserProvisioningService userProvisioningService;
 
     /**
@@ -41,8 +42,31 @@ public class WorkspaceService {
      * opencode CWD、x-opencode-directory、文件 API 基准均由此派生,改此一处即全链路生效。
      */
     public String userDir(Long userId) {
-        return Paths.get(props.getWorkspaceRoot(), "users", String.valueOf(userId), "project").toString();
+        return Paths.get(props.getRoot(), "users", String.valueOf(userId), "project").toString();
     }
+
+    /** deepagents 技能根(用户目录的兄弟):users/<userId>/skills —— agent 实际加载的 /skills。 */
+    public String skillsDir(Long userId) {
+        return Paths.get(props.getRoot(), "users", String.valueOf(userId), "skills").toString();
+    }
+
+    /** 用于 deepagents 技能根的虚拟根标记(相对路径以 "skills/" 开头即解析到技能根)。 */
+    private static final String SKILLS_VIRTUAL = "skills/";
+
+    /** 按虚拟根选择基目录并归一化返回 (base, 去掉虚拟前缀后的相对路径)。 */
+    private Base resolveBase(Long userId, String relativePath) {
+        Path base;
+        String rel = relativePath == null ? "" : relativePath;
+        if (rel.startsWith(SKILLS_VIRTUAL) || rel.equals("skills")) {
+            base = Paths.get(skillsDir(userId)).toAbsolutePath().normalize();
+            rel = rel.equals("skills") ? "" : rel.substring(SKILLS_VIRTUAL.length());
+        } else {
+            base = Paths.get(userDir(userId)).toAbsolutePath().normalize();
+        }
+        return new Base(base, rel);
+    }
+
+    private record Base(Path dir, String rel) {}
 
     /**
      * 确保用户工作目录存在并完成 uid 隔离 provisioning(登录/首次建会话时调用)。
@@ -56,19 +80,21 @@ public class WorkspaceService {
 
     public record FileNode(String name, String path, boolean directory, long size, long modified, long created) {}
 
-    /** 列出用户目录下文件树(单层)。path 相对用户目录,如 "" 表示根。 */
+    /** 列出用户目录下文件树(单层)。path 相对用户目录(或 "skills/" 技能根)。 */
     public List<FileNode> listFiles(Long userId, String relativePath) {
-        Path base = safeResolve(userId, relativePath);
-        if (!Files.isDirectory(base)) {
+        Base baseRel = resolveBase(userId, relativePath);
+        Path base = baseRel.dir();
+        Path dir = safeResolve(base, baseRel.rel());
+        if (!Files.isDirectory(dir)) {
             return List.of();
         }
         List<FileNode> nodes = new ArrayList<>();
-        try (Stream<Path> stream = Files.list(base)) {
+        try (Stream<Path> stream = Files.list(dir)) {
             stream.forEach(p -> {
                 try {
                     nodes.add(new FileNode(
                             p.getFileName().toString(),
-                            relativize(userId, p),
+                            relativize(base, p),
                             Files.isDirectory(p),
                             Files.size(p),
                             Files.getLastModifiedTime(p).toMillis(),
@@ -109,7 +135,7 @@ public class WorkspaceService {
         if (!Files.isDirectory(base)) return List.of();
         String q = query.toLowerCase().trim();
         List<FileNode> results = new ArrayList<>();
-        walkSearch(base, q, userId, results, 300);
+        walkSearch(base, q, base, results, 300);
         results.sort((a, b) -> {
             int c = Boolean.compare(a.directory(), b.directory());
             if (c != 0) return -c;
@@ -119,7 +145,7 @@ public class WorkspaceService {
     }
 
     /** 递归遍历(手动跳过系统目录子树,避免 Files.walk 钻进 .git 浪费开销) */
-    private void walkSearch(Path dir, String q, Long userId, List<FileNode> results, int limit) {
+    private void walkSearch(Path dir, String q, Path base, List<FileNode> results, int limit) {
         if (results.size() >= limit) return;
         List<Path> children;
         try (Stream<Path> stream = Files.list(dir)) {
@@ -144,12 +170,12 @@ public class WorkspaceService {
             }
             if (name.toLowerCase().contains(q)) {
                 try {
-                    results.add(new FileNode(name, relativize(userId, p), isDir,
+                    results.add(new FileNode(name, relativize(base, p), isDir,
                             isDir ? 0 : Files.size(p), Files.getLastModifiedTime(p).toMillis(),
                             creationTime(p)));
                 } catch (IOException ignored) {}
             }
-            if (isDir) walkSearch(p, q, userId, results, limit);
+            if (isDir) walkSearch(p, q, base, results, limit);
         }
     }
 
@@ -272,8 +298,12 @@ public class WorkspaceService {
     }
 
     private Path safeResolve(Long userId, String relativePath) {
-        Path base = Paths.get(userDir(userId)).toAbsolutePath().normalize();
-        String rel = relativePath == null ? "" : relativePath;
+        Base baseRel = resolveBase(userId, relativePath);
+        return safeResolve(baseRel.dir(), baseRel.rel());
+    }
+
+    private Path safeResolve(Path base, String rel) {
+        rel = rel == null ? "" : rel;
         // 只做 normalize 后前缀校验:不因文件名含 ".."(如 foo..bar.txt)误伤合法文件;
         // 真正的目录逃逸(../ 跨出 base)由 startsWith(base) 拦截。
         Path resolved = base.resolve(rel).normalize();
@@ -288,8 +318,7 @@ public class WorkspaceService {
         return safeResolve(userId, relativePath);
     }
 
-    private String relativize(Long userId, Path absolute) {
-        Path base = Paths.get(userDir(userId)).toAbsolutePath().normalize();
+    private String relativize(Path base, Path absolute) {
         return base.relativize(absolute.toAbsolutePath().normalize()).toString().replace('\\', '/');
     }
 }

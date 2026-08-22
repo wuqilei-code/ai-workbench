@@ -38,13 +38,15 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class SkillMarketplaceService {
 
-    private static final String SKILLS_ROOT = ".opencode/skills";
+    /** deepagents 技能根虚拟前缀:install 写入 用户技能根 users/<id>/skills/<name>/ */
+    private static final String SKILLS_ROOT = "skills";
 
-    private final SkillMarketplaceMapper marketplaceMapper;
+private final SkillMarketplaceMapper marketplaceMapper;
     private final SkillInstallMapper installMapper;
-    private final WorkspaceService workspaceService;
+    private final com.aiworkbench.mapper.UserSkillMapper userSkillMapper;
     private final UserMapper userMapper;
     private final ObjectMapper objectMapper;
+    private final WorkspaceService workspaceService;
 
     /** 广场列表:按安装数倒序;附当前用户的 installed / mine 标记。 */
     public List<MarketplaceSkillVo> list(Long userId) {
@@ -132,6 +134,21 @@ public class SkillMarketplaceService {
         it.setSkillId(id);
         it.setSkillName(name);
         installMapper.insert(it);
+
+        // 记录到用户技能表(source=installed,只读;与文件系统同步)
+        try {
+            com.aiworkbench.entity.UserSkill us = new com.aiworkbench.entity.UserSkill();
+            us.setUserId(userId);
+            us.setName(name);
+            us.setDescription(s.getDescription() == null ? "" : s.getDescription());
+            us.setContent(withIconFrontmatter(s.getContent(), s.getIcon()));
+            us.setVisibility(0);
+            us.setSource("installed");
+            us.setSourceSkillId(id);
+            userSkillMapper.insert(us);
+        } catch (Exception e) {
+            log.warn("record user_skill installed failed ({}): {}", name, e.toString());
+        }
 
         SkillMarketplace upd = new SkillMarketplace();
         upd.setId(id);

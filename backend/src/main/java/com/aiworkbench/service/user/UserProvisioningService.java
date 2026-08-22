@@ -2,7 +2,7 @@ package com.aiworkbench.service.user;
 
 import com.aiworkbench.common.BusinessException;
 import com.aiworkbench.common.ResultCode;
-import com.aiworkbench.config.OpencodeProperties;
+import com.aiworkbench.config.WorkspaceProperties;
 import com.aiworkbench.entity.User;
 import com.aiworkbench.mapper.UserMapper;
 import lombok.RequiredArgsConstructor;
@@ -32,7 +32,7 @@ import java.nio.file.Paths;
 public class UserProvisioningService {
 
     private final UserMapper userMapper;
-    private final OpencodeProperties props;
+    private final WorkspaceProperties props;
 
     /** 系统账户名前缀:aiwb-<userId> */
     private static final String ACCT_PREFIX = "aiwb-";
@@ -108,7 +108,7 @@ public class UserProvisioningService {
      * 均 chmod 0700 + chown -R uid:gid。
      */
     private void ensureDirectories(Long userId, int uid, int gid) {
-        Path parent = Paths.get(props.getWorkspaceRoot(), "users", String.valueOf(userId));
+        Path parent = Paths.get(props.getRoot(), "users", String.valueOf(userId));
         Path ws = parent.resolve("project");
         createDirs(ws); // 同时创建 parent
         // 把工作区初始化为 git 仓库:opencode 项目级技能发现(.opencode/skills/*/SKILL.md)
@@ -123,11 +123,7 @@ public class UserProvisioningService {
         run("chown", "-R", uid + ":" + gid, parent.toString());
 
         Path home = Paths.get(props.getPerUserDataRoot(), String.valueOf(uid), "home");
-        createDirs(home.resolve(".config/opencode/agents"));
-        // opencode 会话存储/状态目录(XDG_DATA_HOME / XDG_STATE_HOME,见 OpencodeProcessManager.configureEnv):
-        // 预建并随 home chown,进程空闲回收后重启仍能恢复旧会话上下文。
-        createDirs(home.resolve(".local/share"));
-        createDirs(home.resolve(".local/state"));
+        createDirs(home);
         run("chmod", "0700", home.toString());
         run("chown", "-R", uid + ":" + gid, home.toString());
     }

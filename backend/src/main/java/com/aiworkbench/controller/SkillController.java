@@ -23,4 +23,10 @@ public class SkillController {
     public R<List<SkillInfoVo>> builtin() {
         return R.ok(skillService.builtinSkills(SecurityUtil.currentUserId()));
     }
+
+    /** 用户自定义技能名(可勾选按会话加载;内置技能默认已加载,不在此列)。 */
+    @GetMapping("/custom")
+    public R<List<String>> custom() {
+        return R.ok(skillService.customSkillNames(SecurityUtil.currentUserId()));
+    }
 }

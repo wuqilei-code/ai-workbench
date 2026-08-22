@@ -7,10 +7,6 @@ import com.aiworkbench.dto.chat.SessionVo;
 import com.aiworkbench.dto.chat.UpdateSessionRequest;
 import com.aiworkbench.entity.ChatSession;
 import com.aiworkbench.mapper.ChatSessionMapper;
-import com.aiworkbench.service.opencode.OpencodeClient;
-import com.aiworkbench.service.opencode.DeepagentsAgentBackend;
-import com.aiworkbench.service.opencode.dto.CreateSessionBody;
-import com.aiworkbench.service.opencode.dto.OpencodeSessionDto;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,25 +21,16 @@ import java.util.Map;
 public class ChatSessionService {
 
     private final ChatSessionMapper chatSessionMapper;
-    private final OpencodeClient opencodeClient;
     private final WorkspaceService workspaceService;
     private final com.aiworkbench.mapper.ChatMessageMapper chatMessageMapper;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     /**
-     * deepagents 轨道桥(懒代理):deepagents 会话不创建 opencode 会话,以合成 "da-" id 落库;
-     * update/delete 时跳过 opencode 侧调用,避免对不存在的实例报错。
-     */
-    @org.springframework.beans.factory.annotation.Autowired
-    @org.springframework.context.annotation.Lazy
-    private DeepagentsAgentBackend deepagentsBackend;
-
-    /**
-     * opencodeSessionId → ChatSession 进程内缓存(访问序 LRU,容量 512)。
+     * agentSessionId → ChatSession 进程内缓存(访问序 LRU,容量 512)。
      * <p>
-     * SSE 流式期间每条 part 事件都会经 {@link #findByOpencodeSessionId} 反查会话,
+     * SSE 流式期间每条事件都会经 {@link #findByAgentSessionId} 反查会话,
      * 直接查库是典型的 N+1(数百次/分钟)。会话 id 全局唯一且不随消息流变化,
-     * 缓存到进程生命周期级别安全。delete/rebind 时主动失效,无脏读。
+     * 缓存到进程生命周期级别安全。delete 时主动失效,无脏读。
      */
     private final Map<String, ChatSession> sessionCache = new java.util.LinkedHashMap<>(128, 0.75f, true) {
         @Override
@@ -53,58 +40,29 @@ public class ChatSessionService {
     };
 
     public SessionVo create(CreateSessionRequest req, Long userId) {
-        if (deepagentsBackend != null && deepagentsBackend.isEnabled()) {
-            // deepagents 轨道:不创建 opencode 会话,合成 "da-" id 落库;
-            // SSE 路由与 DeepagentsAgentBackend 均以此 id 为 key(前端经 events 接口以该 id 订阅)。
-            // 工作区由 agent-service 按 user_id 自管(Java 侧无需 Linux 磁盘 provisioning)。
-            ChatSession s = new ChatSession();
-            s.setUserId(userId);
-            s.setOpencodeSessionId("da-" + java.util.UUID.randomUUID());
-            s.setTitle(req.getTitle() != null ? req.getTitle() : "New Chat");
-            s.setAgent(req.getAgent() != null ? req.getAgent() : "chat");
-            s.setProviderId(isModelRef(req.getProviderId(), req.getModelId()) ? req.getProviderId() : null);
-            s.setModelId(isModelRef(req.getProviderId(), req.getModelId()) ? req.getModelId() : null);
-            s.setArchived(0);
-            s.setPinned(0);
-            chatSessionMapper.insert(s);
-            return toVo(chatSessionMapper.selectById(s.getId()));
-        }
-
+        // deepagents 单轨:不创建远端会话,合成 "da-" id 落库;
+        // SSE 路由与 AgentStreamBridge 均以此 id 为 key(前端经 events 接口以该 id 订阅)。
+        // 工作区由 agent-service 按 user_id 自管;此处仅确保 Linux 侧目录存在(文件 API 可用)。
         workspaceService.ensureUserWorkspace(userId);
-
-        CreateSessionBody body = CreateSessionBody.builder()
-                .title(req.getTitle() != null ? req.getTitle() : "New Chat")
-                .agent(req.getAgent() != null ? req.getAgent() : "chat")
-                .model(isModelRef(req.getProviderId(), req.getModelId())
-                        ? CreateSessionBody.ModelRef.builder()
-                            .id(req.getModelId())
-                            .providerID(req.getProviderId()).build()
-                        : null)
-                .build();
-
-        OpencodeSessionDto oc = opencodeClient.createSession(userId, body);
-        if (oc == null || oc.getId() == null) {
-            throw new BusinessException(ResultCode.OPENCODE_UNAVAILABLE);
-        }
 
         ChatSession s = new ChatSession();
         s.setUserId(userId);
-        s.setOpencodeSessionId(oc.getId());
-        s.setTitle(oc.getTitle() != null ? oc.getTitle() : body.getTitle());
-        s.setAgent(body.getAgent());
+        s.setAgentSessionId("da-" + java.util.UUID.randomUUID());
+        s.setTitle(req.getTitle() != null ? req.getTitle() : "New Chat");
+        s.setAgent(req.getAgent() != null ? req.getAgent() : "chat");
         s.setProviderId(isModelRef(req.getProviderId(), req.getModelId()) ? req.getProviderId() : null);
         s.setModelId(isModelRef(req.getProviderId(), req.getModelId()) ? req.getModelId() : null);
+        s.setSkills(encodeSkills(req.getSkills()));
         s.setArchived(0);
         s.setPinned(0);
         chatSessionMapper.insert(s);
 
         // created_at/updated_at 由 DB DEFAULT 维护,insert 后实体里仍是 null;
         // 回查一次拿到真实时间戳,否则前端新会话的 updatedAt 为空、列表排序会把它归到「更早」沉底。
-        s = chatSessionMapper.selectById(s.getId());
-        return toVo(s);
+        return toVo(chatSessionMapper.selectById(s.getId()));
     }
 
-    /** provider/model 是否构成有效模型引用(空串视为未指定,避免 opencode 拿到空 model ref 卡住 prompt)。 */
+    /** provider/model 是否构成有效模型引用(空串视为未指定)。 */
     private boolean isModelRef(String providerId, String modelId) {
         return providerId != null && !providerId.isBlank()
                 && modelId != null && !modelId.isBlank();
@@ -115,7 +73,6 @@ public class ChatSessionService {
         try {
             com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(jsonText);
             String title = root.path("sessionTitle").asText("导入的会话");
-            // 复用 create 会话逻辑(建 opencode 会话 + 落库 chat_session)
             com.aiworkbench.dto.chat.CreateSessionRequest req = new com.aiworkbench.dto.chat.CreateSessionRequest();
             req.setTitle(title);
             req.setAgent("chat");
@@ -130,9 +87,7 @@ public class ChatSessionService {
                     cm.setRole(m.path("role").asText("assistant"));
                     cm.setContent(m.path("content").asText(""));
                     cm.setStatus(m.path("status").asText("completed"));
-                    if (m.hasNonNull("opencodeMessageId")) {
-                        cm.setOpencodeMessageId(m.path("opencodeMessageId").asText(null));
-                    }
+                    cm.setCompactionSummary(m.path("compactionSummary").asInt(0));
                     if (m.hasNonNull("parts")) {
                         cm.setParts(m.get("parts").toString());
                     }
@@ -200,9 +155,10 @@ public class ChatSessionService {
         return sessionId == null ? null : chatSessionMapper.selectById(sessionId);
     }
 
-    /** 用户最近活跃(未归档)的会话;用于事件缺少 opencodeSessionId 时的归属兜底。无则 null。 */
+    /** 用户最近活跃(未归档)的会话。无则 null。 */
     public ChatSession findMostRecentByUserId(Long userId) {
-        return chatSessionMapper.selectOne(new LambdaQueryWrapper<ChatSession>()                .eq(ChatSession::getUserId, userId)
+        return chatSessionMapper.selectOne(new LambdaQueryWrapper<ChatSession>()
+                .eq(ChatSession::getUserId, userId)
                 .eq(ChatSession::getArchived, 0)
                 .orderByDesc(ChatSession::getUpdatedAt)
                 .last("limit 1"));
@@ -218,23 +174,14 @@ public class ChatSessionService {
         if (req.getTitle() != null) s.setTitle(req.getTitle());
         if (req.getArchived() != null) s.setArchived(req.getArchived());
         if (req.getPinned() != null) s.setPinned(req.getPinned());
+        if (req.getSkills() != null) s.setSkills(encodeSkills(req.getSkills()));
         // 可清空字段:IGNORED 策略保证 null 写入(项目记忆教训)
         if (req.getProviderId() != null || req.getModelId() != null) {
             s.setProviderId(req.getProviderId());
             s.setModelId(req.getModelId());
         }
-        // 切换 agent:opencode 侧切换失败不阻断本地持久化(下一条消息按 s.agent 透传,仍会生效)
+        // 切换 agent:由 agent-service 服务端配置决定,本地仅持久化(下一条消息透传 s.agent)
         if (req.getAgent() != null) {
-            if (deepagentsBackend != null && deepagentsBackend.isEnabled()
-                    && deepagentsBackend.ownsSession(s.getOpencodeSessionId())) {
-                // deepagents:agent 由 agent-service 服务端配置,无 opencode 侧切换
-            } else {
-                try {
-                    opencodeClient.switchAgent(userId, s.getOpencodeSessionId(), req.getAgent());
-                } catch (Exception e) {
-                    log.warn("switch agent on opencode failed (still persist local): {}", e.toString());
-                }
-            }
             s.setAgent(req.getAgent());
         }
         chatSessionMapper.updateById(s);
@@ -243,71 +190,41 @@ public class ChatSessionService {
 
     public void delete(Long sessionId, Long userId) {
         ChatSession s = getOwned(sessionId, userId);
-        if (deepagentsBackend == null || !deepagentsBackend.isEnabled()
-                || !deepagentsBackend.ownsSession(s.getOpencodeSessionId())) {
-            try {
-                opencodeClient.deleteSession(userId, s.getOpencodeSessionId());
-            } catch (Exception e) {
-                log.warn("delete opencode session failed, continue to delete local: {}", e.toString());
-            }
-        }
         chatSessionMapper.deleteById(sessionId);
         // 缓存失效:防止删除后残留会话仍被事件流反查命中
         synchronized (sessionCache) {
-            sessionCache.remove(s.getOpencodeSessionId());
+            sessionCache.remove(s.getAgentSessionId());
         }
     }
 
-    /** 供 SSE 消费者按 opencodeSessionId 反查(可能查不到,如非本实例会话)。走进程内缓存避免流式 N+1。 */
-    public ChatSession findByOpencodeSessionId(String opencodeSessionId) {
-        if (opencodeSessionId == null) {
+    /** 按 agentSessionId 反查(SSE 消费者/桥用;可能查不到,如非本部署会话)。走进程内缓存避免流式 N+1。 */
+    public ChatSession findByAgentSessionId(String agentSessionId) {
+        if (agentSessionId == null) {
             return null;
         }
         synchronized (sessionCache) {
-            ChatSession cached = sessionCache.get(opencodeSessionId);
+            ChatSession cached = sessionCache.get(agentSessionId);
             if (cached != null) {
                 return cached;
             }
         }
         ChatSession s = chatSessionMapper.selectOne(new LambdaQueryWrapper<ChatSession>()
-                .eq(ChatSession::getOpencodeSessionId, opencodeSessionId));
+                .eq(ChatSession::getAgentSessionId, agentSessionId));
         if (s != null) {
             synchronized (sessionCache) {
-                sessionCache.put(opencodeSessionId, s);
+                sessionCache.put(agentSessionId, s);
             }
         }
         return s;
     }
 
-    /**
-     * 重新绑定 opencode 会话 id(Phase 2 lazy re-bind)。
-     * <p>
-     * 切换到 per-user 进程后,旧 chat_session.opencode_session_id 指向的会话状态留在旧 root opencode
-     * 进程里(已不存在),新进程返回 404。sendUserMessage 捕获 404 后建新会话,调本方法把新 id 写回,
-     * 对用户无感(历史消息仍在 MySQL,turn-merging 按新 opencodeSessionId 经 findByOpencodeSessionId 反查)。
-     */
-    public void rebindOpencodeSession(Long sessionId, String newOpencodeSessionId) {
-        ChatSession s = chatSessionMapper.selectById(sessionId);
-        if (s == null) {
-            return;
-        }
-        String oldId = s.getOpencodeSessionId();
-        s.setOpencodeSessionId(newOpencodeSessionId);
-        chatSessionMapper.updateById(s);
-        // 缓存失效:旧 id 已不再指向该会话;新 id 首条事件自然 miss 后回填
-        if (oldId != null) {
-            synchronized (sessionCache) {
-                sessionCache.remove(oldId);
-            }
-        }
-    }
-
     private SessionVo toVo(ChatSession s) {
         return SessionVo.builder()
                 .id(s.getId())
-                .opencodeSessionId(s.getOpencodeSessionId())
+                .agentSessionId(s.getAgentSessionId())
                 .title(s.getTitle())
                 .agent(s.getAgent())
+                .skills(decodeSkills(s.getSkills()))
                 .providerId(s.getProviderId())
                 .modelId(s.getModelId())
                 .archived(s.getArchived())
@@ -315,5 +232,23 @@ public class ChatSessionService {
                 .createdAt(s.getCreatedAt())
                 .updatedAt(s.getUpdatedAt())
                 .build();
+    }
+
+    private String encodeSkills(List<String> skills) {
+        if (skills == null || skills.isEmpty()) return "[]";
+        try {
+            return objectMapper.writeValueAsString(skills);
+        } catch (Exception e) {
+            return "[]";
+        }
+    }
+
+    private List<String> decodeSkills(String json) {
+        if (json == null || json.isBlank()) return List.of();
+        try {
+            return objectMapper.readValue(json, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
+        } catch (Exception e) {
+            return List.of();
+        }
     }
 }

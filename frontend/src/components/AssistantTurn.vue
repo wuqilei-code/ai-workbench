@@ -4,16 +4,14 @@ import { useMessage } from 'naive-ui'
 import { useChatStore } from '@/stores/chat'
 import { useFavoritesStore } from '@/stores/favorites'
 import { renderMarkdown } from '@/utils/markdown'
-import { isFileProducingTool, extractDeliverables, stripDeliverableMarkers } from '@/utils/turns'
+import { isFileProducingTool, collectDeliverables, stripDeliverableMarkers } from '@/utils/turns'
 import { fmtMessageTime } from '@/utils/time'
-import { chatApi } from '@/api/chat'
 import { fileApi } from '@/api/files'
 import JSZip from 'jszip'
-import type { Step, Turn, ToolCall, PendingQuestion, PendingPermission } from '@/types'
+import type { Step, Turn, ToolCall } from '@/types'
 import ChatMessage from './ChatMessage.vue'
 import DeliverableBar from './DeliverableBar.vue'
 import FilePreview from './preview/FilePreview.vue'
-import ReasoningBlock from './ReasoningBlock.vue'
 import ToolCallItem from './ToolCallItem.vue'
 
 const props = defineProps<{
@@ -47,18 +45,14 @@ const runningSeconds = computed(() => chat.streamingElapsedSeconds)
  *  - 其它工具 → "正在执行 xxx…"
  *  - 无工具无文本(纯思考)→ "AI 正在处理中…" */
 const showWorkingHint = computed(() =>
-  !chat.compacting &&
   turnInProgress.value &&
-  !pendingQuestionHost.value &&
-  !pendingPermissionHost.value &&
   (chat.runningActivity?.kind === 'tool' || !activeMessageId.value),
 )
 
 const pendingHint = computed(() => {
-  if (chat.agentStarting) return '正在连接智能体,请稍候…'
   const act = chat.runningActivity
   if (act?.kind === 'tool') {
-    if (isFileProducingTool({ tool: act.tool } as ToolCall)) {
+    if (isFileProducingTool({ name: act.tool } as ToolCall)) {
       return act.arg ? `正在生成/写入内容:${act.arg},请稍候…` : '正在生成/写入内容,请稍候…'
     }
     return act.arg ? `正在执行 ${act.tool}(${act.arg}),请稍候…` : `正在执行 ${act.tool},请稍候…`
@@ -68,8 +62,8 @@ const pendingHint = computed(() => {
 
 /** 某个 step 是否正在流式接收文本 */
 function isStepActive(step: Step | null): boolean {
-  if (!step || !step.message.opencodeMessageId) return false
-  return chat.isStreaming && step.message.opencodeMessageId === activeMessageId.value
+  if (!step || !step.message.agentMessageId) return false
+  return chat.isStreaming && step.message.agentMessageId === activeMessageId.value
 }
 
 /** 取 step 的展示文本:活跃流式步用 streamingText,否则用定稿 narration */
@@ -85,10 +79,7 @@ const simpleMode = computed(
   () =>
     props.turn.steps.length === 0 &&
     !!props.turn.finalAnswer &&
-    props.turn.finalAnswer.toolCalls.length === 0 &&
-    !props.turn.finalAnswer.reasoning &&
-    !pendingQuestionHost.value &&
-    !pendingPermissionHost.value,
+    props.turn.finalAnswer.toolCalls.length === 0,
 )
 
 const simpleMessage = computed(() => {
@@ -199,11 +190,55 @@ const canRegenerate = computed(
 )
 
 /** 本 turn 的结果文件清单(仅 turn 定稿后展示)。
- *  流式期间(turnInProgress)返回空,避免半截标记 `[结果` 闪烁;正则要求整行完整才匹配是第二道保险。
- *  历史 turn 的 turnInProgress 为 false,自动渲染卡片(前提:AI 当时用了标记)。 */
+ *  流式期间(turnInProgress)返回空,避免半截标记 `[结果` 闪烁。
+ *  来源:[结果文件] 标记行 + 已完成的写文件类工具调用(双重兜底,见 collectDeliverables)。 */
 const deliverables = computed(() =>
-  turnInProgress.value ? [] : extractDeliverables(props.turn),
+  turnInProgress.value ? [] : collectDeliverables(props.turn),
 )
+
+// ---------- HITL 人工确认(危险操作) ----------
+
+/** 本 turn 内待用户允许/拒绝的权限请求(挂在其 assistant 消息的 parts.pendingPermission 上) */
+const turnPending = computed(() => {
+  const steps: Step[] = [...props.turn.steps]
+  if (props.turn.finalAnswer) steps.push(props.turn.finalAnswer)
+  for (const s of steps) {
+    const pp = s.message.parts?.pendingPermission
+    if (pp && !pp._replied) return pp
+  }
+  return null
+})
+
+const permSubmitting = ref(false)
+async function onPerm(decision: 'approve' | 'reject') {
+  const pp = turnPending.value
+  if (!pp || permSubmitting.value) return
+  if (!props.sessionId) {
+    msg.error('会话未就绪,请刷新后重试')
+    return
+  }
+  permSubmitting.value = true
+  try {
+    const ok = await chat.replyPermission(pp.requestId, decision)
+    if (!ok) msg.warning('确认已失效或生成已中断,可能需要重新发送')
+    else if (pp) pp._replied = true
+  } catch (e: any) {
+    msg.error(e?.response?.data?.message || e?.message || '提交确认失败,请重试')
+  } finally {
+    permSubmitting.value = false
+  }
+}
+
+/** 权限请求的展示用参数摘要(截断,单行) */
+const permArgsText = computed(() => {
+  const args = turnPending.value?.tool?.args
+  if (args == null) return ''
+  try {
+    return JSON.stringify(args).slice(0, 240)
+  } catch {
+    return String(args).slice(0, 240)
+  }
+})
 
 // ---------- 折叠控制(受控 expanded-names)----------
 
@@ -244,9 +279,6 @@ function previewFile(path: string) {
 function closePreview() {
   previewPath.value = null
 }
-
-/** 浏览器截图放大预览(base64/data URI,不经文件服务) */
-const zoomImage = ref<string | null>(null)
 
 /** 一键下载本 turn 全部结果文件:打包成 zip 一次下载,绕开浏览器多文件下载拦截。
  *  复用 fileApi.fetchBlob 拿每个文件 blob → JSZip 内存打包 → 单次 a.click() 触发下载。 */
@@ -312,204 +344,7 @@ function stepHtml(step: Step): string {
   return renderMarkdown(displayContent(step))
 }
 
-// ---------- pending question / permission 收集 ----------
-
-interface PendingQuestionHost {
-  pq: PendingQuestion
-}
-
-interface PendingPermissionHost {
-  pp: PendingPermission
-}
-
-const pendingQuestionHost = computed<PendingQuestionHost | null>(() => {
-  // pending 仅对当前(最后一个)轮次有意义;历史轮次里的 pendingQuestion 早已失效,
-  // 重新加载历史时 _replied 本地态会丢失,若不拦截会重复弹框。
-  if (!isLastTurn.value) return null
-  const allSteps: Step[] = [...props.turn.steps]
-  if (props.turn.finalAnswer) allSteps.push(props.turn.finalAnswer)
-  for (const s of allSteps) {
-    const pq = s.message.parts?.pendingQuestion
-    if (pq && !pq._replied) {
-      return { pq }
-    }
-  }
-  return null
-})
-
-/** 当前轮次所有未回复的权限(一条命令可能同时触发多个:external_directory + bash 等,逐一展示) */
-const pendingPermissions = computed<PendingPermission[]>(() => {
-  if (!isLastTurn.value) return []
-  const allSteps: Step[] = [...props.turn.steps]
-  if (props.turn.finalAnswer) allSteps.push(props.turn.finalAnswer)
-  const out: PendingPermission[] = []
-  for (const s of allSteps) {
-    for (const pp of s.message.parts?.pendingPermissions || []) {
-      if (!pp._replied) out.push(pp)
-    }
-  }
-  return out
-})
-
-const pendingPermissionHost = computed<PendingPermissionHost | null>(() => {
-  const first = pendingPermissions.value[0]
-  return first ? { pp: first } : null
-})
-
-// ---------- 本地选项状态 ----------
-
-const singleSelected = ref<Record<number, string | null>>({})
-const multiSelected = ref<Record<number, string[]>>({})
-const customTexts = ref<Record<number, string>>({})
-const submittingQuestion = ref(false)
-const submittingPermission = ref(false)
-
-function getSingleSelected(qIndex: number): string | null {
-  return singleSelected.value[qIndex] ?? null
-}
-function setSingleSelected(qIndex: number, val: string | null) {
-  singleSelected.value = { ...singleSelected.value, [qIndex]: val }
-}
-function getMultiSelected(qIndex: number): string[] {
-  return multiSelected.value[qIndex] ?? []
-}
-function setMultiSelected(qIndex: number, val: string[]) {
-  multiSelected.value = { ...multiSelected.value, [qIndex]: val }
-}
-function getCustomText(qIndex: number): string {
-  return customTexts.value[qIndex] ?? ''
-}
-function setCustomText(qIndex: number, val: string) {
-  customTexts.value = { ...customTexts.value, [qIndex]: val }
-}
-
-function collectAnswers(host: PendingQuestionHost): string[][] {
-  const { pq } = host
-  return pq.questions.map((q, i) => {
-    const result: string[] = []
-    if (q.multiple) {
-      const arr = getMultiSelected(i)
-      for (const label of arr) result.push(label)
-    } else {
-      const v = getSingleSelected(i)
-      if (v) result.push(v)
-    }
-    if (q.custom) {
-      const c = getCustomText(i).trim()
-      if (c) result.push(c)
-    }
-    return result
-  })
-}
-
-function clearStepPendingQuestion(requestId: string) {
-  const allSteps: Step[] = [...props.turn.steps]
-  if (props.turn.finalAnswer) allSteps.push(props.turn.finalAnswer)
-  for (const s of allSteps) {
-    if (s.message.parts?.pendingQuestion?.requestId === requestId) {
-      if (s.message.parts) {
-        ;(s.message.parts as any).pendingQuestion = null
-      }
-    }
-  }
-}
-
-function clearStepPendingPermission(requestId: string) {
-  const allSteps: Step[] = [...props.turn.steps]
-  if (props.turn.finalAnswer) allSteps.push(props.turn.finalAnswer)
-  for (const s of allSteps) {
-    const list = s.message.parts?.pendingPermissions
-    if (list && list.some((p) => p.requestId === requestId)) {
-      if (s.message.parts) {
-        const rest = list.filter((p) => p.requestId !== requestId)
-        ;(s.message.parts as any).pendingPermissions = rest.length ? rest : null
-      }
-    }
-  }
-}
-
-async function submitQuestion(host: PendingQuestionHost) {
-  console.log('[AssistantTurn] submitQuestion clicked', {
-    sessionId: props.sessionId,
-    requestId: host.pq.requestId,
-    answers: collectAnswers(host),
-  })
-  if (!props.sessionId) {
-    msg.error('会话未就绪,请刷新页面后重试')
-    return
-  }
-  if (submittingQuestion.value) return
-  const { pq } = host
-  const answers = collectAnswers(host)
-  submittingQuestion.value = true
-  try {
-    await chatApi.replyQuestion(props.sessionId, pq.requestId, answers)
-    pq._replied = true
-    msg.success('已提交回答,AI 继续生成中…')
-    setTimeout(() => clearStepPendingQuestion(pq.requestId), 100)
-    // 恢复流式状态:question.asked 时 isStreaming 被设为 false 且不更新活动时间,
-    // 提交后用 resumeStreaming() 同时重置 isStreaming + 活动计时器,
-    // 防止看门狗因 lastStreamActivityAt 过期而误触发 finishStreaming()
-    chat.resumeStreaming()
-  } catch (e: any) {
-    console.error('[AssistantTurn] submitQuestion failed', e)
-    msg.error(e?.response?.data?.message || e?.message || '提交回答失败,请重试')
-  } finally {
-    submittingQuestion.value = false
-  }
-}
-
-async function rejectQuestion(host: PendingQuestionHost) {
-  console.log('[AssistantTurn] rejectQuestion clicked', {
-    sessionId: props.sessionId,
-    requestId: host.pq.requestId,
-  })
-  if (!props.sessionId) {
-    msg.error('会话未就绪,请刷新页面后重试')
-    return
-  }
-  if (submittingQuestion.value) return
-  const { pq } = host
-  submittingQuestion.value = true
-  try {
-    await chatApi.rejectQuestion(props.sessionId, pq.requestId)
-    pq._replied = true
-    msg.info('已跳过问题')
-    setTimeout(() => clearStepPendingQuestion(pq.requestId), 100)
-  } catch (e: any) {
-    console.error('[AssistantTurn] rejectQuestion failed', e)
-    msg.error(e?.response?.data?.message || e?.message || '操作失败,请重试')
-  } finally {
-    submittingQuestion.value = false
-  }
-}
-
-async function submitPermission(pp: PendingPermission, reply: 'once' | 'always' | 'reject') {
-  console.log('[AssistantTurn] submitPermission clicked', {
-    sessionId: props.sessionId,
-    requestId: pp.requestId,
-    reply,
-  })
-  if (!props.sessionId) {
-    msg.error('会话未就绪,请刷新页面后重试')
-    return
-  }
-  if (submittingPermission.value) return
-  submittingPermission.value = true
-  try {
-    await chatApi.replyPermission(props.sessionId, pp.requestId, reply)
-    pp._replied = true
-    msg.success(reply === 'reject' ? '已拒绝权限' : reply === 'always' ? '已授予权限' : '已允许本次')
-    setTimeout(() => clearStepPendingPermission(pp.requestId), 100)
-    // 恢复流式状态(同 submitQuestion,用 resumeStreaming 防看门狗误触发)
-    chat.resumeStreaming()
-  } catch (e: any) {
-    console.error('[AssistantTurn] submitPermission failed', e)
-    msg.error(e?.response?.data?.message || e?.message || '操作失败,请重试')
-  } finally {
-    submittingPermission.value = false
-  }
-}
+// (deepagents 无提问/权限环节:原 pending question/permission 收集与提交逻辑已移除)
 </script>
 
 <template>
@@ -543,7 +378,7 @@ async function submitPermission(pp: PendingPermission, reply: 'once' | 'always' 
       </div>
       <!-- 思考过程(可折叠) -->
       <NCollapse
-        v-if="turn.steps.length > 0 || (turn.finalAnswer && (turn.finalAnswer.toolCalls.length || turn.finalAnswer.reasoning))"
+        v-if="turn.steps.length > 0 || (turn.finalAnswer && turn.finalAnswer.toolCalls.length)"
         :expanded-names="expandedNames"
         :display-directive="'show'"
         @update:expanded-names="handleExpand"
@@ -556,7 +391,6 @@ async function submitPermission(pp: PendingPermission, reply: 'once' | 'always' 
             </span>
           </template>
           <div v-for="(step, i) in turn.steps" :key="step.message.id ?? i" class="step">
-            <ReasoningBlock :text="step.reasoning || ''" :is-streaming="step.message.opencodeMessageId === chat.streamingReasoningMsgId" />
             <div
               v-if="displayContent(step)"
               class="step-narration"
@@ -566,47 +400,22 @@ async function submitPermission(pp: PendingPermission, reply: 'once' | 'always' 
             <div v-if="step.toolCalls.length" class="tool-calls">
               <ToolCallItem
                 v-for="tc in step.toolCalls"
-                :key="tc.partId || tc.tool"
+                :key="tc.id || tc.name"
                 :tc="tc"
                 @download="downloadFile"
-              />
-            </div>
-            <div v-if="step.images.length" class="step-images">
-              <img
-                v-for="(im, ii) in step.images"
-                :key="im.partId ?? ii"
-                :src="im.data"
-                class="step-img"
-                alt="浏览器截图"
-                loading="lazy"
-                title="点击放大"
-                @click="zoomImage = im.data ?? null"
               />
             </div>
           </div>
           <div
-            v-if="turn.finalAnswer && (turn.finalAnswer.toolCalls.length || turn.finalAnswer.reasoning)"
+            v-if="turn.finalAnswer && turn.finalAnswer.toolCalls.length"
             class="step"
           >
-            <ReasoningBlock :text="turn.finalAnswer.reasoning || ''" :is-streaming="turn.finalAnswer.message.opencodeMessageId === chat.streamingReasoningMsgId" />
             <div class="tool-calls" v-if="turn.finalAnswer.toolCalls.length">
               <ToolCallItem
                 v-for="tc in turn.finalAnswer.toolCalls"
-                :key="tc.partId || tc.tool"
+                :key="tc.id || tc.name"
                 :tc="tc"
                 @download="downloadFile"
-              />
-            </div>
-            <div v-if="turn.finalAnswer.images.length" class="step-images">
-              <img
-                v-for="(im, ii) in turn.finalAnswer.images"
-                :key="im.partId ?? ii"
-                :src="im.data"
-                class="step-img"
-                alt="浏览器截图"
-                loading="lazy"
-                title="点击放大"
-                @click="zoomImage = im.data ?? null"
               />
             </div>
           </div>
@@ -671,6 +480,29 @@ async function submitPermission(pp: PendingPermission, reply: 'once' | 'always' 
         </template>
       </div>
 
+      <!-- 人工确认:危险操作需用户允许/拒绝,生成在此暂停 -->
+      <div v-if="turnPending" class="perm-block">
+        <div class="perm-head">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>
+          <span class="perm-title">需要您的允许</span>
+        </div>
+        <div class="perm-body">
+          <div class="perm-tool">
+            <span class="perm-tool-name">{{ turnPending.tool?.name || 'tool' }}</span>
+            <span v-if="turnPending.tool?.description" class="perm-desc">{{ turnPending.tool.description }}</span>
+          </div>
+          <pre v-if="permArgsText" class="perm-args">{{ permArgsText }}</pre>
+          <div class="perm-actions">
+            <n-button size="small" :loading="permSubmitting" :disabled="permSubmitting" @click="onPerm('reject')">
+              拒绝
+            </n-button>
+            <n-button size="small" type="primary" :loading="permSubmitting" :disabled="permSubmitting" @click="onPerm('approve')">
+              允许执行
+            </n-button>
+          </div>
+        </div>
+      </div>
+
       <!-- 结果文件区:AI 声明的交付文件,点击预览 -->
       <DeliverableBar
         v-if="deliverables.length"
@@ -680,163 +512,6 @@ async function submitPermission(pp: PendingPermission, reply: 'once' | 'always' 
         @download="downloadFile"
         @downloadAll="downloadAllFiles"
       />
-
-      <!-- Pending Question 区块 (自定义 div,不用 n-alert 避免 overflow) -->
-      <div
-        v-if="pendingQuestionHost"
-        class="pending-block question-block"
-      >
-        <div class="pending-block-header">
-          <span class="pending-icon">⚠️</span>
-          <span class="pending-title">需要您回答</span>
-        </div>
-        <div class="pending-block-body">
-          <div
-            v-for="(q, qi) in pendingQuestionHost.pq.questions"
-            :key="qi"
-            class="question-item"
-          >
-            <div class="question-title">
-              <strong v-if="q.header">{{ q.header }}</strong>
-              <span v-if="q.header"> — </span>
-              <span>{{ q.question }}</span>
-              <span class="question-type-tag">
-                ({{ q.multiple ? '可多选' : '单选' }})
-              </span>
-            </div>
-
-            <template v-if="q.multiple">
-              <n-checkbox-group
-                :value="getMultiSelected(qi)"
-                @update:value="(val: string[]) => setMultiSelected(qi, val)"
-              >
-                <div class="option-list">
-                  <n-checkbox
-                    v-for="opt in q.options"
-                    :key="opt.label"
-                    :value="opt.label"
-                  >
-                    <span>{{ opt.label }}</span>
-                    <span v-if="opt.description" class="opt-desc">
-                      — {{ opt.description }}
-                    </span>
-                  </n-checkbox>
-                </div>
-              </n-checkbox-group>
-            </template>
-            <template v-else>
-              <n-radio-group
-                :value="getSingleSelected(qi)"
-                @update:value="(val: string | null) => setSingleSelected(qi, val)"
-              >
-                <div class="option-list">
-                  <n-radio
-                    v-for="opt in q.options"
-                    :key="opt.label"
-                    :value="opt.label"
-                  >
-                    <span>{{ opt.label }}</span>
-                    <span v-if="opt.description" class="opt-desc">
-                      — {{ opt.description }}
-                    </span>
-                  </n-radio>
-                </div>
-              </n-radio-group>
-            </template>
-
-            <div v-if="q.custom" class="custom-input-wrap">
-              <n-input
-                :value="getCustomText(qi)"
-                @update:value="(val: string) => setCustomText(qi, val)"
-                placeholder="其他/自定义（请输入）"
-                clearable
-              />
-            </div>
-          </div>
-
-          <div class="pending-actions">
-            <n-button
-              quaternary
-              size="small"
-              :disabled="submittingQuestion"
-              @click="rejectQuestion(pendingQuestionHost)"
-            >
-              拒绝/跳过
-            </n-button>
-            <n-button
-              type="primary"
-              size="small"
-              :loading="submittingQuestion"
-              @click="submitQuestion(pendingQuestionHost)"
-            >
-              提交回答
-            </n-button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Pending Permission 区块 (自定义 div);多条权限逐一展示 -->
-      <div
-        v-for="pp in pendingPermissions"
-        :key="pp.requestId"
-        class="pending-block permission-block"
-      >
-        <div class="pending-block-header">
-          <span class="pending-icon">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1 1 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>
-          </span>
-          <span class="pending-title">请求权限</span>
-        </div>
-        <div class="pending-block-body">
-          <template v-if="pp.version === 'v1'">
-            <div class="perm-title">
-              {{ (pp as any).permission }}
-            </div>
-            <ul v-if="(pp as any).patterns?.length" class="perm-list">
-              <li v-for="(p, pi) in (pp as any).patterns" :key="pi">
-                {{ p }}
-              </li>
-            </ul>
-          </template>
-          <template v-else>
-            <div class="perm-title">
-              操作: <strong>{{ (pp as any).action }}</strong>
-            </div>
-            <ul v-if="(pp as any).resources?.length" class="perm-list">
-              <li v-for="(r, ri) in (pp as any).resources" :key="ri">
-                {{ r }}
-              </li>
-            </ul>
-          </template>
-
-          <div class="pending-actions">
-            <n-button
-              size="small"
-              type="error"
-              quaternary
-              :disabled="submittingPermission"
-              @click="submitPermission(pp, 'reject')"
-            >
-              拒绝
-            </n-button>
-            <n-button
-              size="small"
-              :disabled="submittingPermission"
-              @click="submitPermission(pp, 'once')"
-            >
-              允许本次
-            </n-button>
-            <n-button
-              size="small"
-              type="primary"
-              :loading="submittingPermission"
-              @click="submitPermission(pp, 'always')"
-            >
-              始终允许
-            </n-button>
-          </div>
-        </div>
-      </div>
     </div>
   </div>
 
@@ -853,24 +528,6 @@ async function submitPermission(pp: PendingPermission, reply: 'once' | 'always' 
     <FilePreview
       v-if="previewPath"
       :path="previewPath"
-    />
-  </n-modal>
-
-  <!-- 浏览器截图放大预览 -->
-  <n-modal
-    :show="!!zoomImage"
-    preset="card"
-    title="浏览器截图"
-    :style="{ width: 'min(92vw, 1100px)' }"
-    :mask-closable="true"
-    :bordered="false"
-    @update:show="(v) => { if (!v) zoomImage = null }"
-  >
-    <img
-      v-if="zoomImage"
-      :src="zoomImage"
-      class="zoom-img"
-      alt="浏览器截图"
     />
   </n-modal>
 </template>
@@ -913,6 +570,51 @@ async function submitPermission(pp: PendingPermission, reply: 'once' | 'always' 
   gap: 8px;
   margin-bottom: 6px;
   min-height: 20px;
+}
+
+/* 人工确认卡:危险操作待用户允许/拒绝 */
+.perm-block {
+  max-width: 80%;
+  margin-top: 10px;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: var(--radius-sm);
+  background: rgba(245, 158, 11, 0.06);
+  overflow: hidden;
+}
+.perm-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--warn);
+  font-size: 13px;
+  font-weight: 600;
+}
+.perm-title { display: inline-flex; align-items: center; gap: 6px; }
+.perm-body { padding: 8px 12px; }
+.perm-tool { display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--text); }
+.perm-tool-name { font-family: ui-monospace, monospace; font-weight: 600; color: var(--accent); }
+.perm-desc { color: var(--text-2); font-size: 12px; }
+.perm-args {
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow: auto;
+}
+.perm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
 }
 .author { font-size: 13px; font-weight: 600; color: var(--text); }
 .msg-time { font-size: 11px; color: var(--text-3); }

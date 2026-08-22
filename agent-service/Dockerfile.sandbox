@@ -1,0 +1,28 @@
+# 合并沙箱镜像:execute 执行环境 + 共享浏览器(CDP/playwright-mcp)同一容器。
+# 基础直接用旧 ai-workbench-agent(python3 + 文档/数据处理依赖 + node + playwright + chromium 均已烘焙,
+# 无需重新下载浏览器),叠加浏览器常驻入口与沙箱用户设置。
+ARG DOCKER_REGISTRY=docker.m.daocloud.io
+FROM ai-workbench-agent AS base
+
+# 浏览器常驻入口:shared Chromium(CDP 转发 9223)+ playwright-mcp(8931),常驻 tail
+COPY docker/opencode/browser-entrypoint.sh /opt/aiworkbench/browser-entrypoint.sh
+RUN chmod +x /opt/aiworkbench/browser-entrypoint.sh
+
+# 中文字体:base 已含 simhei.ttf(/usr/share/fonts/truetype/simhei.ttf),无需重复拷贝。
+
+# 非 root 运行用户;HOME 指向挂载进来的工作区(可写);禁运行期自行安装包(防御纵深)
+RUN groupadd -g 10001 agent && useradd -m -u 10001 -g 10001 -s /bin/sh agent \
+  && rm -f /usr/local/bin/pip /usr/local/bin/pip3 \
+  && rm -rf /usr/local/lib/python3*/site-packages/pip* \
+  && rm -rf /usr/local/lib/python3*/ensurepip /usr/lib/python3*/ensurepip
+
+USER 10001:10001
+ENV HOME=/workspace \
+    MPLCONFIGDIR=/tmp/mpl \
+    PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/ms-playwright \
+    PLAYWRIGHT_MCP_ISOLATED=false
+WORKDIR /workspace
+
+# 出口:浏览器+尾随常驻由入口脚本负责;容器由 agent-service 以显式 entrypoint 创建
+ENTRYPOINT ["/opt/aiworkbench/browser-entrypoint.sh"]
+CMD []

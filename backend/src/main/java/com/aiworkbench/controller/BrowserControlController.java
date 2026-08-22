@@ -6,7 +6,7 @@ import com.aiworkbench.common.ResultCode;
 import com.aiworkbench.common.SecurityUtil;
 import com.aiworkbench.dto.browser.BrowserActionRequest;
 import com.aiworkbench.service.opencode.BrowserMcpService;
-import com.aiworkbench.service.opencode.process.OpencodeProcessManager;
+import com.aiworkbench.service.agent.BrowserContainerManager;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -57,7 +57,7 @@ public class BrowserControlController {
     private static final long ERROR_THROTTLE_MS = 5000;
 
     private final BrowserMcpService browserMcpService;
-    private final OpencodeProcessManager opencodeProcessManager;
+    private final BrowserContainerManager browserContainerManager;
     private final ObjectMapper objectMapper;
 
     @GetMapping(value = "/live", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -82,7 +82,7 @@ public class BrowserControlController {
             throw new BusinessException(ResultCode.BAD_REQUEST.getCode(),
                     "不允许的浏览器接管工具: " + req.getTool());
         }
-        if (!opencodeProcessManager.isReady(userId)) {
+        if (!browserContainerManager.isReady(userId)) {
             throw new BusinessException(ResultCode.OPENCODE_UNAVAILABLE.getCode(), "agent 未启动,请先发起会话");
         }
         Map<String, Object> result = browserMcpService.callTool(userId, req.getTool(), req.getArgs());
@@ -96,7 +96,7 @@ public class BrowserControlController {
         long lastErrorAt = 0;
         try {
             while (true) {
-                if (!opencodeProcessManager.isReady(userId)) {
+                if (!browserContainerManager.isReady(userId)) {
                     sendState(emitter, "no-agent");
                     sleep(FRAME_INTERVAL_MS);
                     continue;

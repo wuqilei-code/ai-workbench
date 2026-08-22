@@ -27,35 +27,21 @@ mybatis-plus:
       logic-delete-value: 1
       logic-not-delete-value: 0
 
-# opencode 集成
-opencode:
-  username: ${OPENCODE_SERVER_USERNAME:opencode}
-  password: ${OPENCODE_SERVER_PASSWORD:changeme}
-  workspace-root: ${OPENWORK_WORKSPACE:/workspace}
-  # Phase 1 per-user uid 隔离
-  uid-base: ${OPENCODE_UID_BASE:100000}
-  port-min: ${OPENCODE_PORT_MIN:14100}
-  port-max: ${OPENCODE_PORT_MAX:14399}
-  idle-timeout-seconds: ${OPENCODE_IDLE_TIMEOUT:900}
-  per-user-data-root: ${OPENCODE_PER_USER_DATA_ROOT:/data/users}
-  template-dir: ${OPENCODE_TEMPLATE_DIR:/data/opencode/template}
-  # Phase 3 每用户 Docker 容器隔离(容器模式)
-  container-mode: ${OPENCODE_CONTAINER_MODE:false}
-  agent-image: ${AGENT_IMAGE:ai-workbench-app}
-  agent-cpus: ${OPENCODE_AGENT_CPUS:1}
-  agent-memory-mb: ${OPENCODE_AGENT_MEMORY_MB:1024}
-  agent-stop-grace-seconds: ${OPENCODE_AGENT_STOP_GRACE:5}
-  agent-network: ${OPENCODE_AGENT_NETWORK:aiwb-agents}
-  # bash 工具默认超时(ms);看门狗 stuck-tool-timeout-ms 须大于它,保证超时后 agent 能继续而非被看门狗 abort
-  bash-timeout-ms: ${OPENCODE_BASH_TIMEOUT_MS:300000}
-  stuck-tool-timeout-ms: ${OPENCODE_STUCK_TOOL_TIMEOUT_MS:360000}
-  # 定时任务队列(JobScheduler/JobQueueDispatcher)
-  job-max-concurrent: ${OPENCODE_JOB_MAX_CONCURRENT:1}
-  job-image: ${AGENT_IMAGE:ai-workbench-agent}
-  job-cpus: ${OPENCODE_JOB_CPUS:1}
-  job-memory-mb: ${OPENCODE_JOB_MEMORY_MB:1024}
-  job-timeout-minutes: ${OPENCODE_JOB_TIMEOUT_MINUTES:30}
-  job-sweep-ms: ${OPENCODE_JOB_SWEEP_MS:5000}
+# 用户工作区 / uid 隔离(deepagents 单轨)
+workspace:
+  root: ${WORKSPACE_ROOT:/workspace}
+  per-user-data-root: ${WORKSPACE_PER_USER_DATA_ROOT:/data/users}
+  uid-base: ${WORKSPACE_UID_BASE:100000}
+
+# deepagents agent-service(base-url 供 AgentStreamBridge / JobAgentExecutor)
+deepagents:
+  base-url: ${DEEPAGENTS_BASE_URL:http://localhost:8000}
+
+# 定时任务队列(JobScheduler/JobQueueDispatcher;执行由 agent-service SSE 承担)
+agent-jobs:
+  max-concurrent: ${AGENT_JOBS_MAX_CONCURRENT:1}
+  timeout-minutes: ${AGENT_JOBS_TIMEOUT_MINUTES:30}
+  sweep-ms: ${AGENT_JOBS_SWEEP_MS:5000}
 
 # JWT
 jwt:
@@ -64,11 +50,10 @@ jwt:
 
 # 应用
 app:
-  # 对话后端引擎:opencode(默认) | deepagents
-  # deepagents 轨道由 python agent-service 驱动(每用户工作区/技能/脚本),不消耗 opencode 进程/容器。
-  agent-backend: ${AGENT_BACKEND:opencode}
   registration:
     enabled: ${APP_REGISTRATION_ENABLED:true}
+  # agent-service 内部调用令牌(create_skill 工具回写技能库);compose 两容器注入同一值
+  internal-token: ${INTERNAL_TOKEN:aiwb-internal-dev}
   crypto:
     # AES-256 密钥,Base64 编码的 32 字节;留空时用内置 dev key(仅开发,生产必须注入)
     aes-key: ${APP_AES_KEY:}

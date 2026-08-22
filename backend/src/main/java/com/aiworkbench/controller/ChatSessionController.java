@@ -1,9 +1,10 @@
 package com.aiworkbench.controller;
 
+import com.aiworkbench.common.BusinessException;
 import com.aiworkbench.common.R;
+import com.aiworkbench.common.ResultCode;
 import com.aiworkbench.common.SecurityUtil;
 import com.aiworkbench.common.audit.AuditLog;
-import com.aiworkbench.dto.chat.AgentVo;
 import com.aiworkbench.dto.chat.CreateSessionRequest;
 import com.aiworkbench.dto.chat.SessionVo;
 import com.aiworkbench.dto.chat.UpdateSessionRequest;
@@ -29,7 +30,6 @@ import java.util.Map;
 public class ChatSessionController {
 
     private final ChatSessionService chatSessionService;
-    private final com.aiworkbench.service.opencode.OpencodeClient opencodeClient;
 
     @PostMapping
     @AuditLog(action = "创建会话")
@@ -43,49 +43,9 @@ public class ChatSessionController {
     public R<SessionVo> importSession(@RequestBody Map<String, String> body) {
         String json = body != null ? body.get("json") : null;
         if (json == null || json.isBlank()) {
-            throw new com.aiworkbench.common.BusinessException(
-                    com.aiworkbench.common.ResultCode.BAD_REQUEST.getCode(), "json 不能为空");
+            throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "json 不能为空");
         }
         return R.ok(chatSessionService.importSession(SecurityUtil.currentUserId(), json));
-    }
-
-    /**
-     * 预热:进入会话页时调用,提前拉起该用户 opencode 进程(幂等,阻塞至就绪),
-     * 避免首条消息冷启动等待。不审计(高频无业务语义)。
-     */
-    /**
-     * 可用 agent 列表(per-user,过滤 hidden 与 subagent)。
-     * 注意:字面量 /agents 优先于 /{id} 匹配,无需会话上下文。
-     */
-    @GetMapping("/agents")
-    public R<List<AgentVo>> agents() {
-        Long userId = SecurityUtil.currentUserId();
-        List<AgentVo> agents = opencodeClient.listAgents(userId).stream()
-                .filter(a -> !Boolean.TRUE.equals(a.getHidden()))
-                .filter(a -> !"subagent".equals(a.getMode()))
-                .map(a -> AgentVo.builder()
-                        .name(a.getName())
-                        .description(a.getDescription())
-                        .mode(a.getMode())
-                        .build())
-                .toList();
-        return R.ok(agents);
-    }
-
-    @PostMapping("/{id}/warmup")
-    public R<Void> warmup(@PathVariable Long id) {
-        Long userId = SecurityUtil.currentUserId();
-        chatSessionService.getOwned(id, userId);
-        opencodeClient.warmup(userId);
-        return R.ok();
-    }
-
-    /** 按当前用户预热 agent(无需指定会话)。登录/进入主页时调用,提前拉起该用户 opencode
-     *  实例,避免点「新建会话」时才冷启动容器而等待数秒。高频,不审计。 */
-    @PostMapping("/warmup")
-    public R<Void> warmupMine() {
-        opencodeClient.warmup(SecurityUtil.currentUserId());
-        return R.ok();
     }
 
     @GetMapping

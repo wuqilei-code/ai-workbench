@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
-import { chatApi } from '@/api/chat'
 
 /**
  * 共享浏览器实时画面(仅供查看 + 接管):
@@ -103,20 +102,10 @@ function handleState(state: string) {
   if (state === 'no-agent') {
     stateText.value = '浏览器引擎启动中,首次约需 10~30 秒…'
     stateOk.value = false
-    warmup()
-    // 兜底重试:即使后端 warmup 未触发/失败,周期重试直至就绪
-    if (!warmupTimer) {
-      warmupTimer = setInterval(() => { warmup() }, 15000)
-    }
   } else if (state === 'empty') {
     stateText.value = ''
     stateOk.value = true
   }
-}
-
-/** 启动/预热该用户 agent 容器:浏览器 daemon 就绪后帧流自动推回 */
-function warmup() {
-  chatApi.warmupMine().catch(() => {})
 }
 
 function stopWarmupRetry() {
@@ -270,8 +259,7 @@ watch(
 )
 
 onMounted(() => {
-  // 打开面板即拉起 agent 容器,避免「no-agent」白屏等待
-  warmup()
+  // 打开面板即连 WebSocket:后端按需拉起浏览器容器,避免「no-agent」白屏等待
   connect()
   // 自动唤出模式:挂载即开始推流(不必等鼠标移入),让用户立即看到浏览器画面
   if (props.autoActive) {
@@ -283,7 +271,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (tickTimer) { clearInterval(tickTimer); tickTimer = null }
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
-  if (warmupTimer) { clearInterval(warmupTimer); warmupTimer = null }
   if (ws) { ws.close(); ws = null }
 })
 </script>

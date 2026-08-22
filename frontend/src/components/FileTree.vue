@@ -18,11 +18,14 @@ const props = withDefaults(defineProps<{
   changedPaths?: string[]
   /** 自动刷新间隔(ms);>0 时轮询当前目录,文件变化后工作区自动更新。默认 5s */
   pollMs?: number
+  /** 顶层目录名黑名单(如内置技能,不显示在用户技能区);仅过滤当前目录的直接子节点 */
+  excludeNames?: string[]
 }>(), {
   root: '',
   skillsMode: false,
   changedPaths: () => [],
   pollMs: 5000,
+  excludeNames: () => [],
 })
 
 const emit = defineEmits<{ (e: 'askAI', path: string): void }>()
@@ -471,8 +474,13 @@ function onSearchInput() {
   }, 300)
 }
 
-/** 实际展示的节点:搜索模式用结果,否则用当前目录 */
-const displayNodes = computed<FileNode[]>(() => searchResults.value ?? nodes.value)
+/** 实际展示的节点:搜索模式用结果,否则用当前目录;过滤 excludeNames 黑名单顶层项 */
+const displayNodes = computed<FileNode[]>(() => {
+  const list = searchResults.value ?? nodes.value
+  const exclude = props.excludeNames
+  if (!exclude || exclude.length === 0) return list
+  return list.filter((n) => !exclude.includes(n.name))
+})
 const isSearchMode = computed(() => searchResults.value !== null)
 
 /** 该节点是否属于本会话 AI 改动文件(高亮标记)。深度优先判完整路径是否命中。 */

@@ -10,7 +10,6 @@ import com.aiworkbench.dto.auth.UserVo;
 import com.aiworkbench.entity.User;
 import com.aiworkbench.mapper.UserMapper;
 import com.aiworkbench.security.JwtTokenProvider;
-import com.aiworkbench.service.opencode.process.OpencodeProcessManager;
 import com.aiworkbench.service.user.UserProvisioningService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
@@ -31,7 +30,6 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
     private final UserProvisioningService userProvisioningService;
-    private final OpencodeProcessManager processManager;
 
     @Value("${app.registration.enabled:true}")
     private boolean registrationEnabled;
@@ -140,13 +138,6 @@ public class UserService {
         upd.setId(userId);
         upd.setStatus(target);
         userMapper.updateById(upd);
-        if (target == 0) {
-            try {
-                processManager.stop(userId);
-            } catch (Exception e) {
-                log.warn("stop agent for disabled user {} failed: {}", userId, e.toString());
-            }
-        }
         log.info("admin {} set user {} status={}", operatorId, userId, target);
     }
 

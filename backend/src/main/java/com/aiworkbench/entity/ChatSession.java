@@ -16,10 +16,14 @@ public class ChatSession {
     private Long id;
 
     private Long userId;
-    /** opencode 的 session id */
-    private String opencodeSessionId;
+    /** 执行轨道的外部会话 id(deepagents 合成 "da-" 前缀) */
+    @TableField("agent_session_id")
+    private String agentSessionId;
     private String title;
     private String agent;
+
+    /** 会话勾选启用的自定义技能名(JSON 数组文本,如 ["data-cleaner"];空=仅内置技能) */
+    private String skills;
 
     /**
      * 可清空为 NULL 的字段。MyBatis-Plus 默认 NOT_NULL 策略会跳过 null,

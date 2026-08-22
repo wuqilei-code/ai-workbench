@@ -3,8 +3,8 @@ package com.aiworkbench.controller;
 import com.aiworkbench.security.JwtTokenProvider;
 import com.aiworkbench.service.opencode.BrowserCdpClient;
 import com.aiworkbench.service.opencode.ScreenTileDiffer;
-import com.aiworkbench.service.opencode.process.AgentContainerManager;
-import com.aiworkbench.service.opencode.process.OpencodeProcessManager;
+
+import com.aiworkbench.service.agent.BrowserContainerManager;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -59,8 +59,7 @@ public class BrowserWebSocketHandler extends TextWebSocketHandler {
     private static final long WARMUP_INTERVAL_MS = 15000;
 
     private final JwtTokenProvider tokenProvider;
-    private final OpencodeProcessManager processManager;
-    private final AgentContainerManager agentContainerManager;
+    private final BrowserContainerManager browserContainerManager;
     private final ObjectMapper objectMapper;
 
     /** 活跃连接:sessionId → session(用于清理) */
@@ -109,12 +108,10 @@ public class BrowserWebSocketHandler extends TextWebSocketHandler {
     }
 
     public BrowserWebSocketHandler(JwtTokenProvider tokenProvider,
-                                   OpencodeProcessManager processManager,
-                                   AgentContainerManager agentContainerManager,
+                                   BrowserContainerManager browserContainerManager,
                                    ObjectMapper objectMapper) {
         this.tokenProvider = tokenProvider;
-        this.processManager = processManager;
-        this.agentContainerManager = agentContainerManager;
+        this.browserContainerManager = browserContainerManager;
         this.objectMapper = objectMapper;
     }
 
@@ -194,8 +191,8 @@ public class BrowserWebSocketHandler extends TextWebSocketHandler {
         while (session.isOpen()) {
             try {
                 // 面板开着 = 活跃使用:每 tick 刷新活动时间,防止空闲回收在推流中间停掉 agent 容器
-                processManager.touch(userId);
-                boolean ready = processManager.isReady(userId);
+                browserContainerManager.touch(userId);
+                boolean ready = browserContainerManager.isReady(userId);
                 log.debug("browser monitor: ready={} cdp={} connected={}", ready,
                         cdp == null ? "null" : "obj", cdp != null && cdp.isConnected());
                 if (!ready) {
@@ -215,7 +212,7 @@ public class BrowserWebSocketHandler extends TextWebSocketHandler {
                         lastWarmupAt = now;
                         try {
                             long w0 = System.currentTimeMillis();
-                            processManager.getOrStart(userId);
+                            browserContainerManager.getOrStart(userId);
                             log.info("browser monitor: server warmup getOrStart done for user {} in {}ms",
                                     userId, System.currentTimeMillis() - w0);
                         } catch (Exception e) {
@@ -227,7 +224,7 @@ public class BrowserWebSocketHandler extends TextWebSocketHandler {
                 }
 
                 if (cdp == null) {
-                    cdp = new BrowserCdpClient(userId, agentContainerManager, objectMapper);
+                    cdp = new BrowserCdpClient(userId, browserContainerManager, objectMapper);
                     cdpRef.set(cdp);
                 }
                 if (!cdp.isConnected()) {
@@ -336,7 +333,7 @@ public class BrowserWebSocketHandler extends TextWebSocketHandler {
     // ============ 输入事件处理 ============
 
     private void handleInput(WebSocketSession session, Long userId, String action, JsonNode node) {
-        if (!processManager.isReady(userId)) {
+        if (!browserContainerManager.isReady(userId)) {
             sendError(session, "agent 未启动");
             return;
         }

@@ -73,7 +73,7 @@ function downloadOutput() {
   const blob = new Blob([props.tc.output ?? ''], { type: 'text/plain;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
-  const base = props.tc.tool.replace(/[^\w-]/g, '_') || 'tool'
+  const base = props.tc.name.replace(/[^\w-]/g, '_') || 'tool'
   a.href = url
   a.download = `${base}-output.txt`
   document.body.appendChild(a)
@@ -86,7 +86,7 @@ function downloadOutput() {
 <template>
   <div class="tool-item">
     <span class="chip" :class="chipClass">
-      🔧 {{ tc.tool }} <span class="chip-arg">{{ summarizeToolCall(tc) }}</span>
+      🔧 {{ tc.name }} <span class="chip-arg">{{ summarizeToolCall(tc) }}</span>
       <span class="chip-status">{{ statusIcon }}</span>
     </span>
 

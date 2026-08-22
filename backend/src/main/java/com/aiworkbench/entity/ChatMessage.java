@@ -18,7 +18,9 @@ public class ChatMessage {
     private Long sessionId;
     /** 冗余 user_id,便于鉴权查询 */
     private Long userId;
-    private String opencodeMessageId;
+    /** 执行轨道的外部消息 id(deepagents 合成 "da-msg-..." 前缀) */
+    @TableField("agent_message_id")
+    private String agentMessageId;
 
     /** 冗余会话的 provider/model(写时复制),供按模型统计 token/成本 */
     private String providerId;

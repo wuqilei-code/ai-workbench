@@ -2,7 +2,7 @@ package com.aiworkbench.service;
 
 import com.aiworkbench.common.BusinessException;
 import com.aiworkbench.common.ResultCode;
-import com.aiworkbench.config.OpencodeProperties;
+import com.aiworkbench.config.WorkspaceProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -36,7 +36,7 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class WorkspaceSnapshotService {
 
-    private final OpencodeProperties props;
+    private final WorkspaceProperties props;
     private final WorkspaceService workspaceService;
 
     private static final Pattern HUNK_HEADER = Pattern.compile("^@@ -(\\d+)(,\\d+)? \\+(\\d+)(,\\d+)? @@.*$");

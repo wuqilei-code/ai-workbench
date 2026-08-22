@@ -7,7 +7,11 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import threading
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from deepagents import FilesystemPermission, create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellBackend
@@ -15,6 +19,25 @@ from langchain_core.language_models.chat_models import BaseChatModel
 
 from app import config
 from app import workspace as ws
+from app.browser import build_browser_tools
+from app.skill_tool import ReadOnlyBackend, build_skill_tools
+
+# 平台内置技能(默认每个会话都加载;与镜像 agent-service/skills 下的目录名一致)
+BUILTIN_SKILLS = {
+    "browser-operate", "create-skill", "docx", "html-report", "pdf", "pptx", "xlsx",
+}
+
+
+def _skill_name(skill_path: str) -> str:
+    return Path(skill_path).parent.name
+
+
+def _select_skills(all_skill_paths: list[str], skills_override: list[str] | None) -> list[str]:
+    """内置技能默认加载;自定义技能仅加载被勾选(skills_override 里列名的)。"""
+    picked = set(skills_override or [])
+    builtins = [p for p in all_skill_paths if _skill_name(p) in BUILTIN_SKILLS]
+    custom = [p for p in all_skill_paths if p not in builtins and _skill_name(p) in picked]
+    return sorted(set(builtins + custom))
 
 _runtime = None
 _RUNTIME_LOCK = threading.Lock()
@@ -52,33 +75,117 @@ def _build_model() -> BaseChatModel:
 
 
 def _build_backend(user_id: str) -> CompositeBackend:
-    return CompositeBackend(
-        # execute 只委托 default 后端(非路径路由),故 default 必须支持 shell。
-        # 单机自部署:文件读写 + execute 都落在用户工作区,直接可用 python3/pip。
-        # 生产多租户隔离场景应换 BaseSandbox(见 deepagents.backends.sandbox)。
-        default=LocalShellBackend(
+    """default 与 /workspace/ 路由共用同一个后端(execute 只走 default)。
+
+    - docker(默认):DockerSandbox —— execute 与文件工具全部在 per-user 沙箱容器内
+    - local:LocalShellBackend(agent-service 进程内直跑 shell,仅本机可信调试)
+    /skills 仍走本地只读文件系统(SKILL.md 由平台投放,无需进沙箱)。
+    """
+    mode = config.AGENT_SANDBOX_BACKEND
+    if mode == "docker":
+        from app.sandbox import get_docker_sandbox
+
+        workspace_backend = get_docker_sandbox(user_id)
+    elif mode == "local":
+        workspace_backend = LocalShellBackend(
             root_dir=str(ws.workspace_root(user_id)), virtual_mode=True
-        ),
+        )
+    else:
+        raise ValueError(f"非法 AGENT_SANDBOX_BACKEND: {mode!r}(可选 docker|local)")
+
+    return CompositeBackend(
+        default=workspace_backend,
         routes={
-            "/workspace/": LocalShellBackend(
-                root_dir=str(ws.workspace_root(user_id)), virtual_mode=True
-            ),
-            "/skills/": FilesystemBackend(
-                root_dir=str(ws.skills_root(user_id)), virtual_mode=True
+            "/workspace/": workspace_backend,
+            # 技能目录只读:变更唯一入口是 create_skill 工具(经后端入库+落盘,防漂移)
+            "/skills/": ReadOnlyBackend(
+                FilesystemBackend(root_dir=str(ws.skills_root(user_id)), virtual_mode=True)
             ),
         },
     )
 
 
 def _build_permissions() -> list[FilesystemPermission]:
-    return [
-        # 技能目录只读:agent 可读 SKILL.md,但不能改(平台统一投放)
-        FilesystemPermission(operations=["write"], paths=["/skills/**"], mode="deny"),
-    ]
+    # 允许 agent 在 /skills(用户技能根)内**新建**技能(create-skill 技能用);
+    # 平台内置技能若被同名覆盖,重播种会还原,风险可控。技能外目录默认无额外限制。
+    return []
 
 
-def _fingerprint(user_id: str, skills: list[str], memory: list[str]) -> str:
-    parts = [user_id] + skills + memory
+def _dangerous_command(req) -> bool:
+    """execute 是否危险命令(when 判定):命中高危前缀才要求确认,避免每次 execute 都打扰。"""
+    tool_call = getattr(req, "tool_call", None) or getattr(req, "request", None)
+    args = (tool_call or {}).get("args", {}) or {}
+    cmd = str(args.get("command") or "").lstrip()
+    if not cmd:
+        return False
+    return cmd.startswith((
+        "rm ", "rmdir ", "mv ", "chmod ", "chown ", "chgrp ", "touch -",
+        "sudo", "su ", "apt", "apt-get", "pip", "pip3", "python% -m pip%",
+        "curl", "wget", "git push", "git reset", "git clean", "git checkout",
+        "mkfs", "dd ", "shutdown", "reboot", "kill ", "pkill", "killall",
+        "chattr", "useradd", "userdel", "passwd",
+    ))
+
+
+def _build_interrupt_on() -> dict | None:
+    """HITL 人工确认:仅对危险/敏感操作触发(execute 危险命令 + delete + 浏览器访问)。AGENT_HITL=false 时关闭。"""
+    if not config.AGENT_HITL:
+        return None
+    return {
+        "execute": {
+            "allowed_decisions": ["approve", "reject"],
+            "description": "该命令被判定为危险操作,需用户允许后才执行。",
+            "when": _dangerous_command,
+        },
+        "delete": {"allowed_decisions": ["approve", "reject"]},
+        "browser_navigate": {
+            "allowed_decisions": ["approve", "reject"],
+            "description": "打开浏览器访问网页,需用户允许后才执行。",
+            "when": lambda req: True,
+        },
+        # create_skill 会持久修改用户技能库,每次都需确认
+        "create_skill": {
+            "allowed_decisions": ["approve", "reject"],
+            "description": "创建或更新用户技能库(写入 SKILL.md 并入库),需用户允许后执行。",
+            "when": lambda req: True,
+        },
+    }
+
+
+_DEFAULT_SYSTEM_PROMPT = (
+    "你是用户的 AI 工作助手。所有用户文件都放在 /workspace 下,"
+    "请在该目录内处理与生成文件,不要写入其他位置。"
+    "可用技能介绍见 /skills 目录,需要时才读取对应的 SKILL.md。"
+    "只能使用 /skills 目录下实际存在的技能;不确定时先列出该目录确认,"
+    "不要声称拥有或调用目录里不存在的技能。"
+    "你拥有 execute 工具,可在隔离沙箱的 shell 里运行命令;当前工作目录"
+    "就是 /workspace 对应的真实目录,所以在命令行里请用相对路径读写文件"
+    "(例如 python3 gen.py 生成 report.docx);write_file/read_file 的 "
+    "/workspace/xxx 与命令行相对路径指向同一个位置,不要混用 /workspace/xxx "
+    "做 shell 路径。沙箱默认无法访问外部网络与工作区之外的文件,"
+    "预装了 python3 及常用文档/数据处理库(python-docx/pptx/openpyxl/"
+    "reportlab/pandas/matplotlib 等),不要尝试 pip install。"
+    "\n\n生成或修改文件后,必须在回复末尾以 `[结果文件] <相对路径>` 单独列出"
+    "交付的文件(每个文件一行,路径相对 /workspace,如 `[结果文件] hello_world.py`、"
+    "`[结果文件] data/report.docx`)。不要带 /workspace 前缀,不要放在代码块里。"
+    "如果用户没有要求生成文件,则不要输出该标记。该标记会被前端渲染成\"结果文件\""
+    "卡片,方便用户点击下载/预览。"
+    "\n\n创建/写入文件请优先使用 write_file 或 edit_file 工具(它们会登记输出物路径,"
+    "前端结果文件卡片更可靠),不要用 shell 里的 echo/cat 重定向去创建文件;"
+    "只有内容需要程序动态生成(如运行脚本产出报告)时才用 execute。"
+    "\n\n技能目录 /skills 对普通写文件工具只读:当用户要求创建新技能、完善/修改已有技能时,"
+    "使用 create_skill 工具保存(会弹出确认框,并自动进入用户的技能管理列表)。"
+    "平台内置技能(docx/pptx/xlsx/pdf/html-report/browser-operate/create-skill)不可修改。"
+    "\n\n浏览器操作(与用户实时面板同一浏览器):需要时直接调用工具执行,不要先询问用户——"
+    "打开网页(browser_navigate)系统会自动弹出确认框请用户允许,允许后继续;"
+    "按需使用 browser_get_text(读页面文字)、browser_click/browser_click_text(点击)、"
+    "browser_type(输入)、browser_scroll(滚动)、browser_go_back(返回)、"
+    "browser_screenshot(截图,仅当用户要求截图时用;截图用 [结果文件] 标记交付)。默认不截图。"
+)
+
+
+def _fingerprint(user_id: str, skills: list[str], memory: list[str], system_prompt: str | None) -> str:
+    parts = [user_id, system_prompt or _DEFAULT_SYSTEM_PROMPT] + skills + memory + ["browser_open_url"]
     return hashlib.sha256("\x1f".join(parts).encode()).hexdigest()
 
 
@@ -95,46 +202,29 @@ class AgentManager:
         *,
         system_prompt: str | None = None,
         extra_tools: list | None = None,
+        skills_override: list[str] | None = None,
     ):
         ws.ensure_user_dirs(user_id)
-        skills = ws.list_skills(user_id) + ws.list_global_skills()
+        skills = _select_skills(ws.list_skills(user_id) + ws.list_global_skills(), skills_override)
         memory = ws.memory_files(user_id)
-        key = _fingerprint(user_id, skills, memory)
+        effective_prompt = system_prompt or _DEFAULT_SYSTEM_PROMPT
+        key = _fingerprint(user_id, skills, memory, effective_prompt)
 
         with self._lock:
             cached = self._cache.get(key)
             if cached is not None:
                 return cached
 
+        logger.info("[%s] agent build: skills=%s", user_id, skills)
         agent = create_deep_agent(
             model=_build_model(),
-            tools=list(extra_tools or []),
-            system_prompt=system_prompt
-            or (
-                "你是用户的 AI 工作助手。所有用户文件都放在 /workspace 下,"
-                "请在该目录内处理与生成文件,不要写入其他位置。"
-                "可用技能介绍见 /skills 目录,需要时才读取对应的 SKILL.md。"
-                "你拥有 execute 工具,可以在 shell 里运行 python3 / pip(网络可用,"
-                "如 pip install 或直接 import python-docx)。execute 的当前工作目录"
-                "就是 /workspace 对应的真实目录,所以在命令行里请用相对路径读写文件"
-                "(例如 python3 gen.py 生成 report.docx);write_file/read_file 的 "
-                "/workspace/xxx 与命令行相对路径指向同一个位置,不要混用 /workspace/xxx "
-                "做 shell 路径。"
-            ),
+            tools=list(extra_tools or []) + build_browser_tools(user_id) + build_skill_tools(user_id),
+            system_prompt=effective_prompt,
             backend=_build_backend(user_id),
             permissions=_build_permissions(),
+            interrupt_on=_build_interrupt_on(),
             skills=skills,
             memory=memory,
-            interrupt_on=(
-                {
-                    "write_file": True,
-                    "edit_file": True,
-                    "delete": True,
-                    "execute": True,
-                }
-                if config.AGENT_HITL
-                else None
-            ),
             checkpointer=_get_runtime().checkpointer,
             store=_get_runtime().store,
         )

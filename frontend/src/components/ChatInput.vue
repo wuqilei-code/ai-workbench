@@ -2,10 +2,8 @@
 import { ref, nextTick, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
-import { chatApi } from '@/api/chat'
 import { fileApi } from '@/api/files'
 import { useMessage, useDialog } from 'naive-ui'
-import type { CommandItem } from '@/types'
 
 const chat = useChatStore()
 const msg = useMessage()
@@ -62,68 +60,9 @@ watch(() => chat.pendingAttachPath, (v) => {
   fill(header)
 })
 
-/** ---- slash 命令菜单 ---- */
-const commands = ref<CommandItem[]>([])
-let commandsLoadedFor = -1
-async function ensureCommands() {
-  if (!chat.currentSessionId) return
-  if (commandsLoadedFor === chat.currentSessionId) return
-  try {
-    commands.value = await chatApi.listCommands(chat.currentSessionId)
-    commandsLoadedFor = chat.currentSessionId
-  } catch (e: any) {
-    console.error('[ChatInput] load commands failed', e)
-    msg.error('命令菜单加载失败,请重试')
-  }
-}
-
-/** 输入首个 token(/cmd 名称) */
-const firstToken = computed(() => {
-  const t = text.value.trim()
-  if (!t.startsWith('/')) return ''
-  return t.split(/\s+/)[0]
-})
-/** 是否在输入命令名(尚未输入参数空格) */
-const typingCommandName = computed(() => {
-  const t = text.value.trim()
-  return t.startsWith('/') && !t.includes(' ')
-})
-const filteredCommands = computed(() => {
-  const prefix = firstToken.value.slice(1).toLowerCase()
-  return commands.value.filter((c) => c.name.toLowerCase().startsWith(prefix))
-})
-const showCommandMenu = computed(() => typingCommandName.value && filteredCommands.value.length > 0)
-const menuIndex = ref(0)
-watch(showCommandMenu, (open) => {
-  if (open) menuIndex.value = 0
-})
-
-function chooseCommand(c: CommandItem) {
-  text.value = '/' + c.name + ' '
-  menuIndex.value = 0
-  nextTick(() => inputRef.value?.focus())
-}
+/** ---- slash 命令菜单(deepagents 无命令,已移除) ---- */
 
 function onKeydown(e: KeyboardEvent) {
-  if (showCommandMenu.value) {
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault()
-      const n = filteredCommands.value.length
-      menuIndex.value = (menuIndex.value + (e.key === 'ArrowDown' ? 1 : n - 1)) % n
-      return
-    }
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      const c = filteredCommands.value[menuIndex.value]
-      if (c) chooseCommand(c)
-      return
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      text.value = ''
-      return
-    }
-  }
   if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
     e.preventDefault()
     onSend()
@@ -272,40 +211,11 @@ function buildPayload(): string {
 async function onSend() {
   const payload = buildPayload()
   if (!payload) return
-  if (chat.compacting) {
-    msg.info('正在压缩会话中,请稍候再发送')
-    return
-  }
   if (chat.isStreaming) {
     if (chat.streamingStuckSeconds > 0) {
       await chat.forceReleaseStreaming()
     } else {
       msg.info('AI 正在处理中,可点「停止」中断后再发送')
-      return
-    }
-  }
-  if (!attachments.value.length && payload.startsWith('/')) {
-    await ensureCommands()
-    const [head, ...rest] = payload.split(' ')
-    const cmd = commands.value.find((c) => c.name === head.slice(1))
-    if (cmd) {
-      const lastText = text.value
-      const lastAttachments = [...attachments.value]
-      text.value = ''
-      attachments.value = []
-      try {
-        await chat.runCommand(cmd.name, rest.join(' ').trim())
-      } catch (e: any) {
-        text.value = lastText
-        attachments.value = lastAttachments
-        msg.error(e?.message || '命令执行失败,已为你保留输入内容')
-        await nextTick()
-        resizeInput()
-        inputRef.value?.focus()
-        return
-      }
-      await nextTick()
-      inputRef.value?.focus()
       return
     }
   }
@@ -331,7 +241,6 @@ async function onSend() {
 
 function onInput() {
   resizeInput()
-  if (text.value.trim().startsWith('/')) ensureCommands()
 }
 
 /** 文本框自适应高度:内容变化(含 programmatic 清空)后重算,保证清空/发送后恢复默认一行高度 */
@@ -358,32 +267,6 @@ async function onAbort() {
     positiveText: '停止',
     negativeText: '继续生成',
     onPositiveClick: () => chat.abort(),
-  })
-}
-
-/** 主动压缩会话:调用 opencode summarize,总结早期内容释放上下文。 */
-async function onSummarize() {
-  if (!chat.currentSessionId) return
-  const d = dialog.warning({
-    title: '压缩会话',
-    content: '将自动总结早期对话内容以释放上下文,最近 2 轮对话保留完整。确定压缩?',
-    positiveText: '压缩',
-    negativeText: '取消',
-    positiveButtonProps: { type: 'primary' },
-    onPositiveClick: async () => {
-      // 点击后立即关闭确认框并显示"正在压缩"动画;压缩在后台异步进行
-      d.destroy()
-      if (chat.compacting) return
-      chat.compacting = true
-      statsOpen.value = false
-      try {
-        await chatApi.summarizeSession(chat.currentSessionId!)
-        // 压缩已触发;完成后由 session.compacted 事件刷新圆环并渲染"已压缩"分割线
-      } catch (e: any) {
-        chat.compacting = false
-        msg.error(e?.message || '压缩失败')
-      }
-    },
   })
 }
 
@@ -415,92 +298,28 @@ const modelValue = computed({
   },
 })
 
-/** ---- 底部工具栏:模式(agent)选择 ---- */
-const agentMenuOpen = ref(false)
-const agentOptions = computed(() =>
-  chat.agents.map((a) => ({ label: a.name, key: a.name })),
-)
-async function onAgentMenuShow(show: boolean) {
-  if (show) {
-    await chat.loadAgents()
-    agentMenuOpen.value = true
-  } else {
-    agentMenuOpen.value = false
-  }
-}
-async function onAgentSelect(key: string) {
-  try {
-    await chat.switchAgent(key)
-    msg.success(`已切换到 ${key}`)
-  } catch (e: any) {
-    msg.error(e.message || '切换失败')
-  }
-}
-
-/** ---- 会话 token 进度环:优先用 opencode 真实 token 用量,估算兜底 ---- */
+/** ---- 会话 token 进度环:字符估算(deepagents 无真实 token 回传,保留近似显示供参考) ---- */
 const statsOpen = ref(false)
 const stats = computed(() => {
   const msgs = chat.messages
-  // 压缩点:最近一条"已完成压缩"标记消息的 id;其前历史已总结、不参与 token 估算
-  const cutoff = chat.compactCutoffId
-
   let user = 0, assistant = 0, tool = 0, chars = 0
   let toolCalls = 0
-  let summaryChars = 0
   for (const m of msgs) {
     if (m.role === 'user' && !(m.content || '').trim()) continue
-    if ((m.content || '').trim().startsWith('Continue if you have next steps')) continue
-    // 消息计数:统计会话内全部真实消息(压缩后仍显示会话总条数,不受压缩点影响)
     if (m.role === 'user') user++
     else if (m.role === 'assistant') assistant++
     else if (m.role === 'tool') tool++
     toolCalls += m.parts?.toolCalls?.length || 0
-    // 压缩总结消息:压缩后上下文 = 该总结 + 保留消息;记录最近一条总结的字符单独计入
-    if (m.compactionSummary && m.role === 'assistant' && (m.content || '').trim()) {
-      summaryChars = (m.content || '').length
-      continue
-    }
-    // 字符估算:压缩点之前的已总结历史不参与 token 估算;本地新消息(id 为负)始终计入
-    if (cutoff > 0 && (m.id ?? 0) > 0 && (m.id ?? 0) <= cutoff) continue
     chars += (m.content || '').length
     for (const tc of m.parts?.toolCalls || []) {
-      if (tc.input != null) chars += JSON.stringify(tc.input).length
+      if (tc.args != null) chars += JSON.stringify(tc.args).length
       if (typeof tc.output === 'string') chars += tc.output.length
     }
   }
-  // 当前上下文 = 压缩点之后的消息 + 最近一条压缩总结(压缩结果长度)
-  const contextChars = chars + summaryChars
-
-  // 真实 token:优先取压缩点之后最后一条带 tokens 的 assistant 消息(上下文占用 = input);
-  // 压缩后尚无新消息时,退而用最近一条压缩总结消息的 output(即压缩结果长度)。
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    const m = msgs[i]
-    const t = m.tokens
-    if (!t) continue
-    if (m.compactionSummary && m.role === 'assistant') {
-      // 压缩总结:output = 压缩后的结果长度
-      const ctx = t.output ?? 0
-      if (ctx > 0) {
-        return {
-          total: user + assistant + tool, user, assistant, tool, toolCalls, chars: contextChars,
-          estTokens: ctx, real: true, tokens: t, contextTokens: ctx,
-        }
-      }
-      break // 总结无 output:退回估算
-    }
-    if (cutoff > 0 && (m.id ?? 0) > 0 && (m.id ?? 0) <= cutoff) break
-    const total = (t.input ?? 0) + (t.output ?? 0) + (t.reasoning ?? 0) + (t.cache?.read ?? 0) + (t.cache?.write ?? 0)
-    return {
-      total: user + assistant + tool, user, assistant, tool, toolCalls, chars: contextChars,
-      estTokens: Math.max(0, total), real: true, tokens: t, contextTokens: t.input ?? 0,
-    }
-  }
-
-  // 估算兜底:chars/4(对齐 opencode),无真实 tokens
-  const est = Math.ceil(contextChars / 4)
+  const estTokens = Math.ceil(chars / 4)
   return {
-    total: user + assistant + tool, user, assistant, tool, toolCalls, chars: contextChars,
-    estTokens: est, real: false, tokens: null, contextTokens: est,
+    total: user + assistant + tool, user, assistant, tool, toolCalls, chars,
+    estTokens, real: false as const, contextTokens: estTokens,
   }
 })
 
@@ -555,21 +374,6 @@ async function startNewChat() {
     @dragover.prevent
     @drop.prevent="onDrop"
   >
-    <!-- slash 命令菜单 -->
-    <div v-if="showCommandMenu" class="cmd-menu">
-      <div
-        v-for="(c, i) in filteredCommands"
-        :key="c.name"
-        class="cmd-item"
-        :class="{ active: i === menuIndex }"
-        @mouseenter="menuIndex = i"
-        @mousedown.prevent="chooseCommand(c)"
-      >
-        <span class="cmd-name">/{{ c.name }}</span>
-        <span class="cmd-desc">{{ c.description || '' }}</span>
-      </div>
-    </div>
-
     <!-- 上传进度(zip 大文件或普通文件上传时显示) -->
     <div v-if="uploading || uploadProgress !== null" class="upload-progress">
       <span v-if="uploadProgress !== null" class="up-label">正在上传项目包… {{ uploadProgress }}%</span>
@@ -610,7 +414,7 @@ async function startNewChat() {
         rows="1"
         :placeholder="chat.isStreaming
           ? (hasPending ? '上方有待答问题,作答后发送;或直接输入以继续…' : 'AI 正在处理中,可点「停止」中断…')
-          : '随便问点什么, / 可查看命令, @ 可添加上下文...'"
+          : '随便问点什么…'"
         @keydown="onKeydown"
         @input="onInput"
         @paste="onPaste"
@@ -646,26 +450,7 @@ async function startNewChat() {
           :disabled="!modelOptions.length"
         />
 
-        <!-- 模式(agent)选择 -->
-        <n-dropdown
-          :options="agentOptions"
-          :show="agentMenuOpen"
-          trigger="click"
-          placement="top-start"
-          @update:show="onAgentMenuShow"
-          @select="onAgentSelect"
-        >
-          <button class="tool-btn tool-btn-text" title="选择模式">
-            {{ chat.currentSession?.agent || 'Default' }}
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
-        </n-dropdown>
-
-        <!-- 快捷工具:压缩会话 / 生成文档 / 解读报错 / 我的MCP -->
-        <button class="tool-btn tool-btn-text tool-quick" title="压缩会话:总结早期内容,释放上下文" @click="onSummarize">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>
-          压缩会话
-        </button>
+        <!-- 快捷工具:生成文档 / 解读报错 -->
         <button class="tool-btn tool-btn-text tool-quick" title="一键生成文档(周报/会议纪要/邮件/分析报告)" @click="emit('openDocGen')">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
           生成文档
@@ -716,19 +501,10 @@ async function startNewChat() {
         <div class="stat"><span class="k">工具消息</span><span class="v">{{ stats.tool }}</span></div>
         <div class="stat"><span class="k">工具调用次数</span><span class="v">{{ stats.toolCalls }}</span></div>
         <div class="stat"><span class="k">总字符数</span><span class="v">{{ stats.chars }}</span></div>
-        <template v-if="stats.real">
-          <div class="stat"><span class="k">上下文 token</span><span class="v">{{ stats.contextTokens }}</span></div>
-          <div class="stat"><span class="k">输出 token</span><span class="v">{{ stats.tokens!.output }}</span></div>
-          <div class="stat"><span class="k">推理 token</span><span class="v">{{ stats.tokens!.reasoning }}</span></div>
-          <div class="stat"><span class="k">缓存读取/写入</span><span class="v">{{ stats.tokens!.cache?.read ?? 0 }} / {{ stats.tokens!.cache?.write ?? 0 }}</span></div>
-        </template>
-        <template v-else>
-          <div class="stat"><span class="k">约计 token</span><span class="v">{{ stats.estTokens }}</span></div>
-        </template>
+        <div class="stat"><span class="k">约计 token</span><span class="v">{{ stats.estTokens }}</span></div>
         <div class="stat"><span class="k">token 进度</span><span class="v">{{ Math.round(tokenRatio * 100) }}%</span></div>
       </div>
-      <p v-if="stats.real" class="stats-note">为模型真实返回的 token 用量(上限 {{ modelLimit.toLocaleString() }})。压缩后该值会随上下文释放而下降。</p>
-      <p v-else class="stats-note">token 数为粗略估算（字符数 / 4），仅供参考。</p>
+      <p class="stats-note">token 数为粗略估算(字符数 / 4),仅供参考。</p>
       <div class="stats-warn" :class="{ alert: ringNearFull }">
         <span>{{ ringNearFull ? '会话上下文已接近上限，可新开会话。' : '上下文占用过高时，可新开会话。' }}</span>
         <div class="stats-actions">
@@ -745,23 +521,6 @@ async function startNewChat() {
   border-top: 1px solid var(--border-soft);
   padding: 16px 20px;
   background: var(--chat-bg);
-}
-
-/* 命令菜单 */
-.cmd-menu {
-  position: absolute; bottom: 100%; left: 16px; right: 16px; z-index: 20;
-  margin-bottom: 6px; max-height: 260px; overflow-y: auto;
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); box-shadow: var(--shadow);
-}
-.cmd-item {
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px 12px; cursor: pointer; font-size: 13px;
-}
-.cmd-item.active, .cmd-item:hover { background: var(--accent-soft); }
-.cmd-name { color: var(--accent); font-family: ui-monospace, monospace; flex-shrink: 0; }
-.cmd-desc {
-  color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
 /* 附件 */

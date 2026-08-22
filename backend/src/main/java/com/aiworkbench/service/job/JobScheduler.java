@@ -27,7 +27,7 @@ public class JobScheduler {
     private final JobTaskService jobTaskService;
 
     /** 定时扫描:每 5s(与队列调度同频),把到期的 pending 任务推入队。 */
-    @Scheduled(fixedDelayString = "${opencode.job-sweep-ms:5000}")
+    @Scheduled(fixedDelayString = "${agent-jobs.sweep-ms:5000}")
     public void sweep() {
         List<JobTask> due = jobTaskMapper.selectList(new LambdaQueryWrapper<JobTask>()
                 .eq(JobTask::getEnabled, 1)

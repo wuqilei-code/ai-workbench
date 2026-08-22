@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from app.config import AGENT_WS_ROOT
@@ -40,6 +41,28 @@ def agent_md(user_id: str) -> Path:
 def ensure_user_dirs(user_id: str) -> None:
     for p in (workspace_root(user_id), skills_root(user_id), memory_root(user_id)):
         p.mkdir(parents=True, exist_ok=True)
+    seed_global_skills(user_id)
+
+
+_GLOBAL_SKILLS_SRC = Path(os.environ.get("AGENT_GLOBAL_SKILLS") or "/app/skills")
+
+
+def seed_global_skills(user_id: str) -> None:
+    """把平台内置技能(镜像 /app/skills)播种进用户 skills 目录(deepagents /skills/ 虚拟根内,agent 加载用)。"""
+    import shutil
+
+    if not _GLOBAL_SKILLS_SRC.is_dir():
+        return
+    for d in _GLOBAL_SKILLS_SRC.iterdir():
+        src = d / "SKILL.md"
+        if not src.is_file():
+            continue
+        dst = skills_root(user_id) / d.name / "SKILL.md"
+        # 只在缺失时播种;绝不覆盖用户目录中已有的同名技能(可能是用户自建/改过的内容)。
+        if dst.exists():
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dst)
 
 
 def list_skills(user_id: str) -> list[str]:
@@ -49,13 +72,9 @@ def list_skills(user_id: str) -> list[str]:
 
 
 def list_global_skills() -> list[str]:
-    """平台级内置技能(缺省技能模板等),通过 AGENT_GLOBAL_SKILLS 配置目录注入。"""
-    import os
-
-    root = os.environ.get("AGENT_GLOBAL_SKILLS")
-    if not root:
-        return []
-    return sorted(str(p) for p in Path(root).rglob("SKILL.md"))
+    """平台级内置技能已由 ensure_user_dirs 播种进各用户 skills 目录(list_skills 覆盖);
+    此处保持空,避免 deepagents 直接加载 /app 根外路径失败。"""
+    return []
 
 
 def memory_files(user_id: str) -> list[str]:

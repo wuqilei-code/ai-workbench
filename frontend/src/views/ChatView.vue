@@ -3,7 +3,7 @@ import { ref, watch, nextTick, onMounted, onBeforeUnmount, computed, inject, typ
 import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useFavoritesStore } from '@/stores/favorites'
-import { useMessage } from 'naive-ui'
+import { useMessage, useDialog } from 'naive-ui'
 import ChatMessage from '@/components/ChatMessage.vue'
 import AssistantTurn from '@/components/AssistantTurn.vue'
 import ChatInput from '@/components/ChatInput.vue'
@@ -13,18 +13,16 @@ import DocumentGenerator from '@/components/DocumentGenerator.vue'
 import ErrorDiagnose from '@/components/ErrorDiagnose.vue'
 import FavoritesPanel from '@/components/FavoritesPanel.vue'
 import SkillMarketplace from '@/components/SkillMarketplace.vue'
-import McpManager from '@/components/McpManager.vue'
 import FileTree from '@/components/FileTree.vue'
-import TaskPanel from '@/components/TaskPanel.vue'
 import AutomationManager from '@/components/AutomationManager.vue'
 import JobRunsPanel from '@/components/JobRunsPanel.vue'
-import BrowserCanvas from '@/components/BrowserCanvas.vue'
 import NotificationCenter from '@/components/NotificationCenter.vue'
 import UserMenu from '@/components/UserMenu.vue'
+import BrowserCanvas from '@/components/BrowserCanvas.vue'
 import ChangeSummaryCard from '@/components/ChangeSummaryCard.vue'
 import DashboardView from '@/views/DashboardView.vue'
 import { chatApi } from '@/api/chat'
-import type { MessageVo, SkillInfo } from '@/types'
+import type { MessageVo, SkillInfo, UserSkill } from '@/types'
 import type { VirtualListInst } from 'naive-ui'
 import type { FlowItem, SummaryItem, Turn } from '@/utils/turns'
 
@@ -33,6 +31,7 @@ const router = useRouter()
 const chat = useChatStore()
 const fav = useFavoritesStore()
 const msg = useMessage()
+const dialog = useDialog()
 const virtualListRef = ref<VirtualListInst | null>(null)
 const showFiles = ref(true)
 const dashboardShow = ref(false)
@@ -53,7 +52,6 @@ let _resizeCleanup: (() => void) | null = null
 const workspaceTabs = [
   { key: 'files', label: '文件', icon: 'M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z' },
   { key: 'skills', label: '技能', icon: 'M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 2.001c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z' },
-  { key: 'tasks', label: '任务', icon: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z' },
   { key: 'jobs', label: '定时任务', icon: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2' },
   { key: 'favorites', label: '收藏', icon: 'M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 21 12 17.77 5.82 21 7 14.14 2 9.27l6.91-1.01z' },
   { key: 'browser', label: '浏览器', icon: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 2.07A8 8 0 0 1 20 12h-7zM4.9 5.8l3.4 3.4A3 3 0 0 0 8 9H5.5A8 8 0 0 1 4.9 5.8zM4 12a8 8 0 0 1 .5-2.8H8a3 3 0 0 0-3 3v.5H4zm0 1h1v1h-1zm3 4.2A8 8 0 0 0 12 20c-1.7 0-3.3-.5-4.6-1.4L9 16.9zM20 12a8 8 0 0 1-.5 2.8H16a3 3 0 0 0 3-3v-.5h1zm-8 8a8 8 0 0 1-3-.6L10 17.6a4 4 0 0 0 2-.6c1 .6 1.9 1 3 1.2zm-1-6a3 3 0 1 1 0-6 3 3 0 0 1 0 6z' },
@@ -62,9 +60,25 @@ function openWorkspaceTab(key: string) {
   showFiles.value = true
   if (!openTabs.value.includes(key)) openTabs.value.push(key)
   activeTab.value = key
-  // 打开浏览器时自动加宽面板,避免浏览器窗口太小
-  if (key === 'browser') widenForBrowser()
+  if (key === 'browser' && !isMobile.value) {
+    const target = Math.round(window.innerWidth * 0.55)
+    if (wsWidth.value < target) wsWidth.value = target
+  }
 }
+
+/** agent 调用浏览器工具时自动唤出浏览器面板,实时看 agent 操作 */
+watch(
+  () => chat.browserToolSignal,
+  () => {
+    if (!showFiles.value) showFiles.value = true
+    if (activeTab.value !== 'browser') openWorkspaceTab('browser')
+  },
+)
+
+/** agent 正在流式执行且近期调用过浏览器工具 → 面板保持实时 */
+const browserFollowing = computed(
+  () => chat.isStreaming && Date.now() - chat.lastBrowserToolAt < 120000,
+)
 
 /** 顶部入口按钮:未激活则打开;再次点击已激活的面板则收起工作区 */
 function onLauncherClick(key: string) {
@@ -87,25 +101,6 @@ function closeTab(key: string) {
 
 /** 已打开标签的元信息(图标+文案),供标签栏渲染 */
 const openTabList = computed(() => workspaceTabs.filter((t) => openTabs.value.includes(t.key)))
-
-/** 顶部入口按钮:浏览器面板只由技能(browser-operate)唤出,不提供手动入口 */
-const launcherTabs = computed(() => workspaceTabs.filter((t) => t.key !== 'browser'))
-
-/** agent 调用浏览器工具时自动唤出浏览器面板,让用户实时看到浏览器操作 */
-watch(
-  () => chat.browserToolSignal,
-  () => {
-    if (!showFiles.value) showFiles.value = true
-    if (activeTab.value !== 'browser') {
-      openWorkspaceTab('browser')
-    }
-  },
-)
-
-/** agent 正在流式执行且近期调用过浏览器工具 → 浏览器面板保持强制实时(鼠标不在面板内也推帧) */
-const browserFollowing = computed(
-  () => chat.isStreaming && Date.now() - chat.lastBrowserToolAt < 120000,
-)
 
 /** 拖动面板左缘调整宽度:按住 → 随鼠标移动计算新宽度(限制最小/最大),松开结束。 */
 function startResize(e: MouseEvent) {
@@ -130,19 +125,116 @@ function startResize(e: MouseEvent) {
   _resizeCleanup = up
 }
 
-/** 打开浏览器面板时,若面板过窄则自动加宽到视口 55%(便于浏览器全区域展示) */
-function widenForBrowser() {
-  if (isMobile.value) return
-  const target = Math.round(window.innerWidth * 0.55)
-  if (wsWidth.value < target) wsWidth.value = target
-}
 const chatInputRef = ref<InstanceType<typeof ChatInput> | null>(null)
 const templateLibShow = ref(false)
 const docGenShow = ref(false)
 const errorDiagnoseShow = ref(false)
 const marketplaceShow = ref(false)
-const mcpShow = ref(false)
 const skillTreeKey = ref(0)
+/** 内置技能名(技能栏顶部内置列表;用户技能区/会话配置只展示自定义技能) */
+const builtinSkillNames = computed(() => builtinSkills.value.map((s) => s.name))
+/** ---- 用户技能(user_skill:自建/安装) ---- */
+const userSkills = ref<UserSkill[]>([])
+async function loadUserSkills() {
+  try { userSkills.value = await chatApi.listMineSkills() } catch { userSkills.value = [] }
+}
+const skillModalShow = ref(false)
+const skillEditingId = ref<number | null>(null)
+const skillForm = ref<{ name: string; description: string; content: string; visibility: number; files: { path: string; content: string }[] }>({
+  name: '', description: '', content: '', visibility: 0, files: [],
+})
+function addSkillFile() {
+  skillForm.value.files = [...skillForm.value.files, { path: 'scripts/tool.py', content: '' }]
+}
+function removeSkillFile(i: number) {
+  skillForm.value.files.splice(i, 1)
+}
+function openCreateSkill() {
+  skillEditingId.value = null
+  skillForm.value = { name: '', description: '', content: '', visibility: 0, files: [] }
+  skillModalShow.value = true
+}
+function openEditSkill(s: UserSkill) {
+  skillEditingId.value = s.id
+  skillForm.value = {
+    name: s.name, description: s.description || '',
+    content: s.content || '', visibility: s.visibility || 0,
+    files: (s.files || []).map((f) => ({ path: f.path, content: f.content || '' })),
+  }
+  skillModalShow.value = true
+}
+async function saveSkill() {
+  try {
+    if (skillEditingId.value) {
+      await chatApi.updateSkill(skillEditingId.value, {
+        description: skillForm.value.description,
+        content: skillForm.value.content,
+        visibility: skillForm.value.visibility,
+        files: skillForm.value.files.filter((f) => f.path && !f.path.startsWith('SKILL.md')),
+      })
+    } else {
+      await chatApi.createSkill({
+        name: skillForm.value.name.trim(),
+        description: skillForm.value.description,
+        content: skillForm.value.content,
+        visibility: skillForm.value.visibility,
+        files: skillForm.value.files.filter((f) => f.path),
+      })
+    }
+    skillModalShow.value = false
+    await loadUserSkills()
+    msg.success('技能已保存')
+  } catch (e: any) {
+    msg.error(e?.response?.data?.message || e?.message || '保存失败')
+  }
+}
+async function removeUserSkill(s: UserSkill) {
+  const ok = await new Promise<boolean>((resolve) => {
+    dialog.warning({
+      title: '删除技能',
+      content: s.source === 'installed' ? `确定卸载已安装的技能「${s.name}」吗?` : `确定删除技能「${s.name}」吗?`,
+      positiveText: '删除', negativeText: '取消',
+      onPositiveClick: () => resolve(true), onNegativeClick: () => resolve(false), onClose: () => resolve(false),
+    })
+  })
+  if (!ok) return
+  try {
+    await chatApi.deleteSkill(s.id)
+    await loadUserSkills()
+    msg.success('已删除')
+  } catch (e: any) {
+    msg.error(e?.response?.data?.message || e?.message || '删除失败')
+  }
+}
+watch(activeTab, (t) => { if (t === 'skills') loadUserSkills() })
+/** 会话自定义技能配置:左=可选项,右=已选;内置技能默认加载,不可配置 */
+const customSkills = ref<string[]>([])
+const skillsPick = ref<string[]>([])
+const skillsOpen = ref(false)
+const skillAvail = computed(() => customSkills.value.filter((s) => !skillsPick.value.includes(s)))
+async function openSkillPicker() {
+  try { customSkills.value = await chatApi.customSkills() } catch { customSkills.value = [] }
+  skillsPick.value = (chat.currentSession?.skills || []).filter((s) => customSkills.value.includes(s))
+  skillsOpen.value = true
+}
+function addSkill(s: string) {
+  if (!skillsPick.value.includes(s)) skillsPick.value = [...skillsPick.value, s]
+}
+function removeSkill(s: string) {
+  skillsPick.value = skillsPick.value.filter((x) => x !== s)
+}
+async function applySkills() {
+  if (!chat.currentSessionId) return
+  try {
+    const updated = await chatApi.updateSession(chat.currentSessionId, { skills: skillsPick.value })
+    const idx = chat.sessions.findIndex((s) => s.id === chat.currentSessionId)
+    if (idx >= 0) chat.sessions[idx] = updated
+    skillsOpen.value = false
+    msg.success('已保存(内置技能默认加载;自定义技能下一条消息生效)')
+  } catch (e: any) {
+    msg.error(e?.response?.data?.message || e?.message || '保存失败')
+  }
+}
 /** 自动化管理弹窗(点侧边栏「自动化」打开:任务列表 + 启停 + 新建) */
 const automationShow = ref(false)
 /** 消息定位轮询中(从任务/收藏跳转后等待消息加载) */
@@ -153,13 +245,12 @@ function onSkillInstalled() {
 }
 
 /** 侧边栏导航事件监听 */
-const sidebarEvents = inject<Ref<{openPluginMarket:boolean; openTemplateLib:boolean; openMyFiles:boolean; openAutomation:boolean; openFind:boolean; openMyMcp:boolean; openDashboard:boolean}>>('sidebarEvents')
+const sidebarEvents = inject<Ref<{openPluginMarket:boolean; openTemplateLib:boolean; openMyFiles:boolean; openAutomation:boolean; openFind:boolean; openDashboard:boolean}>>('sidebarEvents')
 if (sidebarEvents) {
   watch(() => sidebarEvents.value.openPluginMarket, (v) => { if (v) marketplaceShow.value = true })
   watch(() => sidebarEvents.value.openTemplateLib, (v) => { if (v) templateLibShow.value = true })
   watch(() => sidebarEvents.value.openMyFiles, (v) => { if (v) showFiles.value = true })
   watch(() => sidebarEvents.value.openFind, (v) => { if (v) openFind() })
-  watch(() => sidebarEvents.value.openMyMcp, (v) => { if (v) mcpShow.value = true })
   watch(() => sidebarEvents.value.openAutomation, (v) => { if (v) openAutomationModal() })
   watch(() => sidebarEvents.value.openDashboard, (v) => { if (v) dashboardShow.value = true })}
 
@@ -470,8 +561,8 @@ const activeTurnExists = computed(() => {
   const id = chat.streamingMessageId
   if (!id) return false
   return chat.turns.some((t) =>
-    t.steps.some((s) => s.message.opencodeMessageId === id) ||
-    (t.finalAnswer?.message.opencodeMessageId === id),
+    t.steps.some((s) => s.message.agentMessageId === id) ||
+    (t.finalAnswer?.message.agentMessageId === id),
   )
 })
 
@@ -519,10 +610,7 @@ const virtualItems = computed<VirtualListItem[]>(() => {
     items.push({ key: '__top-space__', kind: 'top-space' })
   }
   const msgs = chat.messages
-  // 压缩点现在由后端落库为一条 role='compaction' 记录(见 ChatMessageService.summarize)。
-  // 该记录有自增 id,天然位于消息流正确位置,前端直接按 id 归并渲染,
-  // 不再需要 anchor 推断(旧方案在 opencode 注入 Continue 占位消息时锚点会失配)。
-  // 记录 status=compacting → 显示"正在压缩…";completed → 显示"已压缩"分割线。
+  // 压缩点(遗留兼容):deepagents 不再落 compaction 记录,该分支恒空。
   const compactionMarks = msgs
     .filter((m) => m.role === 'compaction')
     .map((m) => ({ id: m.id, status: m.status }))
@@ -531,37 +619,23 @@ const virtualItems = computed<VirtualListItem[]>(() => {
     .filter((m) => m.role === 'interrupted')
     .map((m) => ({ id: m.id }))
   // 统一归并:压缩/中断标记都按 id 插到对应 flow 项之前。
-  // 进行中(status=compacting)的压缩由末尾浮动动画表示;压缩已结束(compacting=false)时
-  // 即使前端拿到的是 compacting 状态(刷新竞态)也按"已压缩"分割线渲染,避免不显示。
   const dividerMarks = [
-    ...compactionMarks
-      .filter((m) => (chat.compacting ? m.status !== 'compacting' : true))
-      .map((m) => ({
-        id: m.id,
-        kind: 'compact-divider' as VirtualListItem['kind'],
-        key: '__compact__-' + m.id,
-      })),
+    ...compactionMarks.map((m) => ({
+      id: m.id,
+      kind: 'compact-divider' as VirtualListItem['kind'],
+      key: '__compact__-' + m.id,
+    })),
     ...interruptedMarks.map((m) => ({
       id: m.id,
       kind: 'interrupted-divider' as VirtualListItem['kind'],
       key: '__interrupted__-' + m.id,
     })),
   ].sort((a, b) => (a.id ?? 0) - (b.id ?? 0))
-  // flow 每项的锚点消息 id:turn 用其 user 消息 id;summary 按 sha/at 反查 messages 里的 id。
-  const summaryIdOf = (sha: string | undefined, at: string | undefined): number => {
-    if (!sha && !at) return -1
-    return (
-      msgs.find(
-        (m) =>
-          m.role === 'summary' &&
-          (sha ? m.summarySha === sha : true) &&
-          (at ? m.createdAt === at : true),
-      )?.id ?? -1
-    )
-  }
+  // flow 每项的锚点消息 id:turn 用其 user 消息 id;summary 无对应消息(deepagents 恒空)。
+  const summaryIdOf = (): number => -1
   const flowKeyById = chat.flow.map((it) => {
     if (it.kind === 'turn') return it.turn.userMessage?.id ?? it.turn.steps[0]?.message?.id ?? -1
-    return summaryIdOf(it.summary.sha, it.summary.at)
+    return summaryIdOf()
   })
   const flowItems: VirtualListItem[] = chat.flow.map((it) =>
     it.kind === 'turn'
@@ -592,19 +666,11 @@ const virtualItems = computed<VirtualListItem[]>(() => {
       fi++
     }
   }
-  // 压缩进行中:消息流末尾固定显示"正在压缩…"动画(压缩完成由 session.compacted 清除)
-  if (chat.compacting) {
-    items.push({ key: '__compact-progress__', kind: 'compact-progress' })
-  } else if (compactionMarks.length === 0) {
-    // agent 冷启动(空闲回收后发首条消息):后端已经 SSE dispatch session.starting,
-    // 在流式内容出现前固定显示「正在连接智能体…」,首个流式事件到达即消失
-    if (chat.agentStarting && !chat.streamingText && !activeTurnExists.value) {
-      items.push({ key: '__connecting__', kind: 'connecting' })
-    } else if (showStreamingBubble.value) {
-      items.push({ key: '__streaming__', kind: 'streaming', text: chat.streamingText })
-    } else if (showThinkingFallback.value) {
-      items.push({ key: '__thinking__', kind: 'thinking' })
-    }
+  // 流式进行中:末尾显示流式气泡或思考占位(deepagents 无压缩/冷启动连接态)
+  if (showStreamingBubble.value) {
+    items.push({ key: '__streaming__', kind: 'streaming', text: chat.streamingText })
+  } else if (showThinkingFallback.value) {
+    items.push({ key: '__thinking__', kind: 'thinking' })
   }
   return items
 })
@@ -625,6 +691,10 @@ const itemSize = 120
           <span class="conn-dot"></span>
           {{ chat.connected ? '已连接' : (chat.reconnecting ? '重连中…' : '未连接') }}
         </span>
+        <n-button class="find-btn" size="small" quaternary title="会话内置/自定义技能(自定义按会话勾选加载)" @click="openSkillPicker">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 12 2c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg>
+          技能
+        </n-button>
         <n-button class="find-btn" size="small" quaternary title="会话内查找 (Ctrl+F)" @click="openFind">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           查找
@@ -634,7 +704,7 @@ const itemSize = 120
         <!-- 顶部面板入口:与用户信息同区,点击打开/切换;再次点击已激活的面板则收起工作区 -->
         <div class="ws-launcher">
           <n-button
-            v-for="t in launcherTabs"
+            v-for="t in workspaceTabs"
             :key="t.key"
             size="small"
             quaternary
@@ -809,7 +879,7 @@ const itemSize = 120
               </span>
             </div>
           </div>
-          <div class="workspace-tabs" :class="{ 'ws-full': activeTab === 'browser' }">
+          <div class="workspace-tabs">
             <template v-if="activeTab === 'files'">
               <FileTree :changed-paths="Array.from(chat.changedFilePaths)" @ask-ai="onAskAIFile" />
             </template>
@@ -830,10 +900,27 @@ const itemSize = 120
                 </n-collapse-item>
               </n-collapse>
               <n-divider style="margin: 10px 0" />
-              <FileTree :key="skillTreeKey" root=".opencode/skills" skills-mode :changed-paths="Array.from(chat.changedFilePaths)" @ask-ai="onAskAIFile" />
-            </template>
-            <template v-else-if="activeTab === 'tasks'">
-              <TaskPanel @open-session="onOpenSession" />
+              <div class="user-skills">
+              <div class="us-head">
+                <span class="us-title">用户技能</span>
+                <n-button size="tiny" type="primary" secondary @click="openCreateSkill">＋ 新建技能</n-button>
+              </div>
+              <div v-if="!userSkills.length" class="us-empty">
+                暂无用户技能,点击「新建技能」创建,或在技能市场安装
+              </div>
+              <div v-for="s in userSkills" :key="s.id" class="us-item">
+                <div class="us-main">
+                  <span class="us-name">{{ s.name }}</span>
+                  <span class="us-tag" :class="s.visibility === 1 ? 'pub' : 'pri'">{{ s.visibility === 1 ? '公开' : '私有' }}</span>
+                  <span class="us-tag" :class="s.source === 'installed' ? 'inst' : 'own'">{{ s.source === 'installed' ? '市场安装' : '自建' }}</span>
+                  <div class="us-desc">{{ s.description }}</div>
+                </div>
+                <div class="us-actions">
+                  <n-button size="tiny" quaternary :disabled="s.source === 'installed'" title="编辑(市场安装的技能只读)" @click="openEditSkill(s)">编辑</n-button>
+                  <n-button size="tiny" quaternary type="error" @click="removeUserSkill(s)">删除</n-button>
+                </div>
+              </div>
+            </div>
             </template>
             <template v-else-if="activeTab === 'jobs'">
               <JobRunsPanel />
@@ -867,15 +954,80 @@ const itemSize = 120
     v-model:show="marketplaceShow"
     @installed="onSkillInstalled"
   />
-  <n-modal
-    v-model:show="mcpShow"
-    preset="card"
-    title="我的 MCP Server"
-    :style="{ width: '720px', maxWidth: '92vw' }"
-    :bordered="false"
-  >
-    <McpManager scope="user" />
+  <n-modal v-model:show="skillsOpen" preset="card" title="会话技能配置" style="width: 620px; max-width: 94vw" :bordered="false">
+    <div class="sp-desc">内置技能默认加载;下面是你的自定义技能(市场安装/自己创建),点选到右侧即启用。</div>
+    <div class="sp-grid">
+      <div class="sp-col">
+        <div class="sp-col-title">技能列表</div>
+        <div v-if="!skillAvail.length" class="sp-empty">暂无可用技能</div>
+        <div v-for="s in skillAvail" :key="s" class="sp-item" :title="`启用 ${s}`" @click="addSkill(s)">
+          <span class="sp-name">{{ s }}</span>
+          <span class="sp-arrow">→</span>
+        </div>
+      </div>
+      <div class="sp-col sp-col-selected">
+        <div class="sp-col-title">已选择</div>
+        <div v-if="!skillsPick.length" class="sp-empty">未选择</div>
+        <div v-for="s in skillsPick" :key="s" class="sp-item" :title="`移除 ${s}`" @click="removeSkill(s)">
+          <span class="sp-name">{{ s }}</span>
+          <span class="sp-arrow">✕</span>
+        </div>
+      </div>
+    </div>
+    <div class="sp-actions">
+      <n-button size="small" quaternary @click="skillsOpen = false">取消</n-button>
+      <n-button size="small" type="primary" @click="applySkills">应用</n-button>
+    </div>
   </n-modal>
+
+  <n-modal v-model:show="skillModalShow" preset="card" :title="skillEditingId ? '编辑技能' : '新建技能'" style="width: 640px; max-width: 94vw" :bordered="false">
+    <div class="sk-form">
+      <div class="sk-row">
+        <span class="sk-label">技能名</span>
+        <n-input v-model:value="skillForm.name" :disabled="!!skillEditingId" placeholder="小写字母/数字/连字符,如 note-summarizer" />
+      </div>
+      <div class="sk-row">
+        <span class="sk-label">描述</span>
+        <n-input v-model:value="skillForm.description" placeholder="一句话说明何时使用该技能" />
+      </div>
+      <div class="sk-row">
+        <span class="sk-label">可见性</span>
+        <n-select
+          v-model:value="skillForm.visibility"
+          :options="[{ label: '私有(仅自己可见/使用)', value: 0 }, { label: '公开(发布到技能市场)' , value: 1 }]"
+          placeholder="可见性"
+        />
+      </div>
+      <div class="sk-row">
+        <span class="sk-label">内容(SKILL.md)</span>
+        <n-input
+          v-model:value="skillForm.content"
+          type="textarea"
+          :rows="12"
+          placeholder="技能正文,可含 markdown;frontmatter 会自动补齐(name/description)"
+        />
+      </div>
+      <div class="sk-row">
+        <span class="sk-label">
+          附加文件(脚本/数据/参考等,随技能打包进 skills/&lt;name&gt;/)
+          <n-button size="tiny" quaternary type="primary" style="margin-left:6px" @click="addSkillFile">＋ 添加文件</n-button>
+        </span>
+        <div v-if="skillForm.files.length" class="sk-files">
+          <div v-for="(f, fi) in skillForm.files" :key="fi" class="sk-file">
+            <n-input v-model:value="f.path" size="small" placeholder="路径,如 scripts/tool.py" class="sk-file-path" />
+            <n-button size="tiny" quaternary type="error" @click="removeSkillFile(fi)">✕</n-button>
+            <n-input v-model:value="f.content" type="textarea" :rows="5" placeholder="文件内容" />
+          </div>
+        </div>
+        <div v-else class="sk-empty" style="font-size:12px;color:var(--text-3)">暂无附加文件(可选)</div>
+      </div>
+      <div class="sk-actions">
+        <n-button size="small" quaternary @click="skillModalShow = false">取消</n-button>
+        <n-button size="small" type="primary" @click="saveSkill">保存</n-button>
+      </div>
+    </div>
+  </n-modal>
+
   <AutomationManager v-model:show="automationShow" />
 </template>
 
@@ -904,6 +1056,43 @@ const itemSize = 120
 }
 .conn-badge.ok { color: var(--ok); }
 .conn-badge.ok .conn-dot { background: var(--ok); }
+
+.sp-desc { font-size: 12px; color: var(--text-3); margin-bottom: 10px; }
+.sp-grid { display: flex; gap: 12px; min-height: 220px; }
+.sp-col { flex: 1; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); padding: 8px; overflow:auto; max-height: 320px; background: var(--bg-elev); }
+.sp-col-selected { border-color: rgba(139,92,246,.4); }
+.sp-col-title { font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 6px; }
+.sp-empty { font-size: 12px; color: var(--text-4); padding: 10px 2px; }
+.sp-item { display: flex; align-items: center; justify-content: space-between; padding: 5px 8px; border-radius: 6px; font-size: 13px; cursor: pointer; color: var(--text); }
+.sp-item:hover { background: var(--surface-hover); }
+.sp-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-arrow { color: var(--accent); flex-shrink: 0; }
+.sp-col-selected .sp-arrow { color: var(--err); }
+.sp-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+
+.user-skills { padding: 8px 0; }
+.us-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.us-title { font-size: 13px; font-weight: 600; color: var(--text-2); }
+.us-empty { font-size: 12px; color: var(--text-3); padding: 12px 2px; }
+.us-item { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); margin-bottom: 8px; background: var(--bg-elev); }
+.us-main { min-width: 0; flex: 1; }
+.us-name { font-size: 13px; font-weight: 600; color: var(--text); margin-right: 6px; }
+.us-tag { font-size: 11px; padding: 1px 6px; border-radius: 8px; margin-right: 6px; }
+.us-tag.pub { background: rgba(139,92,246,.14); color: var(--accent); }
+.us-tag.pri { background: var(--surface-hover); color: var(--text-3); }
+.us-tag.own { background: rgba(88,196,155,.12); color: var(--ok); }
+.us-tag.inst { background: #f59e0b22; color: #f59e0b; }
+.us-desc { font-size: 12px; color: var(--text-2); margin-top: 3px; word-break: break-word; }
+.us-actions { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; }
+
+.sk-form { display: flex; flex-direction: column; gap: 12px; }
+.sk-row { display: flex; flex-direction: column; gap: 4px; }
+.sk-label { font-size: 12px; color: var(--text-2); }
+.sk-files { display: flex; flex-direction: column; gap: 8px; }
+.sk-file { display: flex; gap: 6px; align-items: flex-start; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); padding: 6px; }
+.sk-file-path { flex: 1; }
+.sk-file :deep(.n-input) { border-radius: 6px; }
+.sk-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 .conn-badge.warn { color: var(--warn); }
 .conn-badge.warn .conn-dot { background: var(--warn); animation: conn-pulse 1.2s ease-in-out infinite; }
 @keyframes conn-pulse { 0%, 100% { opacity: .4; } 50% { opacity: 1; } }
@@ -1035,7 +1224,7 @@ const itemSize = 120
 
 .workspace-tabs { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 8px 12px; }
 /* 浏览器标签全区域展示:去掉内边距与滚动,画布铺满整个面板 */
-.workspace-tabs.ws-full { padding: 0; overflow: hidden; }
+
 
 /* 移动端:工作区从右侧常驻面板变为底部抽屉 */
 @media (max-width: 768px) {

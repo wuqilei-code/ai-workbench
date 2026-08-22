@@ -3,7 +3,6 @@ import { onMounted, onBeforeUnmount, ref, nextTick, provide, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useFavoritesStore } from '@/stores/favorites'
-import { chatApi } from '@/api/chat'
 import Sidebar from '@/components/Sidebar.vue'
 import Onboarding from '@/components/Onboarding.vue'
 
@@ -27,7 +26,6 @@ const sidebarEvents = ref({
   openMyFiles: false,
   openAutomation: false,
   openFind: false,
-  openMyMcp: false,
   openDashboard: false,
 })
 provide('sidebarEvents', sidebarEvents)
@@ -67,9 +65,6 @@ onMounted(() => {
   applyBreakpoints()
   window.addEventListener('resize', applyBreakpoints)
   initLoading.value = true
-  // 提前拉起该用户 agent 实例(无会话也预热,避免首个「新建会话」冷启动容器等待数秒;
-  // 后端幂等:已就绪时几乎零开销)。失败静默,不影响初始化。
-  chatApi.warmupMine().catch((e) => console.debug('[chat-layout] warmup skipped', e))
   fav.load()
   Promise.all([chat.loadModels(), chat.loadSessions(), chat.loadArchivedSessions()])
     .catch((e) => console.error('[chat-layout] init failed', e))
@@ -117,7 +112,6 @@ onBeforeUnmount(() => {
         @open-my-files="mobileSidebarOpen = false; triggerSidebarEvent('openMyFiles')"
         @open-automation="mobileSidebarOpen = false; triggerSidebarEvent('openAutomation')"
         @open-find="mobileSidebarOpen = false; triggerSidebarEvent('openFind')"
-        @open-my-mcp="mobileSidebarOpen = false; triggerSidebarEvent('openMyMcp')"
         @open-dashboard="mobileSidebarOpen = false; triggerSidebarEvent('openDashboard')"
       />
       </div>
@@ -134,7 +128,6 @@ onBeforeUnmount(() => {
         @open-my-files="triggerSidebarEvent('openMyFiles')"
         @open-automation="triggerSidebarEvent('openAutomation')"
         @open-find="triggerSidebarEvent('openFind')"
-        @open-my-mcp="triggerSidebarEvent('openMyMcp')"
         @open-dashboard="triggerSidebarEvent('openDashboard')"
       />
       <n-layout>

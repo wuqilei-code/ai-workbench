@@ -1,6 +1,5 @@
 package com.aiworkbench.service;
 
-import com.aiworkbench.config.OpencodeProperties;
 import com.aiworkbench.dto.chat.SkillInfoVo;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,21 +13,50 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
 
-/** 内置全局技能只读列表:读取该用户配置目录 ~/.config/opencode/skills/ 下的 SKILL.md(name/description)。 */
+/**
+ * 内置技能只读列表:读取该用户的 deepagents 技能根
+ * {@code workspace/users/<userId>/skills/} 下的 SKILL.md(name/description)。
+ * 与 agent-service 的 /skills 虚拟根同址(agent 实际加载的就是这份)。
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class SkillService {
 
-    private final OpencodeProperties props;
+    private final WorkspaceService workspaceService;
+    private final AgentSkillSeeder agentSkillSeeder;
 
-    /** 内置(全局)技能列表;用户配置未播种时回退到模板目录。 */
+    /** 顶部"内置技能"列表:仅平台内置(默认加载);用户自定义技能不在此列,出现在用户技能区/会话配置。 */
     public List<SkillInfoVo> builtinSkills(Long userId) {
-        int uid = props.uidOf(userId);
-        Path perUser = Paths.get(props.getPerUserDataRoot(), String.valueOf(uid), "home", ".config", "opencode", "skills");
-        Path dir = Files.isDirectory(perUser) ? perUser
-                : Paths.get(props.getTemplateDir(), "skills");
-        return listFrom(dir);
+        agentSkillSeeder.seed(userId);
+        Path project = Paths.get(workspaceService.userDir(userId));
+        Path skillsDir = project.getParent().resolve("skills");
+        return listFrom(skillsDir).stream()
+                .filter(s -> BUILTIN_NAMES.contains(s.getName()))
+                .toList();
+    }
+
+    /** 平台内置技能名(与 agent-service 镜像 skills/ 目录一致;默认每会话加载,不出现在自定义勾选) */
+    public static final java.util.Set<String> BUILTIN_NAMES = java.util.Set.of(
+            "browser-operate", "create-skill", "docx", "html-report", "pdf", "pptx", "xlsx");
+
+    /** 用户自定义技能(可勾选按会话加载):skills 根下除内置外的技能名。 */
+    public java.util.List<String> customSkillNames(Long userId) {
+        agentSkillSeeder.seed(userId);
+        Path project = Paths.get(workspaceService.userDir(userId));
+        Path skillsDir = project.getParent().resolve("skills");
+        if (!Files.isDirectory(skillsDir)) return List.of();
+        try (Stream<Path> dirs = Files.list(skillsDir)) {
+            return dirs.filter(Files::isDirectory)
+                    .map(d -> d.getFileName().toString())
+                    .filter(n -> !BUILTIN_NAMES.contains(n))
+                    .filter(n -> Files.isRegularFile(skillsDir.resolve(n).resolve("SKILL.md")))
+                    .sorted()
+                    .toList();
+        } catch (IOException e) {
+            log.warn("list custom skills failed: {}", e.toString());
+            return List.of();
+        }
     }
 
     private List<SkillInfoVo> listFrom(Path skillsDir) {
@@ -45,7 +73,7 @@ public class SkillService {
                 }
                 String[] fm = parseFrontmatter(sk);
                 if (fm[0] == null) {
-                    continue; // 无合法 name 的技能,opencode 也不会加载
+                    continue; // 无合法 name 的技能,不会加载
                 }
                 result.add(SkillInfoVo.builder()
                         .name(fm[0])
@@ -53,7 +81,7 @@ public class SkillService {
                         .build());
             }
         } catch (IOException e) {
-            log.warn("list builtin skills failed: {}", e.toString());
+            log.warn("list skills failed: {}", e.toString());
         }
         return result;
     }

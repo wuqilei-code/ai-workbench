@@ -1,27 +1,28 @@
 import { http, unwrap } from './http'
-import type { SessionVo, MessageVo, CommandItem, AgentItem, SkillInfo, TaskInfo, TemplateVo, MarketplaceSkillVo } from '@/types'
+import type { SessionVo, MessageVo, SkillInfo, TemplateVo, MarketplaceSkillVo } from '@/types'
 
 export const chatApi = {
   listSessions: () => http.get<SessionVo[]>('/chat/sessions').then(unwrap),
   listArchivedSessions: () => http.get<SessionVo[]>('/chat/sessions/archived').then(unwrap),
   searchSessions: (q: string) => http.get<SessionVo[]>('/chat/sessions/search', { params: { q } }).then(unwrap),
   builtinSkills: () => http.get<SkillInfo[]>('/chat/skills/builtin').then(unwrap),
-  listTasks: () => http.get<TaskInfo[]>('/chat/tasks').then(unwrap),
-  taskLog: (id: string, tail = 8000) =>
-    http.get<string>(`/chat/tasks/${encodeURIComponent(id)}/log`, { params: { tail } }).then(unwrap),
-  cleanupTask: (id: string) => http.delete(`/chat/tasks/${encodeURIComponent(id)}`),
-  createSession: (data: { title?: string; providerId?: string; modelId?: string; agent?: string }) =>
+  /** 用户自定义技能名(可勾选按会话加载) */
+  customSkills: () => http.get<string[]>('/chat/skills/custom').then(unwrap),
+  /** 我的技能(user_skill:自建/安装) */
+  listMineSkills: () => http.get<any[]>('/chat/skills/mine').then(unwrap),
+  createSkill: (data: { name: string; description?: string; content?: string; visibility?: number; files?: { path: string; content: string }[] }) =>
+    http.post<any>('/chat/skills/mine', data).then(unwrap),
+  updateSkill: (id: number, data: { name?: string; description?: string; content?: string; visibility?: number; files?: { path: string; content: string }[] }) =>
+    http.put<any>(`/chat/skills/mine/${id}`, data).then(unwrap),
+  deleteSkill: (id: number) => http.delete(`/chat/skills/mine/${id}`),
+  createSession: (data: { title?: string; providerId?: string; modelId?: string; agent?: string; skills?: string[] }) =>
     http.post<SessionVo>('/chat/sessions', data).then(unwrap),
   /** 导入会话:上传导出的 JSON,返回新建会话 */
   importSession: (json: string) => http.post<SessionVo>('/chat/sessions/import', { json }).then(unwrap),
-  listAgents: () => http.get<AgentItem[]>('/chat/sessions/agents').then(unwrap),
   getSession: (id: number) => http.get<SessionVo>(`/chat/sessions/${id}`).then(unwrap),
-  updateSession: (id: number, data: Partial<{ title: string; providerId: string; modelId: string; archived: number; pinned: number; agent: string }>) =>
+  updateSession: (id: number, data: Partial<{ title: string; providerId: string; modelId: string; archived: number; pinned: number; agent: string; skills: string[] }>) =>
     http.patch<SessionVo>(`/chat/sessions/${id}`, data).then(unwrap),
   deleteSession: (id: number) => http.delete(`/chat/sessions/${id}`),
-  warmup: (id: number) => http.post(`/chat/sessions/${id}/warmup`),
-  /** 按当前用户预热 agent(无需会话)。登录/进主页时调用,提前拉起实例避免新建会话冷启动等待 */
-  warmupMine: () => http.post('/chat/sessions/warmup'),
   /** 消息历史(游标分页):beforeId 向上翻页取更早,afterId 增量追平,都不传取最新 limit 条 */
   listMessages: (id: number, opts?: { limit?: number; beforeId?: number; afterId?: number }) =>
     http.get<MessageVo[]>(`/chat/sessions/${id}/messages`, {
@@ -33,18 +34,9 @@ export const chatApi = {
   sendMessage: (id: number, data: { text: string; providerId?: string; modelId?: string }) =>
     http.post(`/chat/sessions/${id}/messages`, data),
   abort: (id: number) => http.post<boolean>(`/chat/sessions/${id}/abort`).then(unwrap),
-  /** 主动压缩会话(opencode summarize) */
-  summarizeSession: (id: number) => http.post<boolean>(`/chat/sessions/${id}/summarize`).then(unwrap),
-  replyQuestion: (sessionId: number, requestId: string, answers: string[][]) =>
-    http.post(`/chat/sessions/${sessionId}/question/${requestId}/reply`, { answers }),
-  rejectQuestion: (sessionId: number, requestId: string) =>
-    http.post(`/chat/sessions/${sessionId}/question/${requestId}/reject`),
-  replyPermission: (sessionId: number, permissionId: string, reply: 'once' | 'always' | 'reject') =>
-    http.post(`/chat/sessions/${sessionId}/permission/${permissionId}/reply`, { reply }),
-  listCommands: (sessionId: number) =>
-    http.get<CommandItem[]>(`/chat/sessions/${sessionId}/commands`).then(unwrap),
-  runCommand: (sessionId: number, data: { command: string; arguments?: string }) =>
-    http.post(`/chat/sessions/${sessionId}/commands`, data),
+  /** 人工确认(HITL):允许/拒绝危险操作,续跑被中断的生成 */
+  replyPermission: (sessionId: number, requestId: string, decision: 'approve' | 'reject') =>
+    http.post<boolean>(`/chat/sessions/${sessionId}/permission/${requestId}/reply`, { decision }).then(unwrap),
   listTemplates: () => http.get<TemplateVo[]>('/chat/templates').then(unwrap),
   /** 首页展示的模板(用户启用的) */
   homeTemplates: () => http.get<TemplateVo[]>('/chat/templates/home').then(unwrap),

@@ -1,6 +1,6 @@
 package com.aiworkbench.service.opencode;
 
-import com.aiworkbench.service.opencode.process.AgentContainerManager;
+import com.aiworkbench.service.agent.BrowserContainerManager;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -40,7 +40,7 @@ import java.util.function.Consumer;
 @Slf4j
 public class BrowserCdpClient {
 
-    private static final int CDP_PORT = AgentContainerManager.BROWSER_CDP_PORT;
+    private static final int CDP_PORT = BrowserContainerManager.BROWSER_CDP_PORT;
     private static final Duration HTTP_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration CMD_TIMEOUT_SECONDS = Duration.ofSeconds(8);
 
@@ -58,7 +58,7 @@ public class BrowserCdpClient {
             Map.entry("PageUp", 33), Map.entry("PageDown", 34));
 
     private final Long userId;
-    private final AgentContainerManager agentContainerManager;
+    private final BrowserContainerManager agentContainerManager;
     private final ObjectMapper objectMapper;
 
     private final AtomicLong idSeq = new AtomicLong();
@@ -70,7 +70,7 @@ public class BrowserCdpClient {
     private volatile Consumer<byte[]> frameSink;
     private volatile String attachedTargetId;
 
-    public BrowserCdpClient(Long userId, AgentContainerManager agentContainerManager, ObjectMapper objectMapper) {
+    public BrowserCdpClient(Long userId, BrowserContainerManager agentContainerManager, ObjectMapper objectMapper) {
         this.userId = userId;
         this.agentContainerManager = agentContainerManager;
         this.objectMapper = objectMapper;

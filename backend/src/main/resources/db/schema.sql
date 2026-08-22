@@ -28,17 +28,18 @@ ALTER TABLE users ADD UNIQUE INDEX uk_users_uid (uid);
 CREATE TABLE IF NOT EXISTS chat_session (
     id                  BIGINT       NOT NULL AUTO_INCREMENT,
     user_id             BIGINT       NOT NULL,
-    opencode_session_id VARCHAR(128) NOT NULL,
+    agent_session_id    VARCHAR(128) NOT NULL,
     title               VARCHAR(255) NOT NULL DEFAULT 'New Chat',
     agent               VARCHAR(64)  NOT NULL DEFAULT 'chat',
     provider_id         VARCHAR(64)  NULL,
     model_id            VARCHAR(128) NULL,
     archived            TINYINT      NOT NULL DEFAULT 0,
     pinned              TINYINT      NOT NULL DEFAULT 0,
+    skills              JSON         NULL COMMENT '会话勾选启用的自定义技能名数组(deepagents;空=仅内置技能)',
     created_at          DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at          DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (id),
-    UNIQUE KEY uk_session_opencode (opencode_session_id),
+    UNIQUE KEY uk_session_agent (agent_session_id),
     KEY idx_session_user (user_id, updated_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -49,14 +50,14 @@ CREATE TABLE IF NOT EXISTS chat_message (
     id                  BIGINT       NOT NULL AUTO_INCREMENT,
     session_id          BIGINT       NOT NULL,
     user_id             BIGINT       NOT NULL,
-    opencode_message_id VARCHAR(128) NULL,
+    agent_message_id    VARCHAR(128) NULL,
     -- 冗余会话的 provider/model,供按模型统计 token/成本(从 chat_session 复制,写时落列)
     provider_id         VARCHAR(64)  NULL,
     model_id            VARCHAR(128) NULL,
     role                VARCHAR(16)  NOT NULL,
     content             MEDIUMTEXT   NULL,
     parts               JSON         NULL,
-    tokens              JSON         NULL COMMENT 'opencode assistant 消息真实 token 用量 {input,output,reasoning,cache:{read,write}}',
+    tokens              JSON         NULL COMMENT 'assistant 消息真实 token 用量 {input,output,reasoning,cache:{read,write}}(deepagents 轨道为 NULL)',
     -- 方案 A:从 tokens/parts JSON 抽取的数值列,写时落列,供驾驶舱聚合(避免运行时解析 JSON)
     input_tokens        BIGINT       NULL COMMENT '输入 token(JSON_EXTRACT tokens.input)',
     output_tokens       BIGINT       NULL COMMENT '输出 token(tokens.output)',
@@ -416,3 +417,33 @@ UPDATE skill_marketplace SET files='[{"path":"references/review-checklist.md","c
 -- data-cleaner attached files backfill
 UPDATE skill_marketplace SET files='[{"content":"#!/usr/bin/env python3\\n# -*- coding: utf-8 -*-\\n\\"\\"\\"CSV cleaning scaffold: dedupe, drop empties, trim whitespace, unify types.\\"\\"\\"\\nimport sys\\nimport pandas as pd\\n\\n\\ndef clean(df):\\n    df = df.drop_duplicates()\\n    df = df.dropna(how=''all'')\\n    for col in df.select_dtypes(include=''object'').columns:\\n        df[col] = df[col].astype(str).str.strip()\\n    return df\\n\\n\\ndef main():\\n    src = sys.argv[1]\\n    df = pd.read_csv(src)\\n    df = clean(df)\\n    df.to_csv(''cleaned_'' + src.split(''/'')[-1], index=False)\\n\\n\\nif __name__ == ''__main__'':\\n    main()","path":"scripts/clean.py"},{"content":"name,dept,email,age\\n张三,研发,zhang@acme.io,30\\n李四,研发,lisi@acme.io,28\\n张三,研发,zhang@acme.io,30\\n王五,市场,wang@acme.io,32\\n孔,市场,,34","path":"data/sample.csv"}]' WHERE user_id=0 AND name='data-cleaner';
 
+
+-- 用户技能表:存储用户自建与从市场安装的技能(私有/公开)。
+CREATE TABLE IF NOT EXISTS user_skill (
+    id          BIGINT       NOT NULL AUTO_INCREMENT,
+    user_id     BIGINT       NOT NULL COMMENT '归属用户',
+    name        VARCHAR(128) NOT NULL COMMENT '技能名(与 skills/<name>/SKILL.md 目录一致)',
+    description VARCHAR(512) NOT NULL DEFAULT '',
+    content     MEDIUMTEXT   NULL COMMENT 'SKILL.md 正文(含 frontmatter)',
+    files       JSON         NULL COMMENT '附加文件 [{path,content}](脚本/数据/参考等)',
+    visibility  TINYINT      NOT NULL DEFAULT 0 COMMENT '0=私有 1=公开(公开进技能市场)',
+    source      VARCHAR(16)  NOT NULL DEFAULT 'self' COMMENT 'self=自建 installed=从市场安装',
+    source_skill_id BIGINT   NULL COMMENT 'installed 来源技能(id)',
+    created_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_user_skill_name (user_id, name),
+    KEY idx_user_skill_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Phase: 去 opencode 化 —— 列改名(opencode_* → agent_*)。
+-- 幂等性:新库 CREATE TABLE 已建新列,下面语句报"未知列/重复索引/未知索引"错误由 continue-on-error 忽略;
+-- 老库首次启动完成改名,之后报错忽略。
+ALTER TABLE chat_session RENAME COLUMN opencode_session_id TO agent_session_id;
+ALTER TABLE chat_message RENAME COLUMN opencode_message_id TO agent_message_id;
+ALTER TABLE chat_session DROP INDEX uk_session_opencode;
+ALTER TABLE chat_session ADD UNIQUE INDEX uk_session_agent (agent_session_id);
+-- 会话技能选择列(老库补齐,幂等)
+ALTER TABLE chat_session ADD COLUMN skills JSON NULL;
+-- 用户技能附加文件列(老库补齐,幂等)
+ALTER TABLE user_skill ADD COLUMN files JSON NULL;

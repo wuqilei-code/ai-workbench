@@ -16,7 +16,6 @@ const emit = defineEmits<{
   'open-my-files': []
   'open-automation': []
   'open-find': []
-  'open-my-mcp': []
   'open-dashboard': []
 }>()
 
@@ -33,8 +32,6 @@ function toggleCollapsed() {
 /** 归档视图开关:false=主列表, true=已归档列表 */
 const viewArchived = ref(false)
 const sessions = computed(() => viewArchived.value ? chat.archivedSessions : chat.sessions)
-const agents = computed(() => chat.agents)
-const agentMenuOpen = ref(false)
 /** 耗时操作进行中:会话导出/导入等,显示轻量遮罩防止重复点击 */
 const busy = ref('')
 function withBusy<T>(label: string, fn: () => Promise<T>): Promise<T> {
@@ -112,30 +109,6 @@ async function onOpenSearchResult(s: { id: number }) {
 async function onViewArchived(v: boolean) {
   viewArchived.value = v
   if (v) await withBusy('正在加载归档会话…', () => chat.loadArchivedSessions())
-}
-
-/** agent 下拉选项:默认 + 可用 primary/all agents */
-const agentOptions = computed(() => [
-  { label: '默认', key: '__default__' },
-  ...agents.value.map((a) => ({ label: a.name, key: a.name })),
-])
-
-async function onAgentMenuShow(show: boolean) {
-  if (show) {
-    await chat.loadAgents()
-    agentMenuOpen.value = true
-  } else {
-    agentMenuOpen.value = false
-  }
-}
-
-async function onAgentSelect(key: string) {
-  try {
-    const s = await withBusy('正在新建会话…', () => chat.createSession('New Chat', key === '__default__' ? undefined : key))
-    router.push(`/session/${s.id}`)
-  } catch (e: any) {
-    msg.error(e?.message || '新建会话失败')
-  }
 }
 
 async function newChat() {
@@ -375,7 +348,7 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
       </div>
       <div class="nav-item" @click="newChat">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        <span>新建任务</span>
+        <span>新建对话</span>
       </div>
       <div class="nav-item" @click="emit('open-plugin-market')">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
@@ -389,24 +362,11 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
         <span>模板库</span>
       </div>
-      <div class="nav-item" @click="emit('open-my-mcp')">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>
-        <span>我的MCP</span>
-      </div>
     </div>
 
     <div class="session-section">
       <div class="section-header">
         <span class="section-title">任务列表</span>
-        <n-dropdown
-          :options="agentOptions"
-          :show="agentMenuOpen"
-          trigger="click"
-          @update:show="onAgentMenuShow"
-          @select="onAgentSelect"
-        >
-          <n-button size="tiny" quaternary circle title="选择 agent 新建会话">+</n-button>
-        </n-dropdown>
       </div>
 
       <div class="search-box">

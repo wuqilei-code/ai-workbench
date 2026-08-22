@@ -24,7 +24,6 @@ const userMenuOptions = computed(() => {
       children: [
         { label: '用户管理', key: '/admin/users' },
         { label: '模型管理', key: '/admin/providers' },
-        { label: 'MCP 服务', key: '/admin/mcps' },
         { label: '用量统计', key: '/admin/usage' },
       ],
     })
