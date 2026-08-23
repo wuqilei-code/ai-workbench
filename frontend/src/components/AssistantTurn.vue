@@ -13,6 +13,7 @@ import ChatMessage from './ChatMessage.vue'
 import DeliverableBar from './DeliverableBar.vue'
 import FilePreview from './preview/FilePreview.vue'
 import ToolCallItem from './ToolCallItem.vue'
+import WidgetFrame from './WidgetFrame.vue'
 
 const props = defineProps<{
   turn: Turn
@@ -233,6 +234,32 @@ const deliverables = computed(() =>
   turnInProgress.value ? [] : collectDeliverables(props.turn),
 )
 
+const fileDeliverables = computed(() =>
+  deliverables.value.filter((d) => !/^widgets\/[^/]+\.html$/i.test(d.path)),
+)
+
+/** 按时间线穿插:某一步里 pure_show_widget 已产出的组件路径(流式期间工具一完成即出现) */
+function stepWidgetPaths(step: Step | null): string[] {
+  if (!step) return []
+  return (step.toolCalls ?? [])
+    .filter((tc) => tc.name === 'pure_show_widget' && tc.outputs?.length)
+    .flatMap((tc) => tc.outputs!.map((o) => o.path))
+    .filter((p) => /^widgets\/[^/]+\.html$/i.test(p))
+}
+
+/** chip 展示过滤:已完成且已内联渲染的 pure_show_widget 不再显示原始 chip(避免 [WIDGET_FILE] 噪声) */
+function displayToolCalls(step: Step | null): ToolCall[] {
+  if (!step) return []
+  return (step.toolCalls ?? []).filter(
+    (tc) => !(tc.name === 'pure_show_widget' && tc.outputs?.length),
+  )
+}
+
+/** 组件内「追问」按钮(window.sendPrompt):直接作为新消息发送 */
+function onWidgetPrompt(text: string) {
+  void chat.sendMessage(text)
+}
+
 // ---------- HITL 人工确认(危险操作) ----------
 
 /** 本 turn 内待用户允许/拒绝的权限请求(挂在其 assistant 消息的 parts.pendingPermission 上) */
@@ -279,11 +306,19 @@ const permArgsText = computed(() => {
 
 // ---------- 折叠控制(受控 expanded-names)----------
 
+/** 本 turn 是否含内联组件(含则保持思考区展开,组件不能被折叠藏掉) */
+const hasStepWidgets = computed(
+  () =>
+    props.turn.steps.some((s) => stepWidgetPaths(s).length > 0) ||
+    stepWidgetPaths(props.turn.finalAnswer).length > 0,
+)
+
 const expandedNames = computed<string[]>(() => {
   const ov = chat.manualCollapseOverride[props.turn.id]
   if (ov !== undefined) return ov ? ['thinking'] : []
-  // 流式期间展开(推理/步骤按序滚动),完成后折叠;用户可点头部手动展开/收起
-  if (turnInProgress.value) return ['thinking']
+  // 流式期间展开(推理/步骤按序滚动),完成后折叠;用户可点头部手动展开/收起。
+  // 含内联组件的 turn 例外:默认保持展开,否则组件会随折叠一起消失。
+  if (turnInProgress.value || hasStepWidgets.value) return ['thinking']
   return []
 })
 
@@ -399,8 +434,8 @@ function stepHtml(step: Step): string {
       :turn-id="props.turn.id"
     />
     <DeliverableBar
-      v-if="deliverables.length"
-      :items="deliverables"
+      v-if="fileDeliverables.length"
+      :items="fileDeliverables"
       :busy="downloadingAll"
       :downloading-path="downloadingPath"
       @preview="previewFile"
@@ -457,28 +492,47 @@ function stepHtml(step: Step): string {
               v-html="stepHtml(step)"
             />
             <span v-if="isStepActive(step) && step.kind !== 'reason'" class="cursor">▋</span>
-            <div v-if="step.toolCalls.length" class="tool-calls">
+            <div v-if="displayToolCalls(step).length" class="tool-calls">
               <ToolCallItem
-                v-for="tc in step.toolCalls"
+                v-for="tc in displayToolCalls(step)"
                 :key="tc.id || tc.name"
                 :tc="tc"
                 @download="downloadFile"
               />
             </div>
+            <!-- dynamic-ui 内联组件:紧跟其调用发生的步骤位置,穿插在回答时间线中 -->
+            <WidgetFrame
+              v-for="wp in stepWidgetPaths(step)"
+              :key="wp"
+              :path="wp"
+              @prompt="onWidgetPrompt"
+            />
           </div>
           <div
             v-if="turn.finalAnswer && turn.finalAnswer.toolCalls.length"
             class="step"
           >
-            <div class="tool-calls" v-if="turn.finalAnswer.toolCalls.length">
+            <div class="tool-calls" v-if="displayToolCalls(turn.finalAnswer).length">
               <ToolCallItem
-                v-for="tc in turn.finalAnswer.toolCalls"
+                v-for="tc in displayToolCalls(turn.finalAnswer)"
                 :key="tc.id || tc.name"
                 :tc="tc"
                 @download="downloadFile"
               />
             </div>
+            <WidgetFrame
+              v-for="wp in stepWidgetPaths(turn.finalAnswer)"
+              :key="wp"
+              :path="wp"
+              @prompt="onWidgetPrompt"
+            />
           </div>
+          <!-- 正在流式生成的组件:CSS 先到先解析,HTML/SVG 块到一块画一块;定稿后由文件版无缝接管(仅限正在生成的回合,避免历史回合重复渲染) -->
+          <WidgetFrame
+            v-if="turnInProgress && chat.streamingWidgetCode?.code"
+            :live-code="chat.streamingWidgetCode.code"
+            @prompt="onWidgetPrompt"
+          />
         </NCollapseItem>
       </NCollapse>
 
@@ -565,8 +619,8 @@ function stepHtml(step: Step): string {
 
       <!-- 结果文件区:AI 声明的交付文件,点击预览 -->
       <DeliverableBar
-        v-if="deliverables.length"
-        :items="deliverables"
+        v-if="fileDeliverables.length"
+        :items="fileDeliverables"
         :busy="downloadingAll"
         @preview="previewFile"
         @download="downloadFile"

@@ -294,6 +294,11 @@ public class AgentStreamBridge {
                         }
                     }
                 }
+                case "widget_delta" -> {
+                    // dynamic-ui 组件参数流:纯实时转发供前端逐块渲染;
+                    // 不落时间线/不持久化(组件定稿由 tool_result 的 outputs 路径承载)
+                    hub.dispatch(ts.sessionId, "widget_delta", payload);
+                }
                 case "tool" -> {
                     String name = payload.path("name").asText("tool");
                     String callId = payload.path("id").asText("");

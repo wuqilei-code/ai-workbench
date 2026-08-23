@@ -217,7 +217,8 @@ def _align_decisions(agent, cfg, decision: dict) -> dict:
 
 
 def _emit_stream_message(msg) -> list[str]:
-    """messages 模式中的 token 增量:reasoning_content → reason 事件,正文文本 → delta 事件。"""
+    """messages 模式中的 token 增量:reasoning_content → reason 事件,正文文本 → delta 事件,
+    pure_show_widget 参数流 → widget_delta 事件(逐块流式渲染组件)。"""
     outs: list[str] = []
     if not getattr(msg, "type", "").endswith("AIMessageChunk"):
         return outs
@@ -228,7 +229,101 @@ def _emit_stream_message(msg) -> list[str]:
     content = getattr(msg, "content", "") or ""
     if content and isinstance(content, str):
         outs.append(_sse("delta", {"content": content}))
+    for tcc in getattr(msg, "tool_call_chunks", None) or []:
+        # 兼容 dict 与 ToolCallChunk 对象两种形态
+        if isinstance(tcc, dict):
+            get = tcc.get
+        else:
+            get = lambda k, d=None: getattr(tcc, k, d)  # noqa: E731
+        # 先按 name 注册解码器:首个 chunk 带 name 但 args 为空,
+        # 后续片段有 args 却不带 name——顺序反了会永远建不了解码器。
+        keys = [str(k) for k in (get("id"), f"idx{get('index')}") if k]
+        dec = next((_WC_DECODERS[k] for k in keys if k in _WC_DECODERS), None)
+        if dec is None:
+            if get("name") != "pure_show_widget":
+                continue  # 其他工具的参数流不跟踪(仅首个 chunk 带 name)
+            dec = _WidgetCodeDecoder(keys)
+            for k in keys:
+                _WC_DECODERS[k] = dec
+        frag = get("args") or ""
+        if not isinstance(frag, str) or not frag:
+            continue
+        try:
+            piece = dec.feed(frag)
+        except Exception:  # noqa: BLE001
+            for k in dec.keys:
+                _WC_DECODERS.pop(k, None)
+            continue
+        if piece:
+            outs.append(_sse("widget_delta", {"id": get("id"), "delta": piece}))
     return outs
+
+
+class _WidgetCodeDecoder:
+    r"""增量解码 pure_show_widget 参数中的 widget_code 字符串(JSON 转义 → 原文)。
+
+    参数是流式到达的 JSON 文本片段;此状态机跳过 `{"widget_code": "` 前缀,
+    之后把转义序列(\n \" \\ \uXXXX…)还原为原文并按到达顺序吐出,
+    使前端能在模型生成过程中逐块渲染组件。
+    """
+
+    _PREFIX = re.compile(r'"widget_code"\s*:\s*"')
+    _SIMPLE = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f"}
+
+    def __init__(self, keys: list[str]) -> None:
+        self.keys = keys    # 该解码器注册的全部键(id + index),清理时一并弹出
+        self._buf = ""      # 尚未消费的原始片段
+        self._pending = ""  # 跨 chunk 的不完整转义序列
+        self._stage = 0     # 0=等前缀, 1=字符串内, 2=已结束
+
+    def feed(self, text: str) -> str:
+        if self._stage >= 2:
+            return ""
+        self._buf += text
+        if self._stage == 0:
+            m = self._PREFIX.search(self._buf)
+            if not m:
+                # 前缀未到:保留尾部即可(前缀最长 ~20 字符)
+                if len(self._buf) > 128:
+                    self._buf = self._buf[-64:]
+                return ""
+            self._buf = self._buf[m.end():]
+            self._stage = 1
+        data = self._pending + self._buf
+        self._buf = ""
+        self._pending = ""
+        res: list[str] = []
+        i, n = 0, len(data)
+        while i < n:
+            ch = data[i]
+            if ch == '"':
+                self._stage = 2  # 字符串闭合,后面没有需要的内容
+                break
+            if ch == "\\":
+                if i + 1 >= n:
+                    self._pending = data[i:]  # 等下一个 chunk 补全转义
+                    break
+                esc = data[i + 1]
+                if esc == "u":
+                    if i + 6 > n:
+                        self._pending = data[i:]
+                        break
+                    try:
+                        res.append(chr(int(data[i + 2:i + 6], 16)))
+                    except ValueError:
+                        res.append(data[i:i + 6])
+                    i += 6
+                    continue
+                res.append(self._SIMPLE.get(esc, esc))
+                i += 2
+                continue
+            res.append(ch)
+            i += 1
+        return "".join(res)
+
+
+# pure_show_widget 参数流式解码器(按工具调用 id/索引;tool_result 时清理)
+_WC_DECODERS: dict[str, "_WidgetCodeDecoder"] = {}
 
 
 # 读 SKILL.md = 加载技能动作(deepagents 渐进式披露:先读说明再照做)。
@@ -271,6 +366,11 @@ def _emit_update(update, user_id: str | None = None) -> list[str]:
             call = calls.get(tc_id)
             if call:
                 outputs = _outputs_for(call[0], call[1])
+                # pure_show_widget:路径由工具运行时生成,从返回内容提取
+                if call[0] == "pure_show_widget" and not outputs:
+                    m = re.search(r"\[WIDGET_FILE\]\s*(\S+)", getattr(msg, "content", "") or "")
+                    if m:
+                        outputs = [{"path": m.group(1)}]
                 # execute 的 shell 写文件:从沙箱目录 diff 的最近变更获取"输出物"路径
                 if call[0] in ("execute", "run") and user_id is not None:
                     sandbox = _current_sandbox(user_id)
@@ -285,6 +385,11 @@ def _emit_update(update, user_id: str | None = None) -> list[str]:
             }
             if outputs:
                 payload["outputs"] = outputs
+            if tc_id:
+                dec = _WC_DECODERS.get(tc_id)
+                if dec is not None:
+                    for k in dec.keys:
+                        _WC_DECODERS.pop(k, None)
             outs.append(_sse("tool_result", payload))
             # 技能加载溯源:读 /skills/<名>/SKILL.md ⇒ 合成 use_skill 记录(带技能名)
             skill = _skill_from_read(call[0], call[1]) if call else None

@@ -23,10 +23,12 @@ from app import config
 from app import workspace as ws
 from app.browser import build_browser_tools
 from app.skill_tool import ReadOnlyBackend, SelectedSkillsBackend, build_skill_tools
+from app.widget_tool import build_widget_tools
 
 # 平台内置技能(默认每个会话都加载;与镜像 agent-service/skills 下的目录名一致)
 BUILTIN_SKILLS = {
     "browser-operate", "create-skill", "docx", "html-report", "pdf", "pptx", "xlsx",
+    "dynamic-ui",
 }
 
 
@@ -260,7 +262,8 @@ class AgentManager:
         backend = _build_backend(user_id, {_skill_name(p) for p in selected_paths})
         agent = create_deep_agent(
             model=_build_model(),
-            tools=list(extra_tools or []) + build_browser_tools(user_id) + build_skill_tools(user_id),
+            tools=list(extra_tools or []) + build_browser_tools(user_id) + build_skill_tools(user_id)
+            + build_widget_tools(user_id),
             system_prompt=effective_prompt,
             backend=backend,
             # 技能不走 deepagents 内置 skills 参数(它每线程只加载一次);改用强制重载中间件,

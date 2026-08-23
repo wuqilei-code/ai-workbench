@@ -48,7 +48,10 @@ _GLOBAL_SKILLS_SRC = Path(os.environ.get("AGENT_GLOBAL_SKILLS") or "/app/skills"
 
 
 def seed_global_skills(user_id: str) -> None:
-    """把平台内置技能(镜像 /app/skills)播种进用户 skills 目录(deepagents /skills/ 虚拟根内,agent 加载用)。"""
+    """把平台内置技能(镜像 /app/skills)播种进用户 skills 目录(deepagents /skills/ 虚拟根内,agent 加载用)。
+
+    整目录复制:多文件技能(如 dynamic-ui 的 scenes/templates)需要子文件才能工作。
+    """
     import shutil
 
     if not _GLOBAL_SKILLS_SRC.is_dir():
@@ -59,10 +62,11 @@ def seed_global_skills(user_id: str) -> None:
             continue
         dst = skills_root(user_id) / d.name / "SKILL.md"
         # 只在缺失时播种;绝不覆盖用户目录中已有的同名技能(可能是用户自建/改过的内容)。
+        # dirs_exist_ok=True:多 worker 并发播种时目录可能已被对方建出,幂等覆盖空壳即可。
         if dst.exists():
             continue
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(src, dst)
+        shutil.copytree(d, skills_root(user_id) / d.name, dirs_exist_ok=True)
 
 
 def list_skills(user_id: str) -> list[str]:

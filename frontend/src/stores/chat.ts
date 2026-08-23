@@ -57,6 +57,8 @@ export const useChatStore = defineStore('chat', () => {
   const streamingText = ref('')
   const streamingMessageId = ref<string | null>(null)
   const isStreaming = ref(false)
+  /** 正在流式生成的 dynamic-ui 组件(pure_show_widget 参数逐块到达,实时累积) */
+  const streamingWidgetCode = ref<{ id: string; code: string } | null>(null)
   /** agent 调用浏览器(browser_*)工具的信号:每次自增,供 UI 自动唤出浏览器面板 */
   const browserToolSignal = ref(0)
   /** 最近一次 browser_* 工具调用时间戳(ms),UI 据此判断「agent 正在操作浏览器」 */
@@ -615,7 +617,31 @@ export const useChatStore = defineStore('chat', () => {
       case 'tool_result': {
         isStreaming.value = true
         touchStreamActivity()
-        resolveToolCall(typeof data.id === 'string' ? data.id : undefined, data.output != null ? String(data.output) : data.name)
+        resolveToolCall(
+          typeof data.id === 'string' ? data.id : undefined,
+          data.output != null ? String(data.output) : data.name,
+          Array.isArray(data.outputs) ? data.outputs : undefined,
+        )
+        // 流式组件定稿:outputs 已写入步骤,同一帧内由文件版组件无缝接管
+        if (streamingWidgetCode.value && data.id === streamingWidgetCode.value.id) {
+          streamingWidgetCode.value = null
+        }
+        break
+      }
+
+      // dynamic-ui 组件参数流:widget_code 逐块到达,实时累积供前端逐块渲染
+      case 'widget_delta': {
+        if (isStreaming.value) touchStreamActivity()
+        const frag: string = typeof data.delta === 'string' ? data.delta : ''
+        if (!frag) break
+        const id = typeof data.id === 'string' ? data.id : 'live'
+        if (streamingWidgetCode.value && streamingWidgetCode.value.id !== id && data.id) {
+          streamingWidgetCode.value = { id, code: '' }
+        } else if (!streamingWidgetCode.value) {
+          streamingWidgetCode.value = { id, code: '' }
+        }
+        streamingWidgetCode.value!.code += frag
+        isStreaming.value = true
         break
       }
 
@@ -771,7 +797,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /** 把 tool_result 配对到 running 工具调用,标记完成并写入输出 */
-  function resolveToolCall(id: string | undefined, output: string) {
+  function resolveToolCall(id: string | undefined, output: string, outputs?: { path: string }[]) {
     let idx = -1
     let tcIdx = -1
     if (id) {
@@ -794,7 +820,7 @@ export const useChatStore = defineStore('chat', () => {
     if (idx < 0 || tcIdx < 0) return
     const msg = messages.value[idx]
     const toolCalls = (msg.parts?.toolCalls ? [...msg.parts.toolCalls] : [])
-    toolCalls[tcIdx] = { ...toolCalls[tcIdx], status: 'completed', output }
+    toolCalls[tcIdx] = { ...toolCalls[tcIdx], status: 'completed', output, ...(outputs?.length ? { outputs } : {}) }
     messages.value[idx] = { ...msg, parts: { ...(msg.parts || {}), toolCalls } }
   }
 
@@ -838,6 +864,7 @@ export const useChatStore = defineStore('chat', () => {
     }
     isStreaming.value = false
     streamStartAt.value = 0
+    streamingWidgetCode.value = null
   }
 
   // ---------- HITL 人工确认(危险操作) ----------
@@ -958,6 +985,7 @@ export const useChatStore = defineStore('chat', () => {
   return {
     sessions, archivedSessions, currentSessionId, currentSession, messages, turns, flow, summaries,
     streamingText, streamingMessageId, isStreaming, streamingStuckSeconds, streamingElapsedSeconds, runningActivity,
+    streamingWidgetCode,
     browserToolSignal, lastBrowserToolAt,
     hasPendingInteraction, connected, reconnecting, forceReconnect,
     authExpired, switching, changedFilePaths,
