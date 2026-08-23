@@ -41,9 +41,15 @@ def _sandbox_cdp_endpoint(user_id: str) -> str:
 
 
 def _open_shared_page(user_id: str):
-    """connect_over_cdp 拿到共享浏览器的第一个页面(面板与 agent 共用)。"""
+    """connect_over_cdp 拿到共享浏览器的第一个页面(面板与 agent 共用)。
+
+    懒启动:连接前先幂等拉起浏览器栈(已就绪秒回,未就绪启动并等待)。
+    """
     from playwright.sync_api import sync_playwright
 
+    from app.sandbox import get_docker_sandbox
+
+    get_docker_sandbox(user_id).ensure_browser()
     endpoint = _sandbox_cdp_endpoint(user_id)
     p = sync_playwright().start()
     browser = p.chromium.connect_over_cdp(endpoint)

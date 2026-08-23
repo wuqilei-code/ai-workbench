@@ -4,20 +4,23 @@
 ARG DOCKER_REGISTRY=docker.m.daocloud.io
 FROM ai-workbench-agent AS base
 
-# 浏览器常驻入口:shared Chromium(CDP 转发 9223)+ playwright-mcp(8931),常驻 tail
+# 浏览器常驻入口(懒启动版:仅保活)+ 幂等的浏览器栈拉起脚本
 COPY docker/opencode/browser-entrypoint.sh /opt/aiworkbench/browser-entrypoint.sh
-RUN chmod +x /opt/aiworkbench/browser-entrypoint.sh
+COPY docker/opencode/ensure-browser.sh /opt/aiworkbench/ensure-browser.sh
+RUN chmod +x /opt/aiworkbench/browser-entrypoint.sh /opt/aiworkbench/ensure-browser.sh
 
 # 中文字体:base 已含 simhei.ttf(/usr/share/fonts/truetype/simhei.ttf),无需重复拷贝。
 
-# 非 root 运行用户;HOME 指向挂载进来的工作区(可写);禁运行期自行安装包(防御纵深)
+# 非 root 运行用户;禁运行期自行安装包(防御纵深)
+# HOME/XDG_CACHE_HOME 指向 /tmp(非挂载区):避免 fontconfig 等把缓存写进用户项目
 RUN groupadd -g 10001 agent && useradd -m -u 10001 -g 10001 -s /bin/sh agent \
   && rm -f /usr/local/bin/pip /usr/local/bin/pip3 \
   && rm -rf /usr/local/lib/python3*/site-packages/pip* \
   && rm -rf /usr/local/lib/python3*/ensurepip /usr/lib/python3*/ensurepip
 
 USER 10001:10001
-ENV HOME=/workspace \
+ENV HOME=/tmp \
+    XDG_CACHE_HOME=/tmp/.cache \
     MPLCONFIGDIR=/tmp/mpl \
     PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/ms-playwright \
     PLAYWRIGHT_MCP_ISOLATED=false

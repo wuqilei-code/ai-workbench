@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -34,6 +35,13 @@ public class BrowserContainerManager {
 
     private final WorkspaceProperties props;
     private final WebClient webClient;
+
+    /** isReady 结果短 TTL 缓存:输入事件路径高频调用,docker inspect 子进程(~几十 ms)不能每次都跑 */
+    private static final long READY_CACHE_MS = 800;
+    private final Map<Long, CachedReady> readyCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private record CachedReady(boolean ready, long at) {
+    }
 
     public BrowserContainerManager(
             WorkspaceProperties props,
@@ -59,14 +67,22 @@ public class BrowserContainerManager {
         return "http://" + containerName(userId) + ":" + BROWSER_CDP_PORT;
     }
 
-    /** 沙箱容器是否在运行。 */
+    /** 沙箱容器是否在运行(800ms TTL 缓存,避免输入事件路径高频 spawn docker CLI 子进程)。 */
     public boolean isReady(Long userId) {
+        CachedReady c = readyCache.get(userId);
+        long now = System.currentTimeMillis();
+        if (c != null && now - c.at() < READY_CACHE_MS) {
+            return c.ready();
+        }
+        boolean ready;
         try {
             Result r = run(List.of("docker", "inspect", "-f", "{{.State.Running}}", containerName(userId)));
-            return r.ok() && "true".equals(r.output().trim());
+            ready = r.ok() && "true".equals(r.output().trim());
         } catch (Exception e) {
-            return false;
+            ready = false;
         }
+        readyCache.put(userId, new CachedReady(ready, now));
+        return ready;
     }
 
     /** 兼容旧调用(容器生命周期由 agent-service 管理,无空闲回收回调)。 */
@@ -74,7 +90,8 @@ public class BrowserContainerManager {
         // no-op
     }
 
-    /** 确保沙箱(含浏览器 daemon)就绪:不在运行时请 agent-service 创建。失败静默,后续按 isReady 轮询。 */
+    /** 确保沙箱与浏览器栈就绪:不在运行时请 agent-service 创建并懒启动浏览器
+     *  (首次拉起 chromium 需数秒,超时放宽到 35s)。失败静默,后续按 isReady 轮询。 */
     public void getOrStart(Long userId) {
         if (isReady(userId)) {
             return;
@@ -86,10 +103,28 @@ public class BrowserContainerManager {
                     .bodyValue("{}")
                     .retrieve()
                     .toBodilessEntity()
-                    .block(java.time.Duration.ofSeconds(20));
+                    .block(java.time.Duration.ofSeconds(35));
             log.info("requested sandbox ensure for user {}", userId);
         } catch (Exception e) {
             log.warn("sandbox ensure request failed (user={}): {}", userId, e.toString());
+        }
+    }
+
+    /** 停止沙箱容器(浏览器面板「关闭浏览器」):请求 agent-service 停容器,立即释放资源。
+     *  容器保留不删除,后续 ensure 按需重建。 */
+    public void stop(Long userId) {
+        readyCache.put(userId, new CachedReady(false, System.currentTimeMillis()));
+        try {
+            webClient.post()
+                    .uri("/api/users/{userId}/sandbox/stop", userId)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue("{}")
+                    .retrieve()
+                    .toBodilessEntity()
+                    .block(java.time.Duration.ofSeconds(15));
+            log.info("requested sandbox stop for user {}", userId);
+        } catch (Exception e) {
+            log.warn("sandbox stop request failed (user={}): {}", userId, e.toString());
         }
     }
 

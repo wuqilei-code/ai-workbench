@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { browserStop } from '../api/browser'
 
 /**
  * 共享浏览器实时画面(仅供查看 + 接管):
  * - 后端每帧推送 JPEG 二进制(WebSocket),解码后直接画到 Canvas 展示(保证可用性);
- * - 只经技能(browser-operate)唤出,无地址栏/后退前进/标签页管理;
+ * - 只经技能(browser-operate)唤出;标签栏支持切换/关闭/新建标签页与一键关闭浏览器;
  * - 在画面上点击/滚轮/键盘直接发送接管事件,与 AI 共享同一浏览器上下文。
  */
 
@@ -12,15 +13,30 @@ const props = withDefaults(
   defineProps<{ autoActive?: boolean; follow?: boolean }>(),
   { autoActive: true, follow: false },
 )
+const emit = defineEmits<{ (e: 'stopped'): void }>()
+
+interface TabInfo {
+  id: string
+  title?: string
+  url?: string
+  active?: boolean
+}
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const stateText = ref('连接中…')
 const stateOk = ref(false)
 const connected = ref(false)
 const clock = ref(0)
+const tabs = ref<TabInfo[]>([])
+/** 用户主动「关闭浏览器」后不再自动重连/重绘(等待父组件收起面板) */
+let stoppedByUser = false
 
 // 非响应式:每帧都更新也不触发 Vue 重渲染(实时指示靠 clock 每秒刷新一次读取)
 let lastFrameAt = 0
+// 保活自愈:WS 半开(网络静默断掉)时 onclose 不触发,画面会永远冻结;
+// 周期 ping + 活跃超时强制重连
+let lastActivityAt = Date.now()
+let pingTimer: ReturnType<typeof setInterval> | null = null
 
 let ws: WebSocket | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -44,6 +60,7 @@ function getWsUrl(): string {
 }
 
 function connect() {
+  if (stoppedByUser) return
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return
   ws = new WebSocket(getWsUrl())
   ws.binaryType = 'arraybuffer'
@@ -60,9 +77,12 @@ function connect() {
       const bytes = new Uint8Array(ev.data)
       const x = (bytes[0] << 8) | bytes[1]
       const y = (bytes[2] << 8) | bytes[3]
+      const w = (bytes[4] << 8) | bytes[5]
+      const h = (bytes[6] << 8) | bytes[7]
       const jpeg = bytes.slice(8)
-      onRect(x, y, jpeg.buffer.slice(jpeg.byteOffset, jpeg.byteOffset + jpeg.byteLength))
+      onRect(x, y, w, h, jpeg.buffer.slice(jpeg.byteOffset, jpeg.byteOffset + jpeg.byteLength))
       lastFrameAt = Date.now()
+      lastActivityAt = lastFrameAt
       stateText.value = ''
       stateOk.value = true
       stopWarmupRetry()
@@ -75,6 +95,10 @@ function connect() {
       } else if (data.type === 'error') {
         stateText.value = data.message || '浏览器未就绪'
         stateOk.value = false
+      } else if (data.type === 'tabs') {
+        tabs.value = Array.isArray(data.tabs) ? data.tabs : []
+      } else if (data.type === 'pong') {
+        lastActivityAt = Date.now()
       } else if (data.type === 'frame-meta') {
         const canvas = canvasRef.value
         if (canvas && (canvas.width !== data.width || canvas.height !== data.height)) {
@@ -94,8 +118,42 @@ function connect() {
 }
 
 function scheduleReconnect() {
+  if (stoppedByUser) return
   if (reconnectTimer) return
   reconnectTimer = setTimeout(() => { reconnectTimer = null; connect() }, 2000)
+}
+
+// ============ 标签栏:切换 / 关闭 / 新建 + 关闭浏览器 ============
+
+function activateTab(id: string) {
+  sendWs({ action: 'activate', id })
+}
+
+function closeTab(id: string) {
+  // 至少保留一个标签页:全关会让 chromium 退出,整个浏览器栈失效
+  if (tabs.value.length <= 1) return
+  sendWs({ action: 'close', id })
+}
+
+function newTab() {
+  sendWs({ action: 'newtab' })
+}
+
+async function closeBrowser() {
+  if (!confirm('关闭浏览器?将停止沙箱容器并释放资源,下次使用时自动重建。')) return
+  try {
+    await browserStop()
+  } catch { /* 后端失败也按已停处理,避免面板卡死 */ }
+  stoppedByUser = true
+  tabs.value = []
+  stateOk.value = false
+  connected.value = false
+  stateText.value = '浏览器已关闭'
+  if (pingTimer) { clearInterval(pingTimer); pingTimer = null }
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+  if (warmupTimer) { clearInterval(warmupTimer); warmupTimer = null }
+  if (ws) { try { ws.close() } catch { /* ignore */ } ws = null }
+  emit('stopped')
 }
 
 function handleState(state: string) {
@@ -115,10 +173,17 @@ function stopWarmupRetry() {
   }
 }
 
-/** 脏矩形绘制:收到某区域 JPEG,解码后贴到画布对应位置(其余区域保留)。 */
-function onRect(x: number, y: number, buf: ArrayBuffer) {
+/** 脏矩形绘制:收到某区域 JPEG,解码后贴到画布对应位置(其余区域保留)。
+ *  越界保护:矩形超出当前画布(如视口被外部改动/元数据丢失),自动扩正画布,避免点击映射错位。
+ *  注意:rw/rh 必须由调用方从帧头解析后传入——buf 已是纯 JPEG,再从中"解析"会读到随机字节,
+ *  曾导致画布被撑到几万像素、画面缩成左上角一小块。 */
+function onRect(x: number, y: number, rw: number, rh: number, buf: ArrayBuffer) {
   const canvas = canvasRef.value
   if (!canvas) return
+  if (rw > 0 && rh > 0 && (x + rw > canvas.width || y + rh > canvas.height)) {
+    canvas.width = Math.max(canvas.width, x + rw)
+    canvas.height = Math.max(canvas.height, y + rh)
+  }
   const ctx = canvas.getContext('2d')
   if (!ctx) return
   const blob = new Blob([buf], { type: 'image/jpeg' })
@@ -211,6 +276,8 @@ function onWindowMouseUp(e: MouseEvent) {
   sendWs({ action: 'release', x: dragActive ? x : pressX, y: dragActive ? y : pressY })
   window.removeEventListener('mousemove', onWindowMouseMove)
   window.removeEventListener('mouseup', onWindowMouseUp)
+  // 拖拽期间指针已离开面板且非跟随模式:现在才允许停推流
+  if (!pointerInside && !props.follow) setLive(false)
 }
 
 function onCanvasWheel(e: WheelEvent) {
@@ -248,7 +315,8 @@ function onPanelEnter() {
 }
 function onPanelLeave() {
   pointerInside = false
-  if (!props.follow) setLive(false)
+  // 拖拽中移出面板不能停推流(验证码拖动常越界):否则画面冻结、像"没反应"
+  if (!props.follow && !dragging) setLive(false)
 }
 watch(
   () => props.follow,
@@ -266,10 +334,22 @@ onMounted(() => {
     setTimeout(() => setLive(true), 300)
   }
   tickTimer = setInterval(() => { clock.value = Date.now() }, 1000)
+  pingTimer = setInterval(() => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      sendWs({ action: 'ping' })
+      // 20s 无任何帧/pong 视为半开死连,强制重连
+      if (Date.now() - lastActivityAt > 20_000) {
+        try { ws.close() } catch { /* ignore */ }
+        ws = null
+        connect()
+      }
+    }
+  }, 10_000)
 })
 
 onBeforeUnmount(() => {
   if (tickTimer) { clearInterval(tickTimer); tickTimer = null }
+  if (pingTimer) { clearInterval(pingTimer); pingTimer = null }
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
   if (ws) { ws.close(); ws = null }
 })
@@ -277,6 +357,28 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="browser-canvas" @mouseenter="onPanelEnter" @mouseleave="onPanelLeave">
+    <div v-if="tabs.length > 0" class="bc-tabbar">
+      <div class="bc-tabs">
+        <div
+          v-for="t in tabs"
+          :key="t.id"
+          class="bc-tab"
+          :class="{ 'bc-tab-active': t.active }"
+          :title="t.title || t.url || ''"
+          @click="activateTab(t.id)"
+        >
+          <span class="bc-tab-label">{{ t.title || t.url || '新标签页' }}</span>
+          <span
+            v-if="tabs.length > 1"
+            class="bc-tab-close"
+            title="关闭标签页"
+            @click.stop="closeTab(t.id)"
+          >×</span>
+        </div>
+      </div>
+      <button class="bc-tabbar-btn" title="新建标签页" @click="newTab">+</button>
+      <button class="bc-tabbar-btn bc-power" title="关闭浏览器(停止沙箱容器并释放资源)" @click="closeBrowser">⏻</button>
+    </div>
     <div class="bc-stage" :class="{ 'bc-empty': !stateOk }">
       <canvas
         ref="canvasRef"
@@ -356,5 +458,83 @@ onBeforeUnmount(() => {
   color: var(--warn);
   background: rgba(0, 0, 0, 0.6);
   border: 1px solid var(--border-soft);
+}
+/* ============ 标签栏 ============ */
+.bc-tabbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 34px;
+  padding: 0 6px;
+  background: var(--bg-soft, #1e1f22);
+  border-bottom: 1px solid var(--border-soft, #333);
+  flex-shrink: 0;
+}
+.bc-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.bc-tabs::-webkit-scrollbar {
+  display: none;
+}
+.bc-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 180px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #bbb;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+.bc-tab:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.bc-tab-active {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+}
+.bc-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.bc-tab-close {
+  padding: 0 3px;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1;
+  color: #999;
+}
+.bc-tab-close:hover {
+  color: #ff7b72;
+  background: rgba(255, 255, 255, 0.12);
+}
+.bc-tabbar-btn {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #aaa;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.bc-tabbar-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+.bc-power:hover {
+  color: #ff7b72;
 }
 </style>

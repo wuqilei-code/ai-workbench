@@ -48,14 +48,15 @@ const WS_MIN = 260
 /** 拖动中残留的事件清理(组件卸载时兜底) */
 let _resizeCleanup: (() => void) | null = null
 
-/** 工作区标签(收起后顶部显示的小图标,点击展开并切换) */
+/** 工作区标签(收起后顶部显示的小图标,点击展开并切换)。浏览器不设顶部入口,仅由对话唤出 */
 const workspaceTabs = [
   { key: 'files', label: '文件', icon: 'M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z' },
   { key: 'skills', label: '技能', icon: 'M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 2.001c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z' },
   { key: 'jobs', label: '定时任务', icon: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2' },
   { key: 'favorites', label: '收藏', icon: 'M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 21 12 17.77 5.82 21 7 14.14 2 9.27l6.91-1.01z' },
-  { key: 'browser', label: '浏览器', icon: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 2.07A8 8 0 0 1 20 12h-7zM4.9 5.8l3.4 3.4A3 3 0 0 0 8 9H5.5A8 8 0 0 1 4.9 5.8zM4 12a8 8 0 0 1 .5-2.8H8a3 3 0 0 0-3 3v.5H4zm0 1h1v1h-1zm3 4.2A8 8 0 0 0 12 20c-1.7 0-3.3-.5-4.6-1.4L9 16.9zM20 12a8 8 0 0 1-.5 2.8H16a3 3 0 0 0 3-3v-.5h1zm-8 8a8 8 0 0 1-3-.6L10 17.6a4 4 0 0 0 2-.6c1 .6 1.9 1 3 1.2zm-1-6a3 3 0 1 1 0-6 3 3 0 0 1 0 6z' },
 ]
+/** 浏览器标签元数据(不在 workspaceTabs 里 → 无顶部按钮;agent 唤出时仍可作为标签展示) */
+const browserTabMeta = { key: 'browser', label: '浏览器', icon: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 2.07A8 8 0 0 1 20 12h-7zM4.9 5.8l3.4 3.4A3 3 0 0 0 8 9H5.5A8 8 0 0 1 4.9 5.8zM4 12a8 8 0 0 1 .5-2.8H8a3 3 0 0 0-3 3v.5H4zm0 1h1v1h-1zm3 4.2A8 8 0 0 0 12 20c-1.7 0-3.3-.5-4.6-1.4L9 16.9zM20 12a8 8 0 0 1-.5 2.8H16a3 3 0 0 0 3-3v-.5h1zm-8 8a8 8 0 0 1-3-.6L10 17.6a4 4 0 0 0 2-.6c1 .6 1.9 1 3 1.2zm-1-6a3 3 0 1 1 0-6 3 3 0 0 1 0 6z' }
 function openWorkspaceTab(key: string) {
   showFiles.value = true
   if (!openTabs.value.includes(key)) openTabs.value.push(key)
@@ -100,7 +101,9 @@ function closeTab(key: string) {
 }
 
 /** 已打开标签的元信息(图标+文案),供标签栏渲染 */
-const openTabList = computed(() => workspaceTabs.filter((t) => openTabs.value.includes(t.key)))
+const openTabList = computed(() =>
+  [...workspaceTabs, browserTabMeta].filter((t) => openTabs.value.includes(t.key)),
+)
 
 /** 拖动面板左缘调整宽度:按住 → 随鼠标移动计算新宽度(限制最小/最大),松开结束。 */
 function startResize(e: MouseEvent) {
@@ -879,7 +882,7 @@ const itemSize = 120
               </span>
             </div>
           </div>
-          <div class="workspace-tabs">
+          <div class="workspace-tabs" :class="{ 'ws-tab-browser': activeTab === 'browser' }">
             <template v-if="activeTab === 'files'">
               <FileTree :changed-paths="Array.from(chat.changedFilePaths)" @ask-ai="onAskAIFile" />
             </template>
@@ -929,7 +932,7 @@ const itemSize = 120
               <FavoritesPanel @open-session="onOpenFavorite" />
             </template>
             <template v-else-if="activeTab === 'browser'">
-              <BrowserCanvas auto-active :follow="browserFollowing" />
+              <BrowserCanvas auto-active :follow="browserFollowing" @stopped="closeTab('browser')" />
             </template>
             <n-empty v-else description="从上方按钮打开面板" style="margin-top: 40px" />
           </div>
@@ -1014,8 +1017,10 @@ const itemSize = 120
         </span>
         <div v-if="skillForm.files.length" class="sk-files">
           <div v-for="(f, fi) in skillForm.files" :key="fi" class="sk-file">
-            <n-input v-model:value="f.path" size="small" placeholder="路径,如 scripts/tool.py" class="sk-file-path" />
-            <n-button size="tiny" quaternary type="error" @click="removeSkillFile(fi)">✕</n-button>
+            <div class="sk-file-head">
+              <n-input v-model:value="f.path" size="small" placeholder="文件路径(含文件名),如 scripts/tool.py" class="sk-file-path" />
+              <n-button size="tiny" quaternary type="error" @click="removeSkillFile(fi)">✕</n-button>
+            </div>
             <n-input v-model:value="f.content" type="textarea" :rows="5" placeholder="文件内容" />
           </div>
         </div>
@@ -1089,7 +1094,8 @@ const itemSize = 120
 .sk-row { display: flex; flex-direction: column; gap: 4px; }
 .sk-label { font-size: 12px; color: var(--text-2); }
 .sk-files { display: flex; flex-direction: column; gap: 8px; }
-.sk-file { display: flex; gap: 6px; align-items: flex-start; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); padding: 6px; }
+.sk-file { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); padding: 6px; }
+.sk-file-head { display: flex; gap: 6px; align-items: center; }
 .sk-file-path { flex: 1; }
 .sk-file :deep(.n-input) { border-radius: 6px; }
 .sk-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
@@ -1224,6 +1230,8 @@ const itemSize = 120
 
 .workspace-tabs { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 8px 12px; }
 /* 浏览器标签全区域展示:去掉内边距与滚动,画布铺满整个面板 */
+.ws-tab-browser { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.ws-tab-browser > * { flex: 1; min-height: 0; }
 
 
 /* 移动端:工作区从右侧常驻面板变为底部抽屉 */

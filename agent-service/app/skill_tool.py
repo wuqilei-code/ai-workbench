@@ -33,9 +33,6 @@ class ReadOnlyBackend:
     def __init__(self, inner) -> None:
         self._inner = inner
 
-    def _deny(self):
-        raise PermissionError(_READONLY_MSG)
-
     # --- 读:透传 ---
     def ls(self, path: str):
         return self._inner.ls(path)
@@ -92,6 +89,48 @@ class ReadOnlyBackend:
 
     async def aupload_files(self, files) -> list[FileUploadResponse]:
         return self.upload_files(files)
+
+
+class SelectedSkillsBackend(ReadOnlyBackend):
+    """/skills 根目录按"本会话勾选的技能名"过滤列表;子路径与文件读取不受影响,写仍拒绝。
+
+    背景:deepagents SkillsMiddleware 只接受 backend 虚拟目录作 source(对 source 做 ls、
+    读 <子目录>/SKILL.md),无法按单技能传路径;而直接把 /skills 整体给它会绕过会话勾选。
+    故 source 固定 /skills,由该后端在根 ls 时只暴露被勾选的技能目录。
+    """
+
+    def __init__(self, inner, visible: set[str] | None = None) -> None:
+        super().__init__(inner)
+        self._visible = {v for v in (visible or set()) if v}
+
+    @staticmethod
+    def _is_root(path: str | None) -> bool:
+        return (path or "").rstrip("/") in ("", "/skills")
+
+    def _filter_entries(self, result):
+        from deepagents.backends.protocol import LsResult
+
+        def keep(item) -> bool:
+            if not isinstance(item, dict):
+                return True
+            if not item.get("is_dir"):
+                return False  # 根目录下不该有散文件(SKILL.md 都在技能子目录内)
+            name = str(item.get("path", "")).rstrip("/").rsplit("/", 1)[-1]
+            return name in self._visible
+
+        if LsResult is not None and isinstance(result, LsResult):
+            import dataclasses
+
+            return dataclasses.replace(result, entries=[e for e in (result.entries or []) if keep(e)])
+        return [e for e in (result or []) if keep(e)]
+
+    def ls(self, path: str):
+        res = self._inner.ls(path)
+        return self._filter_entries(res) if self._is_root(path) else res
+
+    async def als(self, path: str):
+        res = await self._inner.als(path)
+        return self._filter_entries(res) if self._is_root(path) else res
 
 
 def build_skill_tools(user_id: str) -> list:

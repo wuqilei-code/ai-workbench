@@ -29,11 +29,13 @@ services:
       APP_AES_KEY: ${APP_AES_KEY:?set in .env}
       # --- agent-service 内部回调令牌(create_skill 回写技能库;两服务一致) ---
       INTERNAL_TOKEN: "${INTERNAL_TOKEN:-aiwb-internal-dev}"
-      # --- MySQL(本机服务,非容器) ---
-      # 本机 MySQL 局域网 IP;app 在容器内不能用 localhost,须用宿主可达 IP
-      SPRING_DATASOURCE_URL: jdbc:mysql://${MYSQL_HOST:-192.168.0.161}:3306/ai_workbench?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8&useUnicode=true
+      # --- MySQL(容器内 mysql 服务) ---
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/ai_workbench?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8&useUnicode=true
       SPRING_DATASOURCE_USERNAME: aiworkbench
       SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:?set in .env}
+      # 浏览器面板链路排查用 DEBUG(稳定后可删)
+      LOGGING_LEVEL_COM_AIWORKBENCH_CONTROLLER: "${LOGGING_LEVEL_APP:-INFO}"
+      LOGGING_LEVEL_COM_AIWORKBENCH_SERVICE_OPENCODE: "${LOGGING_LEVEL_APP:-INFO}"
     volumes:
       - workspace:/workspace
       - app-data:/data
@@ -43,6 +45,9 @@ services:
     networks:
       - default
       - agents
+    depends_on:
+      mysql:
+        condition: service_healthy
     restart: unless-stopped
 
   # --- deepagents 轨道:python agent-service(每用户独立工作区/技能 + 可执行脚本) ---
@@ -130,14 +135,11 @@ services:
       retries: 20
     restart: unless-stopped
 
-  # 本机 MySQL 服务已接入后不再使用容器 MySQL;保留定义便于回退。
-  # 需要重新启用时:去掉下面 profiles 行,并恢复 app 的 depends_on。
+  # 容器化 MySQL(2026-08-23 启用):Windows 宿主机到容器的任意端口通路不稳定
+  # (host.docker.internal 只保证已发布端口),数据库入 compose 后不再依赖该边界。
+  # 宿主机 MySQL(127.0.0.1)保留为数据源备份,未做任何改动。
   mysql:
-    profiles: ["legacy-mysql"]
-    image: docker.m.daocloud.io/mysql:8.0
-    command: --default-authentication-plugin=mysql_native_password
-    ports:
-      - "3307:3306"
+    image: docker.m.daocloud.io/mysql:8.4
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set in .env}
       MYSQL_DATABASE: ai_workbench
@@ -149,7 +151,8 @@ services:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 5s
       timeout: 5s
-      retries: 20
+      retries: 30
+      start_period: 30s
     restart: unless-stopped
 
 volumes:

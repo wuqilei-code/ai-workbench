@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 import { useChatStore } from '@/stores/chat'
 import { useFavoritesStore } from '@/stores/favorites'
@@ -60,18 +60,55 @@ const pendingHint = computed(() => {
   return 'AI 正在处理中,请稍候…'
 })
 
-/** 某个 step 是否正在流式接收文本 */
+/** 某个 step 是否正在流式接收文本(仅时间线最后一步算活跃) */
 function isStepActive(step: Step | null): boolean {
   if (!step || !step.message.agentMessageId) return false
-  return chat.isStreaming && step.message.agentMessageId === activeMessageId.value
+  if (!chat.isStreaming || step.message.agentMessageId !== activeMessageId.value) return false
+  const steps = props.turn.steps
+  const last = steps.length ? steps[steps.length - 1] : props.turn.finalAnswer
+  return last === step || props.turn.finalAnswer === step
 }
 
-/** 取 step 的展示文本:活跃流式步用 streamingText,否则用定稿 narration */
+/** 取 step 的展示文本:统一用定稿/实时 narration(时间线已按序累积) */
 function displayContent(step: Step | null): string {
   if (!step) return ''
-  if (isStepActive(step)) return chat.streamingText || ''
   return step.narration || ''
 }
+
+// ---------- 推理段包裹卡片 ----------
+
+/** 推理段展开状态:流式中的段自动展开、结束后自动折叠;用户点击后记入手动覆盖 */
+const reasonOpen = ref<Record<string, boolean>>({})
+const reasonKey = (i: number) => `${props.turn.id}-r${i}`
+function isReasonOpen(step: Step, i: number): boolean {
+  const manual = reasonOpen.value[reasonKey(i)]
+  if (manual !== undefined) return manual
+  return isStepActive(step)
+}
+function toggleReason(i: number) {
+  const k = reasonKey(i)
+  reasonOpen.value[k] = !isReasonOpen(props.turn.steps[i], i)
+}
+
+/** 已挂载的推理正文容器(用于流式吸底滚动) */
+const reasonBodies = new Map<string, HTMLElement>()
+function setReasonBody(key: string, el: unknown) {
+  if (el) reasonBodies.set(key, el as HTMLElement)
+  else reasonBodies.delete(key)
+}
+/** 活跃推理段内容增长时,把展开的推理框滚到底部 */
+watch(
+  () => props.turn.steps.find((s) => s.kind === 'reason' && isStepActive(s))?.narration.length ?? 0,
+  async () => {
+    await nextTick()
+    for (const [key, el] of reasonBodies) {
+      const idx = Number(key.slice(key.lastIndexOf('-r') + 2))
+      const st = props.turn.steps[idx]
+      if (!st || !isReasonOpen(st, idx)) continue
+      el.scrollTop = el.scrollHeight
+    }
+  },
+)
 
 // ---------- 简单模式(单条 assistant 无 tool)----------
 
@@ -245,8 +282,7 @@ const permArgsText = computed(() => {
 const expandedNames = computed<string[]>(() => {
   const ov = chat.manualCollapseOverride[props.turn.id]
   if (ov !== undefined) return ov ? ['thinking'] : []
-  // 仍在处理(流式中)或有待答/刚答复的权限/问题 → 保持展开思考区,
-  // 避免权限框消失瞬间 isStreaming 抖动导致思考区折叠、用户以为 AI 停了。
+  // 流式期间展开(推理/步骤按序滚动),完成后折叠;用户可点头部手动展开/收起
   if (turnInProgress.value) return ['thinking']
   return []
 })
@@ -328,16 +364,22 @@ async function downloadAllFiles() {
   }
 }
 
+/** 步数 = 全部工具调用次数 + 有解说的思考段数(deepagents 一轮一条消息挂全部工具,不能按消息数算) */
 const thinkingStepCount = computed(() => {
-  const n = props.turn.steps.length
-  const faTools = props.turn.finalAnswer?.toolCalls.length ?? 0
-  return n + (faTools > 0 ? 1 : 0)
+  let n = 0
+  for (const s of props.turn.steps) {
+    n += s.toolCalls?.length ?? 0
+    if ((s.narration || '').trim()) n += 1
+  }
+  const fa = props.turn.finalAnswer
+  if (fa) n += fa.toolCalls?.length ?? 0
+  return Math.max(n, 1)
 })
 
 const thinkingHeader = computed(() =>
   turnInProgress.value
-    ? `思考中… ${thinkingStepCount.value} 步`
-    : `已折叠 ${thinkingStepCount.value} 步思考`,
+    ? `思考中… 已执行 ${thinkingStepCount.value} 步`
+    : `已折叠 ${thinkingStepCount.value} 步操作`,
 )
 
 function stepHtml(step: Step): string {
@@ -391,12 +433,30 @@ function stepHtml(step: Step): string {
             </span>
           </template>
           <div v-for="(step, i) in turn.steps" :key="step.message.id ?? i" class="step">
+            <!-- 推理段:独立包裹卡片,流式时限高滚动吸底,结束自动折叠,可点开回看 -->
+            <div v-if="step.kind === 'reason' && displayContent(step)" class="reason-box">
+              <div class="reason-head" @click.stop="toggleReason(i)">
+                <span class="rc-tag">推理</span>
+                <svg
+                  class="rc-chev"
+                  :class="{ open: isReasonOpen(step, i) }"
+                  viewBox="0 0 24 24"
+                  width="12"
+                  height="12"
+                ><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
+              </div>
+              <div
+                v-show="isReasonOpen(step, i)"
+                :ref="(el) => setReasonBody(reasonKey(i), el)"
+                class="reason-body"
+              >{{ step.narration }}<span v-if="isStepActive(step)" class="cursor">▋</span></div>
+            </div>
             <div
-              v-if="displayContent(step)"
+              v-else-if="displayContent(step)"
               class="step-narration"
               v-html="stepHtml(step)"
             />
-            <span v-if="isStepActive(step)" class="cursor">▋</span>
+            <span v-if="isStepActive(step) && step.kind !== 'reason'" class="cursor">▋</span>
             <div v-if="step.toolCalls.length" class="tool-calls">
               <ToolCallItem
                 v-for="tc in step.toolCalls"
@@ -713,6 +773,35 @@ function stepHtml(step: Step): string {
   font-size: 13px; color: var(--text-2); opacity: .85;
 }
 .step-narration :deep(p) { margin: 4px 0; }
+/* 推理段包裹卡片:头部可点开合,正文限高滚动 */
+.reason-box {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  margin: 2px 0;
+  background: var(--surface-hover);
+  overflow: hidden;
+}
+.reason-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 8px; font-size: 11px;
+  color: var(--text-3); cursor: pointer; user-select: none;
+}
+.reason-head:hover { color: var(--text-2); }
+.rc-chev { transition: transform .15s ease; opacity: .7; }
+.rc-chev.open { transform: rotate(180deg); }
+.reason-body {
+  padding: 2px 10px 8px;
+  font-size: 12px; line-height: 1.55;
+  color: var(--text-3); font-style: italic;
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 180px; overflow-y: auto;
+}
+.reason-body .cursor { margin-left: 2px; }
+.rc-tag {
+  display: inline-block; margin-right: 6px; padding: 0 6px;
+  border-radius: 8px; font-size: 11px; font-style: normal;
+  background: var(--surface-hover); color: var(--text-3);
+}
 .step-narration :deep(pre.hljs) { background: var(--code-bg); border-radius: var(--radius-sm); padding: 8px; overflow-x: auto; }
 .step-narration :deep(code) { font-family: ui-monospace, monospace; font-size: 12px; }
 

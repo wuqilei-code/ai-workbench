@@ -37,3 +37,8 @@ export async function browserAction(tool: string, args: Record<string, unknown>)
   const res = await http.post('/agent/browser/action', { tool, args })
   return res.data?.data
 }
+
+/** 关闭整个浏览器(停止沙箱容器,立即释放资源;下次使用自动重建)。 */
+export async function browserStop(): Promise<void> {
+  await http.post('/agent/sandbox/stop')
+}

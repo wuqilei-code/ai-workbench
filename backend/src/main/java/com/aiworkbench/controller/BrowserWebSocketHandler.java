@@ -22,6 +22,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -182,12 +183,12 @@ public class BrowserWebSocketHandler extends TextWebSocketHandler {
 
     private void monitorLoop(WebSocketSession session, Long userId, AtomicReference<BrowserCdpClient> cdpRef) {
         BrowserCdpClient cdp = null;
-        Set<String> knownTargets = new HashSet<>();
+        /** targetId → 上次见到的 URL:谁导航就跟谁(AI 正在那页操作) */
+        Map<String, String> knownUrls = new HashMap<>();
         String lastError = null;
         long lastErrorAt = 0;
         long lastNoAgentAt = 0;
         long lastWarmupAt = 0;
-        int tick = 0;
         while (session.isOpen()) {
             try {
                 // 面板开着 = 活跃使用:每 tick 刷新活动时间,防止空闲回收在推流中间停掉 agent 容器
@@ -199,7 +200,7 @@ public class BrowserWebSocketHandler extends TextWebSocketHandler {
                     closeQuiet(cdp);
                     cdp = null;
                     cdpRef.set(null);
-                    knownTargets.clear();
+                    knownUrls.clear();
                     long now = System.currentTimeMillis();
                     if (now - lastNoAgentAt > NO_AGENT_THROTTLE_MS) {
                         sendState(session, "no-agent");
@@ -234,23 +235,39 @@ public class BrowserWebSocketHandler extends TextWebSocketHandler {
                     log.debug("browser monitor: cdp connected for user {}", userId);
                     cdp.bringFrontActive();
                     pushTabs(session, cdp);
+                    knownUrls.clear();
                     for (Map<String, Object> t : cdp.tabs()) {
-                        knownTargets.add(String.valueOf(t.get("id")));
+                        knownUrls.put(String.valueOf(t.get("id")), String.valueOf(t.get("url")));
                     }
                     lastError = null;
-                } else if (++tick % 5 == 0) {
-                    // 跟随 AI:出现新标签页则自动切到该页
-                    boolean changed = false;
-                    for (Map<String, Object> t : cdp.tabs()) {
+                } else {
+                    // 跟随 AI(每个 tick 检查,秒级反应):任一标签 URL 变化或出现新标签且带真实 URL,
+                    // 即切到该页 —— 那正是 AI/用户正在操作的地方。旧逻辑只认"新建标签"且 5 tick 一次,
+                    // AI 在已有标签里导航时面板会一直停在旧画面。
+                    String followId = null;
+                    java.util.Iterator<Map.Entry<String, String>> it =
+                            knownUrls.entrySet().iterator();
+                    java.util.Set<String> seen = new HashSet<>();
+                    java.util.List<Map<String, Object>> tabs = cdp.tabs();
+                    for (Map<String, Object> t : tabs) {
                         String id = String.valueOf(t.get("id"));
-                        if (knownTargets.add(id)) {
-                            if (cdp.activateTab(id)) {
-                                changed = true;
-                                break;
+                        String url = String.valueOf(t.get("url"));
+                        seen.add(id);
+                        String prev = knownUrls.put(id, url);
+                        if (followId == null && !url.isBlank()
+                                && !url.startsWith("about:") && !url.startsWith("chrome://")) {
+                            boolean isNewReal = (prev == null);
+                            boolean isNav = (prev != null && !prev.equals(url));
+                            if (isNewReal || isNav) {
+                                followId = id;
                             }
                         }
                     }
-                    if (changed) {
+                    // 清理已关闭的标签
+                    knownUrls.keySet().removeIf(id -> !seen.contains(id));
+                    if (followId != null) {
+                        log.info("browser follow: switching to target {} url={}", followId, knownUrls.get(followId));
+                        cdp.activateTab(followId);
                         pushTabs(session, cdp);
                     }
                 }
@@ -333,14 +350,15 @@ public class BrowserWebSocketHandler extends TextWebSocketHandler {
     // ============ 输入事件处理 ============
 
     private void handleInput(WebSocketSession session, Long userId, String action, JsonNode node) {
-        if (!browserContainerManager.isReady(userId)) {
-            sendError(session, "agent 未启动");
-            return;
-        }
         Object ref = session.getAttributes().get("cdpClient");
         BrowserCdpClient cdp = ref instanceof AtomicReference<?> ar
                 ? (BrowserCdpClient) ar.get() : null;
         if (cdp == null || !cdp.isConnected()) {
+            // CDP 未就绪才探测容器(CDP 已连接 = 容器必在运行,省掉高频 docker inspect 子进程)
+            if (!browserContainerManager.isReady(userId)) {
+                sendError(session, "agent 未启动");
+                return;
+            }
             // 面板刚打开时客户端可能仍在连,短暂等待就绪再处理,避免操作被丢弃
             for (int i = 0; i < 6 && cdp != null && !cdp.isConnected(); i++) {
                 try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
@@ -351,7 +369,16 @@ public class BrowserWebSocketHandler extends TextWebSocketHandler {
             }
         }
         try {
+            // 按下/拖拽 = 明确的交互意图:强制保持推流(防止前端状态不同步导致画面冻结)
+            if ("press".equals(action) || "drag".equals(action)) {
+                Object ao = session.getAttributes().get("active");
+                if (ao instanceof AtomicBoolean ab && !ab.get()) {
+                    ab.set(true);
+                    syncScreencast(session, cdp);
+                }
+            }
             switch (action) {
+                case "ping" -> sendJson(session, Map.of("type", "pong"));
                 case "active" -> {
                     boolean on = !node.has("on") || node.get("on").asBoolean();
                     Object ao = session.getAttributes().get("active");
@@ -392,7 +419,8 @@ public class BrowserWebSocketHandler extends TextWebSocketHandler {
                             node.has("y") ? node.get("y").asInt() : 0);
                 }
                 case "drag" -> {
-                    cdp.drag(node.has("x") ? node.get("x").asInt() : 0,
+                    // 高频事件:fire-and-forget,不等 CDP 响应(避免队头阻塞)
+                    cdp.dragAsync(node.has("x") ? node.get("x").asInt() : 0,
                             node.has("y") ? node.get("y").asInt() : 0);
                 }
                 case "release" -> {
@@ -400,7 +428,7 @@ public class BrowserWebSocketHandler extends TextWebSocketHandler {
                             node.has("y") ? node.get("y").asInt() : 0);
                 }
                 case "move" -> {
-                    cdp.move(node.has("x") ? node.get("x").asInt() : 0,
+                    cdp.moveAsync(node.has("x") ? node.get("x").asInt() : 0,
                             node.has("y") ? node.get("y").asInt() : 0);
                 }
                 case "wheel" -> {

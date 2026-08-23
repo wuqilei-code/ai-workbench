@@ -114,7 +114,16 @@ class DockerSandbox(BaseSandbox):
                     entrypoint=["/opt/aiworkbench/browser-entrypoint.sh"],
                     mounts=mounts,
                     user=str(config.AGENT_SANDBOX_UID),
-                    environment={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/workspace", "TMPDIR": "/tmp"},
+                    # HOME/XDG_CACHE_HOME 必须指向非挂载的临时目录:
+                    # 若指向 /workspace,fontconfig(chromium 出 PDF、pango 转档等)
+                    # 会把字体缓存写进用户项目(.cache/fontconfig/*-le64.cache-8),
+                    # 污染工作区文件树与 git。
+                    environment={
+                        "PATH": "/usr/local/bin:/usr/bin:/bin",
+                        "HOME": "/tmp",
+                        "TMPDIR": "/tmp",
+                        "XDG_CACHE_HOME": "/tmp/.cache",
+                    },
                     network_disabled=not config.AGENT_SANDBOX_NETWORK,
                     nano_cpus=int(config.AGENT_SANDBOX_CPUS * 1e9),
                     mem_limit=f"{config.AGENT_SANDBOX_MEM_MB}m",
@@ -158,13 +167,31 @@ class DockerSandbox(BaseSandbox):
 
         return self._ensure_container()
 
+    def ensure_browser(self) -> None:
+        """按需拉起共享浏览器栈(chromium + CDP 转发 + playwright-mcp),幂等。
+
+        已就绪时脚本秒回;未就绪时启动并等待(典型 3~8s)。失败抛错给调用方。
+        """
+        c = self._ensure_container()
+        self.touch()
+        res = c.exec_run(["sh", "-lc", "/opt/aiworkbench/ensure-browser.sh"])
+        code = res.exit_code if isinstance(res.exit_code, int) else None
+        if code != 0:
+            out = res.output if isinstance(res.output, bytes) else b"".join(res.output or ())
+            raise RuntimeError(
+                f"浏览器启动失败(exit={code}): {out.decode('utf-8', 'replace')[-500:]}"
+            )
+
     def stop(self) -> None:
         with self._lock:
             c, self._container = self._container, None
         try:
+            if c is None:
+                # agent-service 重启后注册表为空:按名字兜底,保证「关闭浏览器」总能生效
+                c = self._docker().containers.get(self.name)
             if c is not None:
                 c.stop(timeout=3)
-                logger.info("[%s] 空闲沙箱已停止", self.user_id)
+                logger.info("[%s] 沙箱已停止", self.user_id)
         except Exception as exc:  # noqa: BLE001
             logger.debug("[%s] 停止沙箱失败: %s", self.user_id, exc)
 
@@ -244,7 +271,7 @@ class DockerSandbox(BaseSandbox):
             return {}
 
     def _diff_snapshot(self, before: dict[str, str], after: dict[str, str]) -> list[str]:
-        skip_prefixes = (".git/", ".opencode/")
+        skip_prefixes = (".git/", ".opencode/", ".cache/")
         skip_exact = {".gitignore", ".sandbox-probe"}
         changed: list[str] = []
         for rel in after:

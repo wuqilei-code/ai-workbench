@@ -114,20 +114,17 @@ private final SkillMarketplaceMapper marketplaceMapper;
                     "已安装过技能「" + name + "」(如需重装,请先在技能页删除本地副本)");
         }
         String dir = SKILLS_ROOT + "/" + name;
-        int written = 0;
-        workspaceService.writeFile(userId, dir + "/SKILL.md", withIconFrontmatter(s.getContent(), s.getIcon()));
-        written++;
-        List<SkillFileVo> files = deserializeFiles(s.getFiles());
-        for (SkillFileVo f : files) {
-            if (f == null || f.getPath() == null || f.getPath().isBlank()) continue;
-            String rel = f.getPath().replace('\\', '/').replaceAll("^/+", "");
-            if (rel.contains("..") || rel.startsWith("/") || rel.isEmpty()) continue;
-            // SKILL.md 已由 content 写入,附加文件里再带一个会重复覆盖,跳过
-            if ("SKILL.md".equals(rel)) continue;
-            workspaceService.writeFile(userId, dir + "/" + rel,
-                    f.getContent() == null ? "" : f.getContent());
-            written++;
-        }
+
+        // 硬性约束:user_skill 记录是事实源,必须先落库成功才允许写文件;失败则整个安装回滚
+        com.aiworkbench.entity.UserSkill us = new com.aiworkbench.entity.UserSkill();
+        us.setUserId(userId);
+        us.setName(name);
+        us.setDescription(s.getDescription() == null ? "" : s.getDescription());
+        us.setContent(withIconFrontmatter(s.getContent(), s.getIcon()));
+        us.setVisibility(0);
+        us.setSource("installed");
+        us.setSourceSkillId(id);
+        userSkillMapper.insert(us);
 
         SkillInstall it = new SkillInstall();
         it.setUserId(userId);
@@ -135,19 +132,29 @@ private final SkillMarketplaceMapper marketplaceMapper;
         it.setSkillName(name);
         installMapper.insert(it);
 
-        // 记录到用户技能表(source=installed,只读;与文件系统同步)
+        // 持同步令牌写盘(skills/ 写闸只放行已入库的变更)
+        int written = 0;
+        WorkspaceService.SkillSyncScope sync = workspaceService.openSkillSync();
         try {
-            com.aiworkbench.entity.UserSkill us = new com.aiworkbench.entity.UserSkill();
-            us.setUserId(userId);
-            us.setName(name);
-            us.setDescription(s.getDescription() == null ? "" : s.getDescription());
-            us.setContent(withIconFrontmatter(s.getContent(), s.getIcon()));
-            us.setVisibility(0);
-            us.setSource("installed");
-            us.setSourceSkillId(id);
-            userSkillMapper.insert(us);
-        } catch (Exception e) {
-            log.warn("record user_skill installed failed ({}): {}", name, e.toString());
+            workspaceService.writeFile(userId, dir + "/SKILL.md", withIconFrontmatter(s.getContent(), s.getIcon()));
+            written++;
+            List<SkillFileVo> files = deserializeFiles(s.getFiles());
+            for (SkillFileVo f : files) {
+                if (f == null || f.getPath() == null || f.getPath().isBlank()) continue;
+                String rel = f.getPath().replace('\\', '/').replaceAll("^/+", "");
+                if (rel.contains("..") || rel.startsWith("/") || rel.isEmpty()) continue;
+                // SKILL.md 已由 content 写入,附加文件里再带一个会重复覆盖,跳过
+                if ("SKILL.md".equals(rel)) continue;
+                workspaceService.writeFile(userId, dir + "/" + rel,
+                        f.getContent() == null ? "" : f.getContent());
+                written++;
+            }
+        } catch (RuntimeException e) {
+            // 补偿:清掉半成品目录,保证"盘上有技能文件 ⇔ 库里有记录"不因失败被破坏
+            try { workspaceService.deleteFile(userId, dir); } catch (Exception ignored) {}
+            throw e;
+        } finally {
+            sync.close();
         }
 
         SkillMarketplace upd = new SkillMarketplace();

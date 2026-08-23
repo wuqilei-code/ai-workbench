@@ -166,6 +166,8 @@ export interface Step {
   message: MessageVo
   narration: string
   toolCalls: ToolCall[]
+  /** 段落来源:reason=模型推理段(reasoning_content),text=正文解说;缺省视为 text */
+  kind?: 'text' | 'reason'
 }
 
 /** 一个用户任务 = 一条 user 消息 + 其后连续的 assistant 消息 */

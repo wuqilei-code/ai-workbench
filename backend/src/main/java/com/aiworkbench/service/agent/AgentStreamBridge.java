@@ -175,6 +175,11 @@ public class AgentStreamBridge {
         final StringBuilder fullText = new StringBuilder();
         /** callId → 工具调用节点(含 status),保持插入序 */
         final Map<String, ObjectNode> toolCalls = new LinkedHashMap<>();
+        /**
+         * 时间线:文本段({k:"text",v})与工具调用({k:"tool",id})按发生顺序交错,
+         * 落库后前端可按原顺序重建"解说 + 工具"步骤(思维链/工具结果刷新后不丢)。
+         */
+        final java.util.List<ObjectNode> timeline = new java.util.ArrayList<>();
         final AtomicBoolean finalized = new AtomicBoolean(false);
         final AtomicBoolean cancelled = new AtomicBoolean(false);
         volatile reactor.core.Disposable subscription;
@@ -265,6 +270,7 @@ public class AgentStreamBridge {
                         break;
                     }
                     ts.fullText.append(delta);
+                    appendTimelineText(ts, delta, "text");
                     ObjectNode d = objectMapper.createObjectNode();
                     d.put("id", ts.assistantMessageId);
                     d.put("content", delta);
@@ -273,6 +279,19 @@ public class AgentStreamBridge {
                     if (now - ts.lastPersistAt >= TEXT_PERSIST_MIN_INTERVAL_MS) {
                         persistTurn(ts, "streaming");
                         ts.lastPersistAt = now;
+                    }
+                }
+                case "reason" -> {
+                    // 模型推理段(reasoning_content):实时转发 + 落时间线,刷新后可回看
+                    String rc = payload.has("content") ? payload.get("content").asText() : "";
+                    if (!rc.isEmpty()) {
+                        appendTimelineText(ts, rc, "reason");
+                        hub.dispatch(ts.sessionId, "reason", payload);
+                        long now2 = System.currentTimeMillis();
+                        if (now2 - ts.lastPersistAt >= TEXT_PERSIST_MIN_INTERVAL_MS) {
+                            persistTurn(ts, "streaming");
+                            ts.lastPersistAt = now2;
+                        }
                     }
                 }
                 case "tool" -> {
@@ -288,12 +307,20 @@ public class AgentStreamBridge {
                     if (args != null) tc.set("args", args);
                     tc.put("status", "running");
                     ts.toolCalls.put(callId, tc);
+                    ObjectNode te = objectMapper.createObjectNode();
+                    te.put("k", "tool");
+                    te.put("id", callId);
+                    ts.timeline.add(te);
                     hub.dispatch(ts.sessionId, "tool", payload);
                     persistTurn(ts, "streaming");
                 }
                 case "tool_result" -> {
                     String name = payload.path("name").asText("tool");
                     String callId = payload.path("id").asText("");
+                    // 工具输出文本:优先 output 字段,退回 content(agent-service 用 content 承载 ToolMessage 文本)
+                    JsonNode outputNode = payload.has("output") && !payload.get("output").isNull()
+                            ? payload.get("output")
+                            : objectMapper.getNodeFactory().textNode(payload.path("content").asText(""));
                     // 兼容未回传 id 的旧版 agent-service:配对最后一个 running 调用
                     if (callId.isBlank()) {
                         callId = lastRunningCallId(ts);
@@ -301,6 +328,8 @@ public class AgentStreamBridge {
                     ObjectNode tc = ts.toolCalls.get(callId);
                     if (tc != null) {
                         tc.put("status", "completed");
+                        // 结果文本必须落库,否则刷新后工具调用只剩名字没有输出
+                        tc.set("output", outputNode);
                         // deepagents 结构化输出物(文件路径列表),落库供前端结果文件块精确渲染
                         if (payload.has("outputs") && payload.get("outputs").isArray()) {
                             tc.set("outputs", payload.get("outputs"));
@@ -309,9 +338,7 @@ public class AgentStreamBridge {
                     ObjectNode out = objectMapper.createObjectNode();
                     out.put("id", callId);
                     out.put("name", name);
-                    out.set("output", payload.has("output") && !payload.get("output").isNull()
-                            ? payload.get("output")
-                            : objectMapper.getNodeFactory().textNode(payload.path("content").asText("")));
+                    out.set("output", outputNode);
                     if (payload.has("outputs")) {
                         out.set("outputs", payload.get("outputs"));
                     }
@@ -377,6 +404,21 @@ public class AgentStreamBridge {
         return ts.toolCalls.isEmpty() ? "" : ts.toolCalls.keySet().iterator().next();
     }
 
+    /** 追加流式文本到时间线:延续最后一段同类(k)文本,否则新开一段。kind: text|reason */
+    private void appendTimelineText(TurnStream ts, String delta, String kind) {
+        if (!ts.timeline.isEmpty()) {
+            ObjectNode last = ts.timeline.get(ts.timeline.size() - 1);
+            if (kind.equals(last.path("k").asText())) {
+                last.put("v", last.path("v").asText("") + delta);
+                return;
+            }
+        }
+        ObjectNode te = objectMapper.createObjectNode();
+        te.put("k", kind);
+        te.put("v", delta);
+        ts.timeline.add(te);
+    }
+
     private void onStreamError(TurnStream ts, Throwable err) {
         if (ts.cancelled.get() || ts.finalized.get()) {
             return;
@@ -416,12 +458,12 @@ public class AgentStreamBridge {
         hub.dispatch(ts.sessionId, "message.end", end);
     }
 
-    /** 把当前轮(文本 + 工具调用)upsert 到 DB。 */
+    /** 把当前轮(文本 + 时间线 + 工具调用)upsert 到 DB。 */
     private void persistTurn(TurnStream ts, String status) {
         try {
             chatMessageService.upsertAssistantTurn(
                     ts.sessionId, ts.assistantMessageId,
-                    ts.fullText.toString(), ts.toolCalls, status);
+                    ts.fullText.toString(), ts.toolCalls, ts.timeline, status);
         } catch (Exception e) {
             log.warn("persist turn failed (session={}): {}", ts.sessionId, e.toString());
         }

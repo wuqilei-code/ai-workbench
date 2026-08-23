@@ -40,7 +40,7 @@ export function buildTurns(messages: MessageVo[]): Turn[] {
           finalAnswer: null,
         }
       }
-      current.steps.push(toStep(msg))
+      current.steps.push(...stepsFromParts(msg))
     }
     // tool / system / interrupted 角色忽略(不参与 turn 分组)
   }
@@ -103,11 +103,16 @@ export function buildFlow(turns: Turn[], summaries: SummaryItem[]): FlowItem[] {
   return merged
 }
 
-/** 把 turn 内最后一条 step 提为 finalAnswer */
+/** 把 turn 内最后一段"正文"步提为 finalAnswer(推理/工具步留在思考区按序展示) */
 function finalizeTurn(turn: Turn) {
   if (turn.steps.length === 0) return
-  turn.finalAnswer = turn.steps[turn.steps.length - 1]
-  turn.steps.splice(turn.steps.length - 1, 1)
+  let idx = -1
+  for (let i = turn.steps.length - 1; i >= 0; i--) {
+    if ((turn.steps[i].kind || 'text') === 'text') { idx = i; break }
+  }
+  if (idx < 0) idx = turn.steps.length - 1
+  turn.finalAnswer = turn.steps[idx]
+  turn.steps.splice(idx, 1)
 }
 
 function toStep(msg: MessageVo): Step {
@@ -119,31 +124,87 @@ function toStep(msg: MessageVo): Step {
   }
 }
 
+/**
+ * 按落库时间线把一条 assistant 消息拆成有序步骤(文本段 ↔ 工具调用交错)。
+ * 旧消息无 timeline 时回退为单步(narration=全文 + 全部工具)。
+ */
+function stepsFromParts(msg: MessageVo): Step[] {
+  const base = toStep(msg)
+  const tl = (msg.parts as any)?.timeline as
+    | { k: string; v?: string; id?: string }[]
+    | undefined
+  if (!Array.isArray(tl) || !tl.length) return [base]
+  const byId = new Map<string, ToolCall>((base.toolCalls ?? []).map((tc) => [tc.id || '', tc]))
+  const steps: Step[] = []
+  let cur: Step | null = null
+  const flush = () => {
+    if (cur && ((cur.narration || '').trim() || cur.toolCalls.length)) steps.push(cur)
+    cur = null
+  }
+  for (const e of tl) {
+    if (e.k === 'text' || e.k === 'reason') {
+      const kind: 'text' | 'reason' = e.k === 'reason' ? 'reason' : 'text'
+      if (cur && cur.kind === kind && !cur.toolCalls.length) {
+        cur.narration += e.v || ''
+      } else {
+        flush()
+        cur = { message: msg, narration: e.v || '', toolCalls: [], kind }
+      }
+    } else if (e.k === 'tool' && e.id) {
+      flush()
+      const tc = byId.get(e.id)
+      cur = { message: msg, narration: '', toolCalls: tc ? [tc] : [] }
+      // timeline 有但 toolCalls 缺(异常数据)时也保留空步,维持顺序
+      if (tc) byId.delete(e.id)
+    }
+  }
+  flush()
+  // 兜底:toolCalls 里有而时间线漏掉的调用追加到末尾
+  if (byId.size && steps.length === 0) return [base]
+  for (const tc of byId.values()) {
+    steps.push({ message: msg, narration: '', toolCalls: [tc] })
+  }
+  return steps.length ? steps : [base]
+}
+
 function turnIdForUser(msg: MessageVo): string {
   return 'u-' + String(msg.id) + (msg.agentMessageId ? '-' + msg.agentMessageId : '')
 }
 
+function firstStr(...vals: unknown[]): string | null {
+  for (const v of vals) {
+    if (typeof v === 'string' && v.trim()) return v.trim()
+  }
+  return null
+}
+
+/** 路径摘要:/workspace 前缀剥离;/skills/<名>/... 显示为「技能 <名><子路径>」;其余保留末两级目录。 */
+export function summarizePath(raw: string): string {
+  let p = raw.replace(/\\/g, '/').trim()
+  p = p.replace(/^\/workspace\/?/i, '')
+  const skill = p.match(/^\/?skills\/([^/]+)(\/.+)?$/i)
+  if (skill) return `技能 ${skill[1]}${skill[2] || ''}`
+  const segs = p.split('/').filter(Boolean)
+  return segs.slice(-2).join('/') || p
+}
+
 /**
- * 把工具调用摘要成短串(展示在 chip 上,如 "hello.txt")。
- * 从 args 取常见路径/命令字段,只保留 basename;无则返回空串。
+ * 把工具调用摘要成短串(展示在 chip 上)。
+ * 技能目录路径带技能名(如 "技能 note-summary/SKILL.md");命令单行截断;写路径保留末两级。
  */
 export function summarizeToolCall(tc: ToolCall): string {
-  const args = tc.args
+  const args = tc.args as Record<string, unknown> | null | undefined
   if (args == null) return ''
-  const candidates = [
-    args.filePath,
-    args.path,
-    args.file,
-    args.filename,
-    args.command,
-    args.cmd,
-  ]
-  for (const c of candidates) {
-    if (typeof c === 'string' && c.trim()) {
-      const base = c.split(/[\\/]/).filter(Boolean).pop()
-      return base || c
-    }
+  if (tc.name === 'create_skill' && typeof args.name === 'string') return args.name
+  if (tc.name === 'use_skill' && typeof args.skill === 'string') return args.skill
+  const path = firstStr(args.filePath, args.path, args.file, args.filename)
+  if (path) return summarizePath(path)
+  const cmd = firstStr(args.command, args.cmd)
+  if (cmd) {
+    const oneLine = cmd.replace(/\s+/g, ' ')
+    return oneLine.length > 64 ? oneLine.slice(0, 63) + '…' : oneLine
   }
+  if (typeof args.query === 'string' && args.query.trim()) return args.query
   if (typeof args.url === 'string') return args.url
   if (typeof args.name === 'string') return args.name
   return ''

@@ -187,7 +187,8 @@ public class ChatMessageService {
      * @param toolCalls      工具调用节点(callId → {id,name,args,output,status}),保持插入序
      */
     public void upsertAssistantTurn(String agentSessionId, String agentMessageId,
-                                    String text, Map<String, ObjectNode> toolCalls, String status) {
+                                    String text, Map<String, ObjectNode> toolCalls,
+                                    java.util.List<ObjectNode> timeline, String status) {
         ChatSession session = chatSessionService.findByAgentSessionId(agentSessionId);
         if (session == null) {
             log.debug("upsertAssistantTurn: unknown agent session {}", agentSessionId);
@@ -212,6 +213,10 @@ public class ChatMessageService {
             try {
                 ObjectNode partsNode = objectMapper.createObjectNode();
                 partsNode.putArray("toolCalls").addAll(toolCalls.values());
+                // 时间线(文本段/工具调用交错序):有内容才写,旧数据无此键走前端回退逻辑
+                if (timeline != null && !timeline.isEmpty()) {
+                    partsNode.putArray("timeline").addAll(timeline);
+                }
                 m.setParts(objectMapper.writeValueAsString(partsNode));
                 m.setToolCallCount(toolCalls.size());
             } catch (Exception e) {

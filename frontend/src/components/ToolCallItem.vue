@@ -85,7 +85,7 @@ function downloadOutput() {
 
 <template>
   <div class="tool-item">
-    <span class="chip" :class="chipClass">
+    <span class="chip" :class="chipClass" :title="`${tc.name} ${summarizeToolCall(tc)}`.trim()">
       🔧 {{ tc.name }} <span class="chip-arg">{{ summarizeToolCall(tc) }}</span>
       <span class="chip-status">{{ statusIcon }}</span>
     </span>
@@ -125,7 +125,7 @@ function downloadOutput() {
   transition: border-color .15s, background .15s;
 }
 .chip:hover { border-color: var(--border); background: var(--surface-hover); }
-.chip-arg { color: var(--accent); }
+.chip-arg { color: var(--accent); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip .chip-status { font-weight: bold; }
 .chip.run .chip-status { color: var(--text-3); animation: chip-pulse 1.6s ease-in-out infinite; }
 .chip.ok .chip-status { color: var(--ok); }

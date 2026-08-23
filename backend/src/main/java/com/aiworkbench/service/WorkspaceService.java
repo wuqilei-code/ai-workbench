@@ -66,6 +66,34 @@ public class WorkspaceService {
         return new Base(base, rel);
     }
 
+    /**
+     * 技能文件写闸(硬性约束):skills/ 下的一切新增/更新/删除必须持有同步令牌,
+     * 而令牌只由会同步写 user_skill 表的服务(UserSkillService/SkillMarketplaceService.install)打开,
+     * 保证"技能文件动了 ⇒ 数据库必有记录",任何旁路(文件树 API/上传/快照等)一律拒绝。
+     */
+    private final ThreadLocal<Boolean> skillSyncFlag = ThreadLocal.withInitial(() -> Boolean.FALSE);
+
+    /** 打开技能同步令牌;必须用 try-with-resources 确保关闭。仅限会同步入库的技能服务调用。 */
+    public SkillSyncScope openSkillSync() {
+        skillSyncFlag.set(Boolean.TRUE);
+        return () -> skillSyncFlag.set(Boolean.FALSE);
+    }
+
+    /** 技能同步令牌句柄(try-with-resources 用)。 */
+    public interface SkillSyncScope extends AutoCloseable {
+        @Override
+        void close();
+    }
+
+    private void assertSkillSyncAllowed(String relativePath) {
+        String rel = relativePath == null ? "" : relativePath;
+        boolean touchesSkills = rel.startsWith(SKILLS_VIRTUAL) || rel.equals("skills");
+        if (touchesSkills && !Boolean.TRUE.equals(skillSyncFlag.get())) {
+            throw new BusinessException(ResultCode.FORBIDDEN.getCode(),
+                    "技能目录受保护:新增/更新必须经技能服务同步保存到数据库");
+        }
+    }
+
     private record Base(Path dir, String rel) {}
 
     /**
@@ -192,6 +220,7 @@ public class WorkspaceService {
     }
 
     public void writeFile(Long userId, String relativePath, String content) {
+        assertSkillSyncAllowed(relativePath);
         Path path = safeResolve(userId, relativePath);
         try {
             Files.createDirectories(path.getParent());
@@ -202,6 +231,7 @@ public class WorkspaceService {
     }
 
     public void deleteFile(Long userId, String relativePath) {
+        assertSkillSyncAllowed(relativePath);
         Path path = safeResolve(userId, relativePath);
         if (!Files.exists(path)) {
             return;
@@ -237,6 +267,7 @@ public class WorkspaceService {
     /** 上传文件:将输入流写入用户目录下指定子目录 */
     public void uploadFile(Long userId, String dir, String filename, InputStream data) {
         String rel = (dir == null || dir.isBlank()) ? filename : dir + "/" + filename;
+        assertSkillSyncAllowed(rel);
         Path path = safeResolve(userId, rel);
         try {
             Files.createDirectories(path.getParent());
@@ -253,6 +284,7 @@ public class WorkspaceService {
      * 拒绝绝对路径、包含 ".." 或空条目。返回解压出的文件数(便于前端提示)。
      */
     public int uploadZip(Long userId, String dir, InputStream data) {
+        assertSkillSyncAllowed(dir);
         Path base = safeResolve(userId, dir == null || dir.isBlank() ? "uploads" : dir);
         try {
             Files.createDirectories(base);
@@ -289,6 +321,7 @@ public class WorkspaceService {
 
     /** 新建目录(支持多级) */
     public void createDirectory(Long userId, String relativePath) {
+        assertSkillSyncAllowed(relativePath);
         Path path = safeResolve(userId, relativePath);
         try {
             Files.createDirectories(path);
@@ -315,6 +348,7 @@ public class WorkspaceService {
 
     /** 供快照/回滚等写入场景使用:同 safeResolve 校验,返回已校验的工作区路径。 */
     public Path resolveWritePath(Long userId, String relativePath) {
+        assertSkillSyncAllowed(relativePath);
         return safeResolve(userId, relativePath);
     }
 

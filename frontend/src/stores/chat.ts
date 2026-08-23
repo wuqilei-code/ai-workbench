@@ -505,9 +505,15 @@ export const useChatStore = defineStore('chat', () => {
         providerId: selectedProviderId.value || undefined,
         modelId: selectedModelId.value || undefined,
       })
+      // POST 返回即代表用户消息已落库:解除本地气泡「发送中…」
+      const idx = messages.value.findIndex((m) => m.id === optimistic.id)
+      if (idx >= 0) messages.value[idx] = { ...messages.value[idx], _pending: false, status: 'completed' }
     } catch (e: any) {
       isStreaming.value = false
-      optimistic.status = 'error'
+      const idx = messages.value.findIndex((m) => m.id === optimistic.id)
+      if (idx >= 0) {
+        messages.value[idx] = { ...messages.value[idx], _pending: false, status: 'error', error: '发送失败,请重试' }
+      }
       throw e
     }
   }
@@ -572,7 +578,18 @@ export const useChatStore = defineStore('chat', () => {
           streamingMessageId.value = id
           streamingText.value = ''
         }
+        appendLiveTimeline('text', content)
         streamingText.value += content
+        isStreaming.value = true
+        break
+      }
+
+      case 'reason': {
+        if (isStreaming.value) touchStreamActivity()
+        const rc: string = data.content || ''
+        if (!rc) break
+        // 镜像进实时消息时间线,与工具/文本一起按执行顺序渲染(落库结构一致)
+        appendLiveTimeline('reason', rc)
         isStreaming.value = true
         break
       }
@@ -590,6 +607,7 @@ export const useChatStore = defineStore('chat', () => {
           browserToolSignal.value++
           lastBrowserToolAt.value = Date.now()
         }
+        appendLiveTimeline('tool', undefined, tc.id)
         attachToolCall(tc)
         break
       }
@@ -680,9 +698,32 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
+  /** 追加实时时间线条目(reason/text 合并同类尾段,tool 记 id),与网关落库结构一致 */
+  function appendLiveTimeline(k: 'reason' | 'text' | 'tool', v?: string, toolId?: string) {
+    const targetId = streamingMessageId.value
+    let idx = targetId ? messages.value.findIndex((m) => m.agentMessageId === targetId) : -1
+    if (idx < 0 && messages.value.length && messages.value[messages.value.length - 1].role === 'assistant') {
+      idx = messages.value.length - 1
+    }
+    if (idx < 0) return
+    const msg = messages.value[idx]
+    const tl: { k: string; v?: string; id?: string }[] = Array.isArray((msg.parts as any)?.timeline)
+      ? [...((msg.parts as any).timeline as unknown[])]
+      : []
+    const last = tl.length ? (tl[tl.length - 1] as { k: string; v?: string }) : null
+    if ((k === 'reason' || k === 'text') && last && last.k === k) {
+      tl[tl.length - 1] = { k, v: (last.v || '') + (v || '') }
+    } else if (k === 'tool') {
+      if (!toolId) return
+      tl.push({ k, id: toolId })
+    } else {
+      tl.push({ k, v: v || '' })
+    }
+    messages.value[idx] = { ...msg, parts: { ...(msg.parts || {}), timeline: tl } }
+  }
+
   /** 把流式文本落定到目标 assistant 消息 */
-  function finalizeTextPart(id: string, text: string, completed: boolean) {
-    const idx = messages.value.findIndex((m) => m.agentMessageId === id)
+  function finalizeTextPart(id: string, text: string, completed: boolean) {    const idx = messages.value.findIndex((m) => m.agentMessageId === id)
     if (idx >= 0) {
       messages.value[idx] = {
         ...messages.value[idx],
@@ -787,6 +828,13 @@ export const useChatStore = defineStore('chat', () => {
   function finishStreaming() {
     if (streamingMessageId.value && streamingText.value) {
       finalizeTextPart(streamingMessageId.value, streamingText.value, true)
+    }
+    // 兜底:清掉仍处于「发送中…」的用户气泡(正常已在 POST 返回后解除)
+    for (let i = 0; i < messages.value.length; i++) {
+      const m = messages.value[i]
+      if (m.role === 'user' && m._pending) {
+        messages.value[i] = { ...m, _pending: false, status: 'completed' }
+      }
     }
     isStreaming.value = false
     streamStartAt.value = 0

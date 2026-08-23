@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Literal, Optional
 
 from fastapi import FastAPI
@@ -92,15 +93,36 @@ def skills_seed(user_id: str) -> dict:
 
 @app.post("/api/users/{user_id}/sandbox/ensure")
 def sandbox_ensure(user_id: str) -> dict:
-    """确保该用户合并沙箱(execute + 浏览器 daemon)容器已创建并运行;网关浏览器面板按需调用。"""
+    """确保该用户合并沙箱容器已创建运行,并按需拉起浏览器栈(懒启动,已就绪秒回)。
+
+    网关浏览器面板 warmup 调用;AI 浏览器工具走 browser.py 内部 ensure_browser。
+    """
     from app.sandbox import get_docker_sandbox
 
     sb = get_docker_sandbox(user_id)
     try:
         container = sb.ensure()
+        sb.ensure_browser()
         return {"status": "ok", "container": container.name}
     except Exception as exc:  # noqa: BLE001
         logger.warning("[%s] sandbox ensure failed: %s", user_id, exc)
+        return {"status": "error", "error": str(exc)}
+
+
+@app.post("/api/users/{user_id}/sandbox/stop")
+def sandbox_stop(user_id: str) -> dict:
+    """停止该用户的沙箱容器(浏览器面板「关闭浏览器」):立即释放 CPU/内存。
+
+    容器保留(不删除),下次 ensure / AI 浏览器工具按需重新创建并拉起浏览器栈。
+    """
+    from app.sandbox import get_docker_sandbox
+
+    sb = get_docker_sandbox(user_id)
+    try:
+        sb.stop()
+        return {"status": "ok"}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[%s] sandbox stop failed: %s", user_id, exc)
         return {"status": "error", "error": str(exc)}
 
 
@@ -117,7 +139,7 @@ def stream(user_id: str, body: InvokeRequest) -> StreamingResponse:
             if body.resume_decision is not None:
                 # 中断恢复:以 Command(resume=决策) 继续现有线程(hitl 审批/拒绝后)
                 it = agent.stream(
-                    Command(resume=body.resume_decision),
+                    Command(resume=_align_decisions(agent, cfg, body.resume_decision)),
                     config=cfg,
                     stream_mode=["messages", "updates"],
                     version="v1",
@@ -132,8 +154,7 @@ def stream(user_id: str, body: InvokeRequest) -> StreamingResponse:
             for mode, value in it:
                 if mode == "messages":
                     for item in _iter_stream_messages(value):
-                        out = _emit_stream_message(item)
-                        if out:
+                        for out in _emit_stream_message(item):
                             yield out
                 elif mode == "updates":
                     # Human-in-the-loop 中断:吐出待审批请求后终止本流(线程已 checkpoint),
@@ -173,12 +194,54 @@ def _iter_stream_messages(value):
             yield item
 
 
-def _emit_stream_message(msg) -> str:
-    """messages 模式中的 token 增量(仅文本)。"""
+def _align_decisions(agent, cfg, decision: dict) -> dict:
+    """把网关的单条决策对齐到挂起工具调用数量。
+
+    多个工具同时被中断时(如 create_skill + delete 同轮),langgraph 要求
+    decisions 数组长度与挂起调用数一致,否则 ValueError;此处按线程状态里的
+    action_requests 数量复制首条决策(前端当前只提供全局允许/拒绝)。
+    """
+    try:
+        state = agent.get_state(cfg)
+        total = 0
+        for itp in (getattr(state, "interrupts", None) or ()):
+            val = getattr(itp, "value", itp)
+            reqs = val.get("action_requests") if isinstance(val, dict) else None
+            total += len(reqs) if reqs else 1
+        decisions = decision.get("decisions") if isinstance(decision, dict) else None
+        if total > 1 and decisions:
+            return {"decisions": [decisions[0]] * total}
+    except Exception:  # noqa: BLE001
+        logger.warning("align resume decisions failed", exc_info=True)
+    return decision
+
+
+def _emit_stream_message(msg) -> list[str]:
+    """messages 模式中的 token 增量:reasoning_content → reason 事件,正文文本 → delta 事件。"""
+    outs: list[str] = []
+    if not getattr(msg, "type", "").endswith("AIMessageChunk"):
+        return outs
+    ak = getattr(msg, "additional_kwargs", None) or {}
+    rc = ak.get("reasoning_content") if isinstance(ak, dict) else None
+    if rc:
+        outs.append(_sse("reason", {"content": str(rc)}))
     content = getattr(msg, "content", "") or ""
-    if content and getattr(msg, "type", "").endswith("AIMessageChunk"):
-        return _sse("delta", {"content": content})
-    return ""
+    if content and isinstance(content, str):
+        outs.append(_sse("delta", {"content": content}))
+    return outs
+
+
+# 读 SKILL.md = 加载技能动作(deepagents 渐进式披露:先读说明再照做)。
+# 捕获后合成 use_skill 工具调用记录,前端/持久化/溯源均按普通工具调用处理。
+_SKILL_MD_RE = re.compile(r"^/?skills/([a-z0-9][a-z0-9-]{0,63})/SKILL\.md$", re.IGNORECASE)
+
+
+def _skill_from_read(name: str, args: dict) -> str | None:
+    if name not in ("read", "read_file"):
+        return None
+    p = args.get("file_path") or args.get("path") or args.get("file") or ""
+    m = _SKILL_MD_RE.match(str(p).strip().replace("\\", "/"))
+    return m.group(1).lower() if m else None
 
 
 def _emit_update(update, user_id: str | None = None) -> list[str]:
@@ -223,6 +286,16 @@ def _emit_update(update, user_id: str | None = None) -> list[str]:
             if outputs:
                 payload["outputs"] = outputs
             outs.append(_sse("tool_result", payload))
+            # 技能加载溯源:读 /skills/<名>/SKILL.md ⇒ 合成 use_skill 记录(带技能名)
+            skill = _skill_from_read(call[0], call[1]) if call else None
+            if skill:
+                sid = f"skill-{tc_id}"
+                outs.append(_sse("tool", {"name": "use_skill", "args": {"skill": skill}, "id": sid}))
+                outs.append(_sse("tool_result", {
+                    "name": "use_skill",
+                    "id": sid,
+                    "content": f"已加载技能「{skill}」的使用说明",
+                }))
         elif getattr(msg, "tool_calls", None):
             for call in msg.tool_calls:
                 cid = call.get("id")

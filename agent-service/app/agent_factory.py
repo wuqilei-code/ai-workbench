@@ -15,12 +15,14 @@ logger = logging.getLogger(__name__)
 
 from deepagents import FilesystemPermission, create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellBackend
+from deepagents.middleware.skills import SkillsMiddleware
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_openai import ChatOpenAI
 
 from app import config
 from app import workspace as ws
 from app.browser import build_browser_tools
-from app.skill_tool import ReadOnlyBackend, build_skill_tools
+from app.skill_tool import ReadOnlyBackend, SelectedSkillsBackend, build_skill_tools
 
 # 平台内置技能(默认每个会话都加载;与镜像 agent-service/skills 下的目录名一致)
 BUILTIN_SKILLS = {
@@ -30,6 +32,25 @@ BUILTIN_SKILLS = {
 
 def _skill_name(skill_path: str) -> str:
     return Path(skill_path).parent.name
+
+
+class ReloadSkillsMiddleware(SkillsMiddleware):
+    """每轮消息都按最新勾选/最新技能文件重载技能元数据。
+
+    deepagents 原版把 skills_metadata 缓存进线程 state(存在即跳过,哪怕为空),
+    导致会话中途改勾选、create_skill 新建技能、以及修复前残留的空列表都不会刷新。
+    这里在进入前主动丢弃缓存键,强制走一遍重载(ls + 读 SKILL.md 开销极小)。
+    """
+
+    def before_agent(self, state, runtime, config):
+        state = dict(state or {})
+        state.pop("skills_metadata", None)
+        return super().before_agent(state, runtime, config)
+
+    async def abefore_agent(self, state, runtime, config):
+        state = dict(state or {})
+        state.pop("skills_metadata", None)
+        return await super().abefore_agent(state, runtime, config)
 
 
 def _select_skills(all_skill_paths: list[str], skills_override: list[str] | None) -> list[str]:
@@ -54,13 +75,27 @@ def _get_runtime():
     return _runtime
 
 
+class ReasoningChatOpenAI(ChatOpenAI):
+    """透传 OpenAI 兼容接口的 reasoning_content(如 deepseek 推理段)到 additional_kwargs。"""
+
+    def _convert_chunk_to_generation_chunk(self, chunk, default_chunk_class, base_generation_info):
+        gen = super()._convert_chunk_to_generation_chunk(chunk, default_chunk_class, base_generation_info)
+        if gen is not None:
+            choices = chunk.get("choices") or []
+            delta = (choices[0].get("delta") or {}) if choices else {}
+            rc = delta.get("reasoning_content")
+            if rc:
+                ak = getattr(gen.message, "additional_kwargs", None)
+                if isinstance(ak, dict):
+                    ak["reasoning_content"] = rc
+        return gen
+
+
 def _build_model() -> BaseChatModel:
     if config.AGENT_MODEL_BASE_URL:
-        from langchain_openai import ChatOpenAI
-
         # 支持 deepseek/ollama/自建网关等 OpenAI 兼容接口:AGENT_MODEL 里剥掉 provider: 前缀
         model = config.AGENT_MODEL.split(":", 1)[-1]
-        return ChatOpenAI(
+        return ReasoningChatOpenAI(
             model=model,
             base_url=config.AGENT_MODEL_BASE_URL,
             api_key=config.AGENT_MODEL_API_KEY or "not-needed",
@@ -74,12 +109,14 @@ def _build_model() -> BaseChatModel:
     )
 
 
-def _build_backend(user_id: str) -> CompositeBackend:
+def _build_backend(user_id: str, visible_skills: set[str] | None = None) -> CompositeBackend:
     """default 与 /workspace/ 路由共用同一个后端(execute 只走 default)。
 
     - docker(默认):DockerSandbox —— execute 与文件工具全部在 per-user 沙箱容器内
     - local:LocalShellBackend(agent-service 进程内直跑 shell,仅本机可信调试)
-    /skills 仍走本地只读文件系统(SKILL.md 由平台投放,无需进沙箱)。
+    /skills 走本地只读文件系统,根列表按会话勾选过滤(visible_skills);
+    SkillsMiddleware 的 source 固定为虚拟目录 /skills(它只认 backend 虚拟路径,
+    传宿主绝对路径会 path_not_found —— 曾导致技能加载为空)。
     """
     mode = config.AGENT_SANDBOX_BACKEND
     if mode == "docker":
@@ -98,8 +135,9 @@ def _build_backend(user_id: str) -> CompositeBackend:
         routes={
             "/workspace/": workspace_backend,
             # 技能目录只读:变更唯一入口是 create_skill 工具(经后端入库+落盘,防漂移)
-            "/skills/": ReadOnlyBackend(
-                FilesystemBackend(root_dir=str(ws.skills_root(user_id)), virtual_mode=True)
+            "/skills/": SelectedSkillsBackend(
+                FilesystemBackend(root_dir=str(ws.skills_root(user_id)), virtual_mode=True),
+                visible=visible_skills,
             ),
         },
     )
@@ -205,25 +243,31 @@ class AgentManager:
         skills_override: list[str] | None = None,
     ):
         ws.ensure_user_dirs(user_id)
-        skills = _select_skills(ws.list_skills(user_id) + ws.list_global_skills(), skills_override)
+        # SkillsMiddleware 只接受 backend 虚拟路径:source 固定 /skills(根),勾选过滤由
+        # SelectedSkillsBackend 在 ls 时完成。这里仍先按宿主路径选出名字,用于过滤与缓存指纹。
+        selected_paths = _select_skills(ws.list_skills(user_id) + ws.list_global_skills(), skills_override)
+        skills = ["/skills"] if selected_paths else []
         memory = ws.memory_files(user_id)
         effective_prompt = system_prompt or _DEFAULT_SYSTEM_PROMPT
-        key = _fingerprint(user_id, skills, memory, effective_prompt)
+        key = _fingerprint(user_id, selected_paths, memory, effective_prompt)
 
         with self._lock:
             cached = self._cache.get(key)
             if cached is not None:
                 return cached
 
-        logger.info("[%s] agent build: skills=%s", user_id, skills)
+        logger.info("[%s] agent build: skills=%s", user_id, [p.rsplit("/", 2)[-2] for p in selected_paths])
+        backend = _build_backend(user_id, {_skill_name(p) for p in selected_paths})
         agent = create_deep_agent(
             model=_build_model(),
             tools=list(extra_tools or []) + build_browser_tools(user_id) + build_skill_tools(user_id),
             system_prompt=effective_prompt,
-            backend=_build_backend(user_id),
+            backend=backend,
+            # 技能不走 deepagents 内置 skills 参数(它每线程只加载一次);改用强制重载中间件,
+            # 会话中途改勾选/新建技能,下一条消息立即生效。
+            middleware=[ReloadSkillsMiddleware(backend=backend, sources=["/skills"])] if skills else [],
             permissions=_build_permissions(),
             interrupt_on=_build_interrupt_on(),
-            skills=skills,
             memory=memory,
             checkpointer=_get_runtime().checkpointer,
             store=_get_runtime().store,

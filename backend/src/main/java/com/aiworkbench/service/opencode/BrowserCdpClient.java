@@ -44,10 +44,20 @@ public class BrowserCdpClient {
     private static final Duration HTTP_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration CMD_TIMEOUT_SECONDS = Duration.ofSeconds(8);
 
-    /** screencast 输出尺寸与浏览器视口一致(1920x1080),点击坐标 1:1 无需换算 */
-    private static final int FRAME_MAX_WIDTH = 1920;
-    private static final int FRAME_MAX_HEIGHT = 1080;
-    private static final int FRAME_QUALITY = 80;
+    /**
+     * screencast 输出会被 Chromium 缩到 maxWidth/maxHeight 内(如 1920 视口→1600 帧)。
+     * 前端画布按帧像素发坐标,而 Input.* 需要页面 CSS 像素坐标——必须乘 inputScale 换算。
+     * 缩放比由每帧 screencastFrame.metadata.deviceWidth/Height(视口 CSS 尺寸)实时计算。
+     */
+    private static final int FRAME_MAX_WIDTH = 1600;
+    private static final int FRAME_MAX_HEIGHT = 1000;
+    private static final int FRAME_QUALITY = 70;
+
+    /** 帧像素 → CSS 像素的缩放比(>=1);由最新一帧的视口元数据维护。 */
+    private volatile double inputScale = 1.0;
+    /** 最近一次已知视口 CSS 尺寸(captureFrame 保持与推流同尺寸用;-1 未知)。 */
+    private volatile int lastViewportW = -1;
+    private volatile int lastViewportH = -1;
 
     private static final Map<String, Integer> KEY_VK = Map.ofEntries(
             Map.entry("Enter", 13), Map.entry("Backspace", 8), Map.entry("Tab", 9),
@@ -257,7 +267,8 @@ public class BrowserCdpClient {
         }
     }
 
-    /** 主动抓一帧(用户操作后推送,即使页面无变化也给出可见反馈)。 */
+    /** 主动抓一帧(用户操作后推送,即使页面无变化也给出可见反馈)。
+     *  用 clip+scale 让输出与 screencast 帧同尺寸,避免画布在两种尺寸间来回重置。 */
     public void captureFrame() {
         WebSocket w = ws;
         if (w == null || !connected.get()) {
@@ -266,7 +277,16 @@ public class BrowserCdpClient {
         long id = idSeq.incrementAndGet();
         CompletableFuture<JsonNode> f = new CompletableFuture<>();
         pending.put(id, f);
-        sendRaw(rpc(id, "Page.captureScreenshot", Map.of("format", "jpeg", "quality", FRAME_QUALITY)));
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("format", "jpeg");
+        params.put("quality", FRAME_QUALITY);
+        int dw = lastViewportW;
+        int dh = lastViewportH;
+        if (dw > 0 && dh > 0) {
+            double k = Math.min(1.0, Math.min((double) FRAME_MAX_WIDTH / dw, (double) FRAME_MAX_HEIGHT / dh));
+            params.put("clip", Map.of("x", 0, "y", 0, "width", dw, "height", dh, "scale", k));
+        }
+        sendRaw(rpc(id, "Page.captureScreenshot", params));
         f.thenAccept(node -> {
             String data = node.path("result").path("data").asText("");
             Consumer<byte[]> sink = frameSink;
@@ -283,48 +303,65 @@ public class BrowserCdpClient {
 
     // ============ CDP 命令(阻塞,await 响应) ============
 
+    /** 帧像素坐标 → 页面 CSS 像素坐标(推流被缩放时必须换算,否则点击错位)。 */
+    private int sx(int x) {
+        return (int) Math.round(x * inputScale);
+    }
+
     public void click(int x, int y) throws Exception {
-        call("Input.dispatchMouseEvent", Map.of("type", "mousePressed", "x", x, "y", y,
+        call("Input.dispatchMouseEvent", Map.of("type", "mousePressed", "x", sx(x), "y", sx(y),
                 "button", "left", "buttons", 1, "clickCount", 1));
-        call("Input.dispatchMouseEvent", Map.of("type", "mouseReleased", "x", x, "y", y,
+        call("Input.dispatchMouseEvent", Map.of("type", "mouseReleased", "x", sx(x), "y", sx(y),
                 "button", "left", "buttons", 0, "clickCount", 1));
     }
 
     /** 右键点击(有头浏览器会弹出原生右键菜单,出现在窗口画面里)。 */
     public void rightClick(int x, int y) throws Exception {
-        call("Input.dispatchMouseEvent", Map.of("type", "mousePressed", "x", x, "y", y,
+        call("Input.dispatchMouseEvent", Map.of("type", "mousePressed", "x", sx(x), "y", sx(y),
                 "button", "right", "buttons", 2, "clickCount", 1));
-        call("Input.dispatchMouseEvent", Map.of("type", "mouseReleased", "x", x, "y", y,
+        call("Input.dispatchMouseEvent", Map.of("type", "mouseReleased", "x", sx(x), "y", sx(y),
                 "button", "right", "buttons", 0, "clickCount", 1));
     }
 
     /** 拖拽:按下后移动再释放 */
     public void press(int x, int y) throws Exception {
-        call("Input.dispatchMouseEvent", Map.of("type", "mousePressed", "x", x, "y", y,
+        call("Input.dispatchMouseEvent", Map.of("type", "mousePressed", "x", sx(x), "y", sx(y),
                 "button", "left", "buttons", 1, "clickCount", 1));
     }
 
     public void release(int x, int y) throws Exception {
-        call("Input.dispatchMouseEvent", Map.of("type", "mouseReleased", "x", x, "y", y,
+        call("Input.dispatchMouseEvent", Map.of("type", "mouseReleased", "x", sx(x), "y", sx(y),
                 "button", "left", "buttons", 0, "clickCount", 1));
     }
 
     /** 拖拽过程中的移动(按键按下状态) */
     public void drag(int x, int y) throws Exception {
-        call("Input.dispatchMouseEvent", Map.of("type", "mouseMoved", "x", x, "y", y,
+        call("Input.dispatchMouseEvent", Map.of("type", "mouseMoved", "x", sx(x), "y", sx(y),
                 "button", "left", "buttons", 1));
     }
 
     public void move(int x, int y) throws Exception {
-        call("Input.dispatchMouseEvent", Map.of("type", "mouseMoved", "x", x, "y", y,
+        call("Input.dispatchMouseEvent", Map.of("type", "mouseMoved", "x", sx(x), "y", sx(y),
+                "button", "none", "buttons", 0));
+    }
+
+    /** 高频拖拽移动:fire-and-forget 不等 CDP 响应(页面繁忙时阻塞等待会造成输入队列队头堵塞)。 */
+    public void dragAsync(int x, int y) {
+        notify("Input.dispatchMouseEvent", Map.of("type", "mouseMoved", "x", sx(x), "y", sx(y),
+                "button", "left", "buttons", 1));
+    }
+
+    /** 高频悬停移动:同 dragAsync。 */
+    public void moveAsync(int x, int y) {
+        notify("Input.dispatchMouseEvent", Map.of("type", "mouseMoved", "x", sx(x), "y", sx(y),
                 "button", "none", "buttons", 0));
     }
 
     public void wheel(int x, int y, int deltaX, int deltaY) throws Exception {
         // 先移动光标到滚动位置,再派发滚轮;否则无头下 mouseWheel 可能不生效
-        call("Input.dispatchMouseEvent", Map.of("type", "mouseMoved", "x", x, "y", y,
+        call("Input.dispatchMouseEvent", Map.of("type", "mouseMoved", "x", sx(x), "y", sx(y),
                 "button", "none", "buttons", 0));
-        call("Input.dispatchMouseEvent", Map.of("type", "mouseWheel", "x", x, "y", y,
+        call("Input.dispatchMouseEvent", Map.of("type", "mouseWheel", "x", sx(x), "y", sx(y),
                 "deltaX", deltaX, "deltaY", deltaY));
     }
 
@@ -435,6 +472,21 @@ public class BrowserCdpClient {
             JsonNode params = node.get("params");
             String data = params == null ? "" : params.path("data").asText("");
             JsonNode sidNode = params == null ? null : params.get("sessionId");
+            // 从帧元数据维护视口尺寸与输入缩放比(视口/窗口变化自动跟随)
+            JsonNode meta = params == null ? null : params.path("metadata");
+            if (meta != null && meta.isObject()) {
+                int dw = meta.path("deviceWidth").asInt(0);
+                int dh = meta.path("deviceHeight").asInt(0);
+                if (dw > 0 && dh > 0) {
+                    lastViewportW = dw;
+                    lastViewportH = dh;
+                    double k = Math.min(1.0, Math.min(
+                            (double) FRAME_MAX_WIDTH / dw, (double) FRAME_MAX_HEIGHT / dh));
+                    if (k > 1e-6) {
+                        inputScale = 1.0 / k;
+                    }
+                }
+            }
             if (!data.isEmpty()) {
                 byte[] frame = Base64.getDecoder().decode(data);
                 // 先回 ack 再交给 sink:screencast 是 ack 限速,重活(sink)若阻塞 ack 会拖慢推帧
@@ -500,6 +552,11 @@ public class BrowserCdpClient {
             throw new IllegalStateException("浏览器 CDP 未连接");
         }
         return send(method, params).get(CMD_TIMEOUT_SECONDS.toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    /** 只发不等(不注册 pending):用于高频输入事件,避免悬挂 Future 与队头阻塞。 */
+    private void notify(String method, Map<String, Object> params) {
+        sendRaw(rpc(idSeq.incrementAndGet(), method, params));
     }
 
     private void sendRaw(String json) {
