@@ -15,7 +15,7 @@ const running = computed(() => props.tc.status === 'running')
 /** 用户手动展开/折叠覆盖;置 null 恢复自动态 */
 const userOverride = ref<boolean | null>(null)
 
-/** 自动态:运行中展开(跟随输出),完成后折叠 */
+/** 自动态:运行中展开(跟随输出),完成后折叠。空输出工具已在时间线层面过滤 */
 const expanded = computed(() => userOverride.value ?? running.value)
 
 function toggle() {
@@ -49,6 +49,14 @@ const statusIcon = computed(() => {
   if (props.tc.status === 'completed') return '✓'
   if (props.tc.status === 'error') return '✗'
   return '…'
+})
+
+/** 按工具名给图标:写/编辑类=铅笔,命令/执行类=终端,其余=扳手 */
+const toolIcon = computed(() => {
+  const n = (props.tc.name || '').toLowerCase()
+  if (/(write|edit|create|save|mk|touch|pencil|file)/.test(n)) return 'pencil'
+  if (/(exec|command|bash|shell|run|sh|ls|grep|cat|python|node)/.test(n)) return 'terminal'
+  return 'wrench'
 })
 
 const lineCount = computed(() => {
@@ -85,18 +93,25 @@ function downloadOutput() {
 
 <template>
   <div class="tool-item">
-    <span class="chip" :class="chipClass" :title="`${tc.name} ${summarizeToolCall(tc)}`.trim()">
-      🔧 {{ tc.name }} <span class="chip-arg">{{ summarizeToolCall(tc) }}</span>
+    <span
+      class="chip"
+      :class="chipClass"
+      :title="`${tc.name} ${summarizeToolCall(tc)}`.trim()"
+      @click="output ? toggle() : undefined"
+    >
+      <svg v-if="toolIcon === 'pencil'" class="t-ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+      <svg v-else-if="toolIcon === 'terminal'" class="t-ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg>
+      <svg v-else class="t-ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+      <span class="chip-name">{{ tc.name }}</span>
+      <span class="chip-arg">{{ summarizeToolCall(tc) }}</span>
+      <span v-if="output && lineCount" class="chip-lines">{{ expanded ? '收起' : lineCount + ' 行' }}</span>
       <span class="chip-status">{{ statusIcon }}</span>
     </span>
 
-    <div v-if="output" class="tool-output">
-      <button class="tool-output-head" @click="toggle">
-        <svg class="chevron" :class="{ open: expanded }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-        <span class="label">输出</span>
-        <span v-if="lineCount" class="lines">{{ lineCount }} 行</span>
-        <span v-if="running" class="live">执行中…</span>
-        <span v-else-if="output && !running" class="output-actions" @click.stop>
+    <div v-if="expanded && output" class="tool-output-wrap">
+      <div class="tool-output-bar">
+        <span>输出</span>
+        <span class="output-actions" @click.stop>
           <a class="output-act" title="复制工具输出" @click="copyOutput">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
           </a>
@@ -104,12 +119,8 @@ function downloadOutput() {
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           </a>
         </span>
-      </button>
-      <pre
-        v-if="expanded"
-        ref="boxEl"
-        class="tool-output-body"
-      >{{ output }}</pre>
+      </div>
+      <pre ref="boxEl" class="tool-output-body">{{ output }}</pre>
     </div>
   </div>
 </template>
@@ -117,40 +128,41 @@ function downloadOutput() {
 <style scoped>
 .tool-item { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 
+/* 朴素单行:图标 + 工具名 + 参数 + 行数 + 状态;有输出时整行可点展开 */
 .chip {
-  display: inline-flex; align-items: center; gap: 4px;
-  font-size: 12px; padding: 3px 10px; border-radius: 10px;
-  background: var(--bg-elev); color: var(--text-2); border: 1px solid var(--border);
-  width: fit-content;
-  transition: border-color .15s, background .15s;
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 12px; padding: 3px 8px;
+  margin-left: -8px;
+  background: transparent; color: var(--text-2);
+  width: fit-content; max-width: 100%;
+  border-radius: 6px;
+  transition: background .15s;
+  cursor: pointer;
 }
-.chip:hover { border-color: var(--border); background: var(--surface-hover); }
-.chip-arg { color: var(--accent); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chip .chip-status { font-weight: bold; }
+.chip:hover { background: var(--surface-hover); }
+.t-ic { color: var(--text-3); flex-shrink: 0; }
+.chip-name { font-weight: 500; color: var(--text-2); }
+.chip-arg {
+  color: var(--accent); font-family: ui-monospace, monospace; font-size: 11px;
+  max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chip-lines { color: var(--text-3); font-size: 11px; }
+.chip .chip-status { font-weight: 600; }
 .chip.run .chip-status { color: var(--text-3); animation: chip-pulse 1.6s ease-in-out infinite; }
 .chip.ok .chip-status { color: var(--ok); }
 .chip.err .chip-status { color: var(--err); }
 @keyframes chip-pulse { 50% { opacity: 0.45; } }
 
-.tool-output { min-width: 0; }
-.tool-output-head {
-  display: inline-flex; align-items: center; gap: 5px;
-  width: 100%; padding: 2px 4px; margin-left: -4px;
-  background: none; border: none; cursor: pointer;
-  color: var(--text-3); font-size: 12px; text-align: left;
-  border-radius: 4px;
+/* 展开的输出:标题条(复制/下载)+ 圆角浅底卡,等宽字体 */
+.tool-output-wrap { min-width: 0; margin-top: 4px; }
+.tool-output-bar {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; color: var(--text-3);
+  padding: 0 2px 3px;
 }
-.tool-output-head:hover { color: var(--text-2); background: var(--surface-hover); }
-.tool-output .chevron { transition: transform .15s; color: var(--text-3); flex-shrink: 0; }
-.tool-output .chevron.open { transform: rotate(90deg); }
-.tool-output .label { font-weight: 500; color: var(--text-3); }
-.tool-output .lines { font-size: 11px; }
-.tool-output .live { color: var(--warn); font-size: 11px; }
-.tool-output .output-actions {
+.output-actions {
   margin-left: auto; display: inline-flex; gap: 6px; align-items: center;
-  opacity: 0; transition: opacity .15s;
 }
-.tool-output:hover .output-actions { opacity: 1; }
 .output-act {
   color: var(--text-3); text-decoration: none; padding: 2px;
   border-radius: 4px; cursor: pointer; line-height: 0;
@@ -158,11 +170,20 @@ function downloadOutput() {
 }
 .output-act:hover { background: var(--accent-soft); color: var(--accent-text); }
 .tool-output-body {
-  margin: 2px 0 6px 18px; padding-left: 12px;
-  border-left: 2px solid var(--border);
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
   font-family: ui-monospace, monospace; font-size: 12px;
-  line-height: 1.5; color: var(--text-2);
+  line-height: 1.55; color: var(--text-2);
   white-space: pre-wrap; word-break: break-word;
-  max-height: 260px; overflow: auto;
+  max-height: 280px; overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
 }
+.tool-output-body:hover { scrollbar-color: var(--border) transparent; }
+.tool-output-body::-webkit-scrollbar { width: 6px; }
+.tool-output-body::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
+.tool-output-body:hover::-webkit-scrollbar-thumb { background: var(--border); }
 </style>

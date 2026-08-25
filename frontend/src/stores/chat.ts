@@ -55,6 +55,10 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const streamingText = ref('')
+  /** 正在流式接收的推理段摘要(对应 reason 事件):实时累积,避免把 reasoning 逐个写进
+   *  timeline 触发 buildTurns 全量重算导致的"空白很久后内容一次性出现"。仅在与文本/工具
+   *  的边界处才定稿合并进时间线,保底刷新/断线恢复后的历史重建。 */
+  const liveReasoning = ref('')
   const streamingMessageId = ref<string | null>(null)
   const isStreaming = ref(false)
   /** 正在流式生成的 dynamic-ui 组件(pure_show_widget 参数逐块到达,实时累积) */
@@ -199,6 +203,7 @@ export const useChatStore = defineStore('chat', () => {
     messages.value = []
     summaries.value = []
     streamingText.value = ''
+    liveReasoning.value = ''
     streamingMessageId.value = null
     isStreaming.value = false
     authExpired.value = false
@@ -312,6 +317,7 @@ export const useChatStore = defineStore('chat', () => {
       messages.value = []
       summaries.value = []
       streamingText.value = ''
+      liveReasoning.value = ''
     }
   }
 
@@ -479,6 +485,7 @@ export const useChatStore = defineStore('chat', () => {
     }
     messages.value.push(optimistic)
     streamingText.value = ''
+    liveReasoning.value = ''
     streamingMessageId.value = null
     isStreaming.value = true
     touchStreamActivity()
@@ -565,6 +572,7 @@ export const useChatStore = defineStore('chat', () => {
           ensureAssistantShell(id)
           streamingMessageId.value = id
           streamingText.value = ''
+          liveReasoning.value = ''
         }
         touchStreamActivity()
         break
@@ -580,7 +588,6 @@ export const useChatStore = defineStore('chat', () => {
           streamingMessageId.value = id
           streamingText.value = ''
         }
-        appendLiveTimeline('text', content)
         streamingText.value += content
         isStreaming.value = true
         break
@@ -590,15 +597,19 @@ export const useChatStore = defineStore('chat', () => {
         if (isStreaming.value) touchStreamActivity()
         const rc: string = data.content || ''
         if (!rc) break
-        // 镜像进实时消息时间线,与工具/文本一起按执行顺序渲染(落库结构一致)
-        appendLiveTimeline('reason', rc)
+        // 推理段独立累积到 liveReasoning(轻量纯标量),让"思考"块随 reason 逐块实时可见;
+        // 不再逐个写 messages.timeline,避免 buildTurns 全量重算阻塞主线程致内容成批跳出。
+        // 在与工具/文本/结束的边界处才由 flushLiveReasoning 定稿合并进时间线(落库结构一致)。
+        liveReasoning.value += rc
         isStreaming.value = true
+        ensureLiveReasonStep()
         break
       }
 
       case 'tool': {
         isStreaming.value = true
         touchStreamActivity()
+        flushLiveSteps()
         const tc: ToolCall = {
           id: typeof data.id === 'string' ? data.id : undefined,
           name: typeof data.name === 'string' ? data.name : 'tool',
@@ -648,14 +659,17 @@ export const useChatStore = defineStore('chat', () => {
       case 'message.end': {
         const id: string = data.id
         const status: string = data.status
+        const finalText = streamingText.value
+        // 边界处一次性把实时缓冲(reason+text)定稿进时间线并清空,保证历史结构与后端落库一致
+        flushLiveSteps()
         if (status === 'error') {
           markAssistantError(id, '本轮生成出错,请重试')
           streamingText.value = ''
           streamingMessageId.value = null
         } else {
-          // completed / aborted:把流式文本定稿到该消息
-          if (id && id === streamingMessageId.value && streamingText.value) {
-            finalizeTextPart(id, streamingText.value, status === 'completed')
+          // completed / aborted:把最终文本定稿到该消息(文本已随 flushLiveSteps 并入时间线)
+          if (id && id === streamingMessageId.value && finalText) {
+            finalizeTextPart(id, finalText, status === 'completed')
           }
           if (id) {
             const idx = messages.value.findIndex((m) => m.agentMessageId === id)
@@ -724,9 +738,66 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
-  /** 追加实时时间线条目(reason/text 合并同类尾段,tool 记 id),与网关落库结构一致 */
-  function appendLiveTimeline(k: 'reason' | 'text' | 'tool', v?: string, toolId?: string) {
+  /** 当前流式消息需先有一个 reason 时间线条目,使 buildTurns 能生成"思考"步骤承接
+   *  liveReasoning(推理刚开始、时间线尚无内容时只此一次;后续段落因夹了 tool 而新增)。 */
+  function ensureLiveReasonStep() {
     const targetId = streamingMessageId.value
+    let idx = targetId ? messages.value.findIndex((m) => m.agentMessageId === targetId) : -1
+    if (idx < 0 && messages.value.length && messages.value[messages.value.length - 1].role === 'assistant') {
+      idx = messages.value.length - 1
+    }
+    if (idx < 0) return
+    const msg = messages.value[idx]
+    const tl = (
+      Array.isArray((msg.parts as any)?.timeline) ? [...(msg.parts as any).timeline] : []
+    ) as { k: string; v?: string }[]
+    const last = tl.length ? tl[tl.length - 1] : null
+    if (last && (last.k === 'reason' || last.k === 'text')) return
+    // 用当前已累积的 liveReasoning 作为占位文本:stepsFromParts 的 flush 会丢弃空文本步骤,
+    // 若 v 为空则该占位"思考"步骤根本不出现,导致 buildTurns 回退为空 finalAnswer,
+    // 思考内容直到边界 flush 前都渲染不出来。写入非空值即可让"思考"步骤立即存在,
+    // 渲染时 displayContent 直接读 liveReasoning(实时)而非此占位 v。
+    tl.push({ k: 'reason', v: liveReasoning.value })
+    messages.value[idx] = { ...msg, parts: { ...(msg.parts || {}), timeline: tl } } as any
+  }
+
+  /** 把 liveReasoning 定稿进当前消息时间线最后一个 reason 段并清空 live 缓冲。
+   *  仅在工具开始/消息结束等边界调用一次,保证 live 推理实时可见的同时定稿历史结构。
+   *  注意:ensureLiveReasonStep 已预埋以 liveReasoning 前缀作为占位的 reason 段;这里须
+   *  【覆盖】而非追加,否则会把占位前缀与完整内容叠加造成首块重复。 */
+  function flushLiveReasoning() {
+    const txt = liveReasoning.value
+    liveReasoning.value = ''
+    if (!txt) return
+    const targetId = streamingMessageId.value
+    let idx = targetId ? messages.value.findIndex((m) => m.agentMessageId === targetId) : -1
+    if (idx < 0 && messages.value.length && messages.value[messages.value.length - 1].role === 'assistant') {
+      idx = messages.value.length - 1
+    }
+    if (idx < 0) return
+    const msg = messages.value[idx]
+    const tl: { k: string; v?: string }[] = Array.isArray((msg.parts as any)?.timeline)
+      ? [...((msg.parts as any).timeline as unknown[])]
+      : []
+    const last = tl.length ? tl[tl.length - 1] : null
+    if (last && last.k === 'reason') tl[tl.length - 1] = { k: 'reason', v: txt }
+    else tl.push({ k: 'reason', v: txt })
+    messages.value[idx] = { ...msg, parts: { ...(msg.parts || {}), timeline: tl } }
+  }
+
+  /** 流式边界(工具开始/消息结束/生成收尾)把所有实时缓冲按实际发生顺序定稿进时间线并清空。
+   *  liveReasoning / streamingText 在流式期间是轻量纯标量,不触发 buildTurns 全量重算;
+   *  仅在此处一次性合并,既保证逐块实时可见,又保证刷新/断线后的历史重建与后端落库一致。 */
+  function flushLiveSteps() {
+    flushLiveReasoning()
+    if (streamingText.value) {
+      appendLiveTimeline('text', streamingText.value)
+      streamingText.value = ''
+    }
+  }
+
+  /** 追加实时时间线条目(reason/text 合并同类尾段,tool 记 id),与网关落库结构一致 */
+  function appendLiveTimeline(k: 'reason' | 'text' | 'tool', v?: string, toolId?: string) {    const targetId = streamingMessageId.value
     let idx = targetId ? messages.value.findIndex((m) => m.agentMessageId === targetId) : -1
     if (idx < 0 && messages.value.length && messages.value[messages.value.length - 1].role === 'assistant') {
       idx = messages.value.length - 1
@@ -852,8 +923,12 @@ export const useChatStore = defineStore('chat', () => {
 
   /** 会话空闲:生成结束,兜底落定未提交的流式文本 */
   function finishStreaming() {
+    flushLiveReasoning()
     if (streamingMessageId.value && streamingText.value) {
+      // 兜底(done 未伴随 message.end 时):把最终文本并入时间线再定稿
+      appendLiveTimeline('text', streamingText.value)
       finalizeTextPart(streamingMessageId.value, streamingText.value, true)
+      streamingText.value = ''
     }
     // 兜底:清掉仍处于「发送中…」的用户气泡(正常已在 POST 返回后解除)
     for (let i = 0; i < messages.value.length; i++) {
@@ -926,6 +1001,7 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming.value = false
     streamStartAt.value = 0
     streamingText.value = ''
+    liveReasoning.value = ''
     streamingMessageId.value = null
     _interruptedMsgId = null
     _interruptedText = ''
@@ -984,7 +1060,7 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     sessions, archivedSessions, currentSessionId, currentSession, messages, turns, flow, summaries,
-    streamingText, streamingMessageId, isStreaming, streamingStuckSeconds, streamingElapsedSeconds, runningActivity,
+    streamingText, liveReasoning, streamingMessageId, isStreaming, streamingStuckSeconds, streamingElapsedSeconds, runningActivity,
     streamingWidgetCode,
     browserToolSignal, lastBrowserToolAt,
     hasPendingInteraction, connected, reconnecting, forceReconnect,

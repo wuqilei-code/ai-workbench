@@ -629,10 +629,16 @@ async function startNewChat() {
 .tool-btn svg { flex-shrink: 0; }
 .tool-btn-text { padding: 5px 10px; }
 
-/* 模型下拉(紧凑):高度与 tool-btn 对齐,避免错位 */
+/* 模型下拉(紧凑):默认隐藏,鼠标悬停工具栏时淡入显现 */
 .toolbar-select {
   max-width: 200px;
   flex-shrink: 0;
+  opacity: 0;
+  transition: opacity .15s ease;
+}
+.toolbar:hover .toolbar-select,
+.toolbar-select:focus-within {
+  opacity: 1;
 }
 .toolbar-select :deep(.n-base-selection) {
   background: transparent;

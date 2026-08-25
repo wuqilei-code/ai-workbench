@@ -30,6 +30,35 @@ function stripScripts(code: string): string {
   return code.replace(/<script\b[\s\S]*?<\/script\s*>/gi, '').replace(/<script\b[\s\S]*$/i, '')
 }
 
+/**
+ * 把生成的 CSS 里的 `@media (prefers-color-scheme: dark|light) { :root { ... } }`
+ * 转成 `:root[data-widget-theme="dark"] { ... }` 属性门控,让组件跟随 App 主题
+ * (壳 html 上的 data-widget-theme),而不是系统/浏览器的明暗偏好。
+ */
+function normalizeWidgetTheme(code: string): string {
+  const RE = /@media\s*\(\s*prefers-color-scheme\s*:\s*(dark|light)\s*\)\s*\{/gi
+  let out = ''
+  let last = 0
+  let m: RegExpExecArray | null
+  while ((m = RE.exec(code))) {
+    const bodyStart = m.index + m[0].length
+    let depth = 1
+    let i = bodyStart
+    for (; i < code.length && depth > 0; i++) {
+      if (code[i] === '{') depth++
+      else if (code[i] === '}') depth--
+    }
+    const closeIdx = i - 1
+    const scheme = m[1] === 'dark' ? 'dark' : 'light'
+    const inner = code.slice(bodyStart, closeIdx)
+    out += code.slice(last, m.index)
+    out += inner.replace(/:root\b/g, `:root[data-widget-theme="${scheme}"]`)
+    last = closeIdx + 1
+  }
+  out += code.slice(last)
+  return out
+}
+
 const BOOT = `
 <script>
 (function(){
@@ -79,16 +108,31 @@ const BOOT = `
   if('ResizeObserver' in window){new ResizeObserver(reportH).observe(document.documentElement)}
   window.addEventListener('load',function(){reportH();send({type:'ready'})});
   setTimeout(function(){reportH();send({type:'ready'})},600);
+  window.addEventListener('wheel',function(e){
+    var de=document.documentElement;
+    if(de.scrollHeight<=de.clientHeight+1){
+      e.preventDefault();
+      send({type:'wheel',dy:e.deltaY,dx:e.deltaX||0});
+    }
+  },{passive:false});
 })();
 <\/script>`
 
 /** 文件模式:整页一次性渲染 */
+function balancedScripts(code: string): string {
+  // 流式生成可能中途被截断:<script> 未闭合会把后续注入的 BOOT 吞进字符串,
+  // 导致 BOOT 永不执行(高度停 220、滚轮桥失效)。按数量补齐闭合标签。
+  const open = (code.match(/<script\b/g) || []).length
+  const close = (code.match(/<\/script>/g) || []).length
+  return open > close ? code + '<' + '/script>'.repeat(open - close) : code
+}
+
 function buildDoc(code: string): string {
   return (
     `<!doctype html><html data-widget-theme="${isDark() ? 'dark' : 'light'}"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
     `<style>html,body{margin:0;padding:0;background:transparent}</style></head><body>` +
-    code +
+    balancedScripts(normalizeWidgetTheme(code)) +
     BOOT +
     `</body></html>`
   )
@@ -122,7 +166,7 @@ function postToFrame(payload: Record<string, unknown>): boolean {
 }
 
 function pushPatch(code: string) {
-  const stripped = stripScripts(code)
+  const stripped = stripScripts(normalizeWidgetTheme(code))
   if (!stripped.trim()) return
   if (!_liveReady || !postToFrame({ type: 'patch', html: stripped })) {
     _pendingLive = code
@@ -183,8 +227,29 @@ function onMessage(e: MessageEvent) {
   } else if (d.type === 'height' && typeof d.height === 'number') {
     height.value = Math.max(80, Math.min(3000, d.height))
     console.debug('[widget] height', d.height)
+  } else if (d.type === 'wheel' && typeof d.dy === 'number') {
+    // iframe 高度与内容齐平时内部无滚动空间:滚轮链式交给聊天容器
+    scrollAncestorBy(d.dy)
   } else if (d.type === 'prompt' && typeof d.prompt === 'string') {
     emit('prompt', d.prompt)
+  }
+}
+
+function scrollAncestorBy(dy: number) {
+  let el = iframeRef.value?.parentElement
+  while (el && el !== document.body) {
+    const st = getComputedStyle(el)
+    if ((st.overflowY === 'auto' || st.overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 1) {
+      // 用派发原生 WheelEvent 触发浏览器默认滚动,与"光标在文字上滚"走同一路径,
+      // 避免虚拟列表对程序化 scrollTop 改动的尺寸估算补偿(上滚被吃)。
+      const before = el.scrollTop
+      el.dispatchEvent(new WheelEvent('wheel', { deltaY: dy, bubbles: true, cancelable: true }))
+      requestAnimationFrame(() => {
+        if (el.scrollTop === before) el.scrollTop += dy
+      })
+      return
+    }
+    el = el.parentElement
   }
 }
 
@@ -217,10 +282,9 @@ onBeforeUnmount(() => {
       :title="dlBusy ? '下载中…' : '下载组件(.html)'"
       @click="download"
     >
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
         <line x1="12" y1="4" x2="12" y2="15" /><polyline points="6 11 12 17 18 11" /><line x1="5" y1="20" x2="19" y2="20" />
       </svg>
-      <span>下载</span>
     </button>
     <div v-if="failed" class="widget-failed">组件加载失败</div>
     <iframe
@@ -242,6 +306,7 @@ onBeforeUnmount(() => {
 .widget-frame {
   position: relative;
   width: 100%;
+  max-width: 560px;
 }
 .widget-iframe {
   display: block;
@@ -251,25 +316,25 @@ onBeforeUnmount(() => {
   background: transparent;
   transition: height 0.18s ease;
 }
+/* 下载:默认隐藏,悬停组件时右上角淡入一个轻量下载图标 */
 .wd-download {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 6px;
+  right: 6px;
   z-index: 2;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  font-size: 12px;
-  line-height: 1;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
   color: var(--text-dim, #aaa);
-  background: color-mix(in srgb, var(--bg-card, #222) 78%, transparent);
+  background: color-mix(in srgb, var(--bg-card, #222) 72%, transparent);
   backdrop-filter: blur(6px);
   border: 1px solid var(--border-soft, #444);
-  border-radius: 999px;
+  border-radius: 6px;
   cursor: pointer;
-  opacity: 0.85;
-  transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
 }
 .widget-frame:hover .wd-download {
   opacity: 1;
@@ -277,10 +342,11 @@ onBeforeUnmount(() => {
 .wd-download:hover {
   color: var(--text-main, #eee);
   border-color: var(--primary, #7c8cff);
+  background: color-mix(in srgb, var(--bg-card, #222) 90%, transparent);
 }
 .wd-download.busy {
   pointer-events: none;
-  opacity: 0.6;
+  opacity: 0.5;
 }
 .widget-loading,
 .widget-failed {

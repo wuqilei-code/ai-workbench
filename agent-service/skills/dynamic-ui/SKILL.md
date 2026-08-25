@@ -48,6 +48,15 @@ When you decide to render a widget, do the layout/code reasoning silently and ca
 
 One widget = ONE focal message: a single chart, one comparison, one diagram, or one small metric strip. Never build dashboards, multi-section pages, or comprehensive stat walls inside a single widget - even when the user asks for an overall summary of everything. Split such answers into several sequential `PureShowWidget` calls, each preceded by one or two sentences interpreting the previous visual, so visuals interleave with your narrative.
 
+## Compact Size (hard rule)
+
+Widgets render inline in chat at a capped width (~560px). Design compact:
+- Total widget height: target ≤340px, hard cap 420px (including title and legend).
+- Chart plot area height: 200-280px. Do NOT fill leftover space with decorative blocks.
+- Card padding ≤16px; gaps 8-12px; title 14px/600; axis & legend text 12px.
+- SVG viewBox: use `viewBox="0 0 640 H"` with H ≤ 320 for charts (diagrams may use up to 400).
+- Prefer tight legends (inline chips) over full-width legend rows.
+
 ## Routing vs report skills
 
 When the user asks to analyze / summarize / ?? / ?? their data INSIDE THE CHAT, you MUST answer with interleaved text + `PureShowWidget` calls. Do NOT fall back to generating a standalone HTML report page (html-report style) unless the user explicitly asks for a report / document / file deliverable (?? / ?? / ?? / ??). A comprehensive analysis request is NOT a report request: split it into several single-focus widgets as described above.
@@ -62,7 +71,7 @@ Rules:
 - No `<!DOCTYPE>`, `<html>`, `<head>`, `<body>`, meta tags, comments, routers, export flows, page shells, or app shells.
 - Token definitions at top of `<style>`, before component selectors.
 - Emit runtime color tokens inside `widget_code`; do not rely on host app CSS for generated widget readability.
-- Theme contract: sandbox sets `:root[data-widget-theme="light"|"dark"]`. Generated CSS must support light defaults and dark overrides with `:root[data-widget-theme="dark"]`; optional `@media (prefers-color-scheme: dark)` may be added only as standalone fallback.
+- Theme contract: sandbox sets `:root[data-widget-theme="light"|"dark"]`. Generated CSS must support light defaults and dark overrides with `:root[data-widget-theme="dark"]` (or `:root[data-widget-theme="light"]` if dark-first). Do NOT use `@media (prefers-color-scheme: ...)` — it follows the OS/browser, not the host app theme, and will render the wrong theme. The host normalizes any stray media query to the attribute gate, but keep it out of generated code.
 - All theme-sensitive colors must reference CSS tokens: text, axes, borders, surfaces, chart series, connectors, labels, badges. Do not put hard-coded light-only colors in component selectors or SVG attributes.
 - Scripts execute after streaming completes. Use one final script block. Load external libs in final `<script>` from allowlisted CDNs only: `cdnjs.cloudflare.com`, `esm.sh`, `cdn.jsdelivr.net`, `unpkg.com`.
 - Widget must remain useful if external library fails to load.
@@ -164,7 +173,7 @@ Silent pre-output constraints:
 
 Apply these geometry rules whenever the output contains SVG, connectors, flowcharts, architecture diagrams, structural diagrams, or mechanism illustrations.
 
-ViewBox: Prefer `viewBox="0 0 720 H"`, `width="100%"`, `height="auto"`. Safe area ≥40 design units or 6% of the viewBox width, whichever is larger. Set `H` from the lowest visible shape, text baseline, or connector plus bottom padding. Do not use negative coordinates, shrink the viewBox to hide long labels, leave large unexplained blank space below the final element, or depend on clipping/background fills to hide invalid geometry.
+ ViewBox: Prefer `viewBox="0 0 640 H"` (charts: H ≤ 320; structural diagrams may use up to 400), `width="100%"`, `height="auto"`. Safe area ≥40 design units or 6% of the viewBox width, whichever is larger. Set `H` from the lowest visible shape, text baseline, or connector plus bottom padding. Do not use negative coordinates, shrink the viewBox to hide long labels, leave large unexplained blank space below the final element, or depend on clipping/background fills to hide invalid geometry.
 
 Text sizing: 14px for labels (est. 8px/char Latin), 12px for metadata (7px/char). Node width ≥ max(title_chars×8, subtitle_chars×7) + 24px padding. Chinese labels: keep shorter than available width. Increase width estimates by 30-50% for code-like strings, math symbols, long identifiers, or mixed scripts. Use `<tspan>` only for deliberate short two-line labels, not paragraph text.
 
@@ -187,7 +196,7 @@ Layout before drawing:
 
 SVG silent pre-output constraints:
 - Compute viewBox height from lowest element + padding.
-- All content inside x=0..720.
+- All content inside x=0..640.
 - Every text label fits with padding.
 - For any `<rect>`/panel/card/legend with text inside, size the container from its content and leave clear internal padding on every side. If content feels cramped or touches the border, enlarge the container, wrap/reflow the content, move it, or simplify it.
 - No two node/label bounding boxes overlap, including badges, step numbers, legends, and connector labels.

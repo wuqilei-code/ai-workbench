@@ -134,6 +134,7 @@ def stream(user_id: str, body: InvokeRequest) -> StreamingResponse:
     cfg = config_for(user_id, body.thread_id)
 
     def gen():
+        emitted_tools: set[str] = set()
         yield _sse("start", {"thread_id": body.thread_id})
         try:
             if body.resume_decision is not None:
@@ -166,7 +167,7 @@ def stream(user_id: str, body: InvokeRequest) -> StreamingResponse:
                                     user_id, body.thread_id, str(hreq)[:200])
                         yield _sse("permission", hreq if isinstance(hreq, dict) else {})
                         return
-                    for out in _emit_update(value, user_id):
+                    for out in _emit_update(value, user_id, emitted_tools):
                         yield out
         except Exception as exc:  # noqa: BLE001
             logger.exception("[%s][%s] stream error", user_id, body.thread_id)
@@ -339,8 +340,10 @@ def _skill_from_read(name: str, args: dict) -> str | None:
     return m.group(1).lower() if m else None
 
 
-def _emit_update(update, user_id: str | None = None) -> list[str]:
-    """updates 模式:发出完整的工具调用与工具结果(含结构化输出物路径)。"""
+def _emit_update(update, user_id: str | None = None, emitted_tools: set | None = None) -> list[str]:
+    """updates 模式:发出完整的工具调用与工具结果(含结构化输出物路径)。
+    emitted_tools:本轮流内已发过 tool 事件的调用 id 集合——同一调用会在多个节点更新里
+    出现,不去重的话网关时间线会出现重复条目(前端渲染成空步骤)。"""
     outs = []
     if not isinstance(update, dict):
         return outs
@@ -404,6 +407,10 @@ def _emit_update(update, user_id: str | None = None) -> list[str]:
         elif getattr(msg, "tool_calls", None):
             for call in msg.tool_calls:
                 cid = call.get("id")
+                if cid and emitted_tools is not None:
+                    if cid in emitted_tools:
+                        continue  # 同一调用已在先前节点更新里发过,跳过
+                    emitted_tools.add(cid)
                 if cid:
                     _TOOL_CALLS[cid] = (call.get("name", ""), call.get("args", {}) or {})
                     if len(_TOOL_CALLS) > 128:

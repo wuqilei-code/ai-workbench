@@ -23,7 +23,6 @@ import ChangeSummaryCard from '@/components/ChangeSummaryCard.vue'
 import DashboardView from '@/views/DashboardView.vue'
 import { chatApi } from '@/api/chat'
 import type { MessageVo, SkillInfo, UserSkill } from '@/types'
-import type { VirtualListInst } from 'naive-ui'
 import type { FlowItem, SummaryItem, Turn } from '@/utils/turns'
 
 const route = useRoute()
@@ -32,7 +31,10 @@ const chat = useChatStore()
 const fav = useFavoritesStore()
 const msg = useMessage()
 const dialog = useDialog()
-const virtualListRef = ref<VirtualListInst | null>(null)
+const scrollRef = ref<HTMLElement | null>(null)
+/** 消息整体内容的包装层(chat-virtual-container):其高度随所有消息撑高而增长。
+ *  ResizeObserver 监听它而非某条具体消息,才能在异步加载/流式撑高时正确钉底。 */
+const contentRef = ref<HTMLElement | null>(null)
 const showFiles = ref(true)
 const dashboardShow = ref(false)
 /** 工作区右侧面板已打开的标签(可关闭),默认只打开「文件」 */
@@ -47,6 +49,7 @@ const wsResizing = ref(false)
 const WS_MIN = 260
 /** 拖动中残留的事件清理(组件卸载时兜底) */
 let _resizeCleanup: (() => void) | null = null
+let _scrollObsCleanup: (() => void) | null = null
 
 /** 工作区标签(收起后顶部显示的小图标,点击展开并切换)。浏览器不设顶部入口,仅由对话唤出 */
 const workspaceTabs = [
@@ -362,14 +365,10 @@ function closeFind() {
   findIndex.value = 0
 }
 
-/** 滚动虚拟列表到指定 turn 并短暂高亮(虚拟列表只渲染可视项,须按 key 定位)。 */
+/** 滚动到指定 turn 并短暂高亮(普通滚动容器按 DOM id 定位)。 */
 function locateTurn(turnId: string) {
-  const vl = virtualListRef.value
-  if (!vl) return
-  const idx = virtualItems.value.findIndex(
-    (it) => it.kind === 'turn' && it.turn.id === turnId,
-  )
-  if (idx >= 0) vl.scrollTo({ index: idx, position: 'top' })
+  const el = document.getElementById('find-turn-' + turnId)
+  el?.scrollIntoView({ block: 'start' })
   flashedTurnId.value = turnId
   if (_flashTimer) clearTimeout(_flashTimer)
   _flashTimer = setTimeout(() => { flashedTurnId.value = null }, 1600)
@@ -457,6 +456,24 @@ onMounted(() => {
   ensureSession()
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('aiwb:test-analysis', onTestAnalysis)
+  // 内容高度变化(组件/图片 iframe 异步加载撑高、新消息追加)时,若用户贴底则保持钉在底部,
+  // 避免"图渲染完视图向上滚,看不到最新输出"。
+  // 注意:必须监听内容整体包装层(chat-virtual-container,高度随所有消息增长),
+  // 而非单条消息或滚动容器(滚动容器尺寸固定不触发;单条消息大多在顶部,下方增长不会被察觉)。
+  nextTick(() => {
+    const scroller = scrollRef.value
+    const inner = contentRef.value
+    if (scroller && inner && typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(() => {
+        if (!stickToBottom.value) return
+        if (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight > 4) {
+          scroller.scrollTop = scroller.scrollHeight
+        }
+      })
+      ro.observe(inner)
+      _scrollObsCleanup = () => ro.disconnect()
+    }
+  })
 })
 watch(() => chat.sessions, (list) => {
   if (list.length) fav.refreshSessionTitles(list)
@@ -468,46 +485,50 @@ watch(sessionId, () => {
 onBeforeUnmount(() => {
   chat.closeStream()
   _resizeCleanup?.()
+  _scrollObsCleanup?.()
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('aiwb:test-analysis', onTestAnalysis)
 })
 
 function scrollToBottom() {
   nextTick(() => {
-    const vl = virtualListRef.value
-    if (!vl) return
+    const el = scrollRef.value
+    if (!el) return
     if (!virtualItems.value.length) return
-    // 优先用底层容器直接滚到 scrollHeight,避免虚拟列表对未实测高度的 item 估算偏差导致滚不到位
-    const el = vl.getScrollContainer?.()
-    if (el) {
-      el.scrollTop = el.scrollHeight
-      return
-    }
-    vl.scrollTo({ position: 'bottom' })
+    el.scrollTop = el.scrollHeight
   })
 }
 
 /** 同步滚到底(用于会话切换:遮罩摘掉、列表刚挂载的那一帧立即定位,避免"先顶部后底部"闪烁) */
 function scrollToBottomNow() {
-  const vl = virtualListRef.value
-  if (!vl) return
+  const el = scrollRef.value
+  if (!el) return
   if (!virtualItems.value.length) return
-  const el = vl.getScrollContainer?.()
-  if (el) {
-    el.scrollTop = el.scrollHeight
-    return
+  el.scrollTop = el.scrollHeight
+}
+
+/** 是否处于"打开会话后的贴底稳定期":期间强制 stickToBottom=true,忽略瞬时滚动事件。
+ *  否则异步测量撑高内容时,先出现的"未贴底"瞬时事件会误判 stickToBottom=false,
+ *  内容撑高后不再回钉 → 表现为"一开始在最下方,又自动向上滚一段"。 */
+let _openSettleUntil = 0
+function pinOnOpen() {
+  stickToBottom.value = true
+  _openSettleUntil = Date.now() + 1000
+  scrollToBottomNow()
+  const tick = () => {
+    scrollToBottomNow()
+    if (Date.now() < _openSettleUntil) requestAnimationFrame(tick)
   }
-  vl.scrollTo({ position: 'bottom' })
+  requestAnimationFrame(tick)
+  setTimeout(scrollToBottomNow, 200)
+  setTimeout(scrollToBottomNow, 500)
 }
 
 // 会话切换:switching=true 时列表被 v-else-if 卸载、遮罩覆盖;false 时列表重新挂载(默认滚到顶部)。
-// 在切换完成的同一帧立即滚到底,并用延迟再滚兜底 item-resizable 的高度测量,消除"闪一下顶部"。
+// 在切换完成的同一帧立即滚到底,并用 rAF + 延迟在异步测量收尾时继续钉底,消除"闪一下顶部"/
+// "先到底又自动上滚"。
 watch(() => chat.switching, (now, prev) => {
-  if (!now && prev) {
-    scrollToBottomNow()
-    setTimeout(scrollToBottomNow, 120)
-    setTimeout(scrollToBottomNow, 350)
-  }
+  if (!now && prev) pinOnOpen()
 }, { flush: 'post' })
 
 /** 用户提交/拒绝权限或问题后(resumeStreaming 置 isStreaming=true),agent 会继续输出。
@@ -524,11 +545,18 @@ watch(() => chat.isStreaming, (now, prev) => {
 
 /** 用户是否停留在底部区域(阈值内视为贴底)。贴底时流式输出自动跟随;上翻阅读时不被拉回。 */
 const stickToBottom = ref(true)
+let _prevScrollTop = 0
 /** 正在前插更早分页:期间抑制自动滚底(messages.length 变化由 loadOlderMessages 前插引起) */
 const isBackfilling = ref(false)
 function handleVirtualScroll() {
-  const el = virtualListRef.value?.getScrollContainer?.()
+  const el = scrollRef.value
   if (!el) return
+  // 打开会话后的贴底稳定期:异步测量/自动滚动引发的瞬时非贴底事件不误判 stickToBottom,
+  // 否则内容撑高后不再回钉 → "先到底又自动向上滚"。稳定期结束恢复正常判定。
+  if (Date.now() < _openSettleUntil) {
+    stickToBottom.value = true
+    return
+  }
   const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 120
   stickToBottom.value = nearBottom
   // 滚动到顶:加载更早历史(loadingOlder 防重入;hasOlder=false 表示已到最早)
@@ -547,15 +575,18 @@ watch(() => chat.streamingText, () => {
 })
 
 // 前插更早分页时(backfilling)不自动滚底:用户正停留在顶部阅读历史,不应被拉回底部
+// 同时尊重 stickToBottom:用户已上翻阅读时,后台追加消息也不拉回,避免"卡在最底部组件"无法上翻
 watch(() => chat.messages.length, () => {
   if (isBackfilling.value || chat.loadingOlder) return
-  // 打开历史会话 / 压缩后刷新:等虚拟列表渲染后再滚到底(内容高度异步实测,需延迟多次)
+  if (!stickToBottom.value) return
+  // 打开历史会话 / 压缩后刷新:等渲染后再滚到底(内容高度异步实测,需延迟多次)
   scrollToBottom()
   setTimeout(scrollToBottom, 150)
   setTimeout(scrollToBottom, 400)
 })
 watch(() => chat.turns.length, () => {
   if (isBackfilling.value || chat.loadingOlder) return
+  if (!stickToBottom.value) return
   scrollToBottom()
 })
 
@@ -678,8 +709,7 @@ const virtualItems = computed<VirtualListItem[]>(() => {
   return items
 })
 
-/** 虚拟列表预估值(px);itemResizable 开启后由 ResizeObserver 实测每项高度修正 */
-const itemSize = 120
+/** 普通滚动容器(非虚拟化):消息整体渲染,滚动行为与原生一致,避免虚拟列表对变高组件条的估算补偿 */
 </script>
 
 <template>
@@ -780,17 +810,20 @@ const itemSize = 120
       <div class="chat-col">
         <div class="chat-body">
           <template v-if="chat.currentSessionId && !isNewSession">
-            <n-virtual-list
-              ref="virtualListRef"
+            <div
+              ref="scrollRef"
               class="chat-virtual"
-              :items="virtualItems"
-              :item-size="itemSize"
-              item-resizable
-              key-field="key"
-              :items-style="{ padding: '24px 20px' }"
               @scroll="handleVirtualScroll"
             >
-              <template #default="{ item }">
+              <div
+                ref="contentRef"
+                class="chat-virtual-container"
+              >
+              <div
+                v-for="item in virtualItems"
+                :key="item.key"
+                class="chat-virtual-inner"
+              >
                 <div
                   v-if="item.kind === 'turn'"
                   class="flow-item"
@@ -843,11 +876,14 @@ const itemSize = 120
                   </span>
                   <span class="id-line"></span>
                 </div>
-              </template>
-            </n-virtual-list>
+              </div>
+              </div>
+            </div>
           </template>
-          <WelcomeBoard v-else-if="chat.currentSessionId" @select="onScenarioSelect" />
-          <n-empty v-else description="选择左侧会话或点击「新会话」开始" style="margin-top: 80px" />
+            <div v-else-if="chat.currentSessionId" class="chat-virtual-inner">
+              <WelcomeBoard @select="onScenarioSelect" />
+            </div>
+            <n-empty v-else description="选择左侧会话或点击「新会话」开始" style="margin-top: 80px" />
           <!-- 切换/定位遮罩:绝对定位覆盖在列表之上,不卸载列表,避免切换时闪一下顶部 -->
           <div v-if="chat.switching || locating" class="switching-mask">
             <n-spin size="small" />
@@ -855,7 +891,9 @@ const itemSize = 120
           </div>
         </div>
 
-        <ChatInput v-if="chat.currentSessionId" ref="chatInputRef" @open-doc-gen="docGenShow = true" @open-error-diagnose="errorDiagnoseShow = true" @open-test-analysis="onTestAnalysis" />
+        <div v-if="chat.currentSessionId" class="composer-wrap">
+          <ChatInput ref="chatInputRef" @open-doc-gen="docGenShow = true" @open-error-diagnose="errorDiagnoseShow = true" @open-test-analysis="onTestAnalysis" />
+        </div>
       </div>
 
       <!-- 工作区:常驻右侧面板,可拖动左缘调整宽度 -->
@@ -1127,7 +1165,12 @@ const itemSize = 120
 .chat-main { flex: 1; display: flex; min-height: 0; position: relative; }
 .chat-col { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .chat-body { flex: 1; overflow: hidden; min-height: 0; position: relative; }
-.chat-virtual { height: 100%; }
+.chat-virtual { height: 100%; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; overflow-anchor: none; }
+/* 内容整体包装层:高度随所有消息增长,由 ResizeObserver 监听以在撑高时钉底 */
+.chat-virtual-container { min-width: 0; }
+.chat-virtual-inner { max-width: 860px; margin: 0 auto; padding: 0 20px; }
+.chat-virtual-inner > * { padding-top: 24px; padding-bottom: 24px; }
+.composer-wrap { max-width: 860px; margin: 0 auto; width: 100%; }
 .thinking { display: flex; align-items: center; gap: 8px; color: var(--text-3); padding: 8px 0; }
 
 /* 历史分页顶部提示条:滚动到顶时自动加载更早消息 */

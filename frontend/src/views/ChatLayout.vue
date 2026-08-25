@@ -69,7 +69,15 @@ onMounted(() => {
   Promise.all([chat.loadModels(), chat.loadSessions(), chat.loadArchivedSessions()])
     .catch((e) => console.error('[chat-layout] init failed', e))
     .then(async () => {
-      // 有历史会话:默认打开最近的一个(列表已按 pinned→updatedAt 排序)
+      // URL 已指定会话(直链/刷新/分享):尊重用户选择,绝不强制跳到最新会话,
+      // 否则刷新页面会被弹走,生成跑在 A 会话而人看的是 B 会话(表现为"一直空白")。
+      const cur = router.currentRoute.value
+      if (cur.name === 'session' && cur.params.id) {
+        initLoading.value = false
+        nextTick(() => onboardingRef.value?.tryShowOnboarding())
+        return
+      }
+      // 无会话 id:有历史则默认打开最近的一个(列表已按 pinned→updatedAt 排序)
       if (chat.sessions.length > 0) {
         const latest = chat.sessions[0]
         if (latest && router.currentRoute.value.path !== `/session/${latest.id}`) {

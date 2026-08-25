@@ -134,6 +134,12 @@ def _build_backend(user_id: str, visible_skills: set[str] | None = None) -> Comp
 
     return CompositeBackend(
         default=workspace_backend,
+        # artifacts_root:summarization 中间件把被压缩的旧历史/媒体卸载到
+        # {artifacts_root}/conversation_history。默认 "/" 在容器内不可写
+        # (PermissionError → "Older messages will not be recoverable"),
+        # 且卸载失败会让每轮都全量重总结(351+ 条消息,流式前长时间静默)。
+        # 指到 per-user 沙箱工作区,可写且按用户隔离。
+        artifacts_root="/workspace",
         routes={
             "/workspace/": workspace_backend,
             # 技能目录只读:变更唯一入口是 create_skill 工具(经后端入库+落盘,防漂移)

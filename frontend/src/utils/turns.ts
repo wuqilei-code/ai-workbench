@@ -111,6 +111,9 @@ function finalizeTurn(turn: Turn) {
     if ((turn.steps[i].kind || 'text') === 'text') { idx = i; break }
   }
   if (idx < 0) idx = turn.steps.length - 1
+  // 推理不是"答案":当最后可提升的步骤是纯推理段时不提升,让它保留在思考区,
+  // 避免"思考"在流式期被当成正文渲染、结束后才跳进思考块。
+  if (turn.steps[idx].kind === 'reason') return
   turn.finalAnswer = turn.steps[idx]
   turn.steps.splice(idx, 1)
 }
@@ -151,11 +154,13 @@ function stepsFromParts(msg: MessageVo): Step[] {
         cur = { message: msg, narration: e.v || '', toolCalls: [], kind }
       }
     } else if (e.k === 'tool' && e.id) {
-      flush()
       const tc = byId.get(e.id)
-      cur = { message: msg, narration: '', toolCalls: tc ? [tc] : [] }
-      // timeline 有但 toolCalls 缺(异常数据)时也保留空步,维持顺序
-      if (tc) byId.delete(e.id)
+      // 网关对同一调用可能在多个节点更新里重复追加时间线条目;
+      // 无对应 toolCall 的条目(重复/数据缺失)直接跳过,避免生成"只有图标没有内容"的空步骤
+      if (!tc) continue
+      flush()
+      cur = { message: msg, narration: '', toolCalls: [tc] }
+      byId.delete(e.id)
     }
   }
   flush()

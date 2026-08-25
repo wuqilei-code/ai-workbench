@@ -19,7 +19,7 @@ Typical trigger words: trend chart, bar chart, pie chart, funnel chart, heatmap,
 
 ## When to reject
 
-Do NOT generate a visualization in the following cases — reply with Markdown text instead:
+Do NOT generate a visualization in the following cases 鈥?reply with Markdown text instead:
 
 - Data points <= 2 with no comparative dimension (a single sentence suffices)
 - User is asking for a single value (e.g., "what is xx")
@@ -76,7 +76,7 @@ Choose by intent, not by loose chart keywords.
    responsive: true,
    maintainAspectRatio: false
    ```
-4. Default height: `clamp(220px, 32vw, 360px)`; maximum height 600px
+4. Default height: `clamp(200px, 26vw, 300px)`; maximum height 380px
 5. Each widget may contain at most **2 Chart.js canvases**. A third supporting visual may be HTML/SVG only (metric strip, compact bars, mini table, legend matrix), not another canvas.
 
 ### Visible fallback
@@ -92,7 +92,7 @@ Choose by intent, not by loose chart keywords.
 
 ### Animation
 
-- Initial render animation: 120–220ms
+- Initial render animation: 120鈥?20ms
 - Hover transitions: <=120ms
 
 ### Color palette
@@ -121,7 +121,7 @@ document.querySelector('[data-dynamic-ui-widget][data-template="..."]:not([data-
 - Keep a visible fallback until the chart is successfully created.
 - Use HTML external tooltip, not the canvas built-in tooltip.
 - Use CSS variables `--chart-series-*` for series colors; do not hardcode chart colors.
-- Keep Chart.js canvas count <= 1 and total widget height <= 520px.
+- Keep Chart.js canvas count <= 1 and total widget height <= 380px.
 
 ## Composition guidelines
 
@@ -129,9 +129,9 @@ One widget = one focal visual. A chart widget contains exactly ONE primary chart
 
 1. **Prefer a single chart**: If one material fully expresses the user's intent, use that material's layout + interaction pattern directly.
 2. **Multiple questions => multiple sequential widget calls, never one multi-block widget**. When the answer needs several perspectives (trend + breakdown, ranking + distribution, funnel + segment mix, correlation + extremes...), split them: call `PureShowWidget` once per perspective. Before each new call, write one or two sentences interpreting the previous visual, so charts interleave with your narrative instead of stacking into a dashboard page.
-3. **Never build a dashboard, KPI wall, or multi-section stat page inside a single widget** - this includes comprehensive asks like "统计所有数据" / "give me an overall analysis". Answer such asks as: short text takeaway -> widget call -> 1-2 sentence interpretation -> next widget call -> ... Each widget answers one distinct, named question.
+3. **Never build a dashboard, KPI wall, or multi-section stat page inside a single widget** - this includes comprehensive asks like "缁熻鎵€鏈夋暟鎹? / "give me an overall analysis". Answer such asks as: short text takeaway -> widget call -> 1-2 sentence interpretation -> next widget call -> ... Each widget answers one distinct, named question.
 4. **Do not combine charts just for variety or to save tool calls**. A small KPI strip may share a widget ONLY when headline magnitudes are themselves the primary question; otherwise supporting numbers go into the response text or their own separate widget call.
-5. **Single-widget budget**: at most 1 Chart.js canvas and at most one visual block group; total height <= 520px. If content does not fit, split into another widget call or reduce to Top N.
+5. **Single-widget budget**: at most 1 Chart.js canvas and at most one visual block group; total height <= 380px. If content does not fit, split into another widget call or reduce to Top N.
 6. **No analysis copy in UI**: Do not add supporting insight text above or below the chart. Use chart marks, labels, axes, legend, and tooltip behavior for visual evidence; put max values, inflection points, and interpretation in the response text.
 7. **Legend placement**: Embed the legend inline when data series <= 3; place it in a separate bottom or right-side area when > 3
 8. **Number formatting**: Use abbreviations for large numbers (1.2K, 3.4M); percentages retain one decimal place

@@ -14,6 +14,7 @@ import DeliverableBar from './DeliverableBar.vue'
 import FilePreview from './preview/FilePreview.vue'
 import ToolCallItem from './ToolCallItem.vue'
 import WidgetFrame from './WidgetFrame.vue'
+import TypeReveal from './TypeReveal.vue'
 
 const props = defineProps<{
   turn: Turn
@@ -41,13 +42,25 @@ const turnInProgress = computed(() => chat.isStreaming && isLastTurn.value)
 /** 本轮生成已运行秒数:秒数在走 = AI 仍在工作,用于安抚"以为断线/暂停"的疑虑 */
 const runningSeconds = computed(() => chat.streamingElapsedSeconds)
 
-/** 友好提示:有工具在跑就展示(即使已有消息壳,不再依赖 !activeMessageId)。
+/** 友好提示:有工具在跑就展示(即使已有消息壳)。
  *  - 内容生成/写文件类工具 → "正在生成/写入内容…"
  *  - 其它工具 → "正在执行 xxx…"
- *  - 无工具无文本(纯思考)→ "AI 正在处理中…" */
+ *  - 无工具无文本(纯思考)→ "AI 正在处理中…"
+ * AI 是否已产出当前可见内容(正在流式输出的推理/正文,或已提交到活跃步骤的文本)。
+ *  用于定位真正"等待"的窗口:收到首个 reason/delta 前显示等待动画,产出后转由时间线承载。 */
+const hasVisibleOutput = computed(() => {
+  if (chat.streamingText) return true
+  if (chat.liveReasoning) return true
+  const id = activeMessageId.value
+  for (const s of props.turn.steps) {
+    if (s.message.agentMessageId === id && (s.narration || '').trim()) return true
+  }
+  return false
+})
+
 const showWorkingHint = computed(() =>
   turnInProgress.value &&
-  (chat.runningActivity?.kind === 'tool' || !activeMessageId.value),
+  (chat.runningActivity?.kind === 'tool' || !hasVisibleOutput.value),
 )
 
 const pendingHint = computed(() => {
@@ -70,21 +83,48 @@ function isStepActive(step: Step | null): boolean {
   return last === step || props.turn.finalAnswer === step
 }
 
-/** 取 step 的展示文本:统一用定稿/实时 narration(时间线已按序累积) */
+/** 取 step 的展示文本:统一用定稿/实时 narration(时间线已按序累积)。
+ *  活跃推理段不经 buildTurns 重建,直接读 store.liveReasoning 保证逐块实时可见。 */
 function displayContent(step: Step | null): string {
   if (!step) return ''
+  if (step.kind === 'reason' && isStepActive(step)) {
+    return chat.liveReasoning || step.narration || ''
+  }
   return step.narration || ''
 }
 
+/** 流式期间最终答案的实时文本:非 simpleMode 下 displayContent 只读 step.narration,
+ *  而 narration 是 reason 时间线的累计文本,不含 delta 正文;
+ *  故当 finalAnswer 正在活跃时,直接使用 store.streamingText 保证增量可见。 */
+const faStreamingText = computed(() => {
+  const fa = props.turn.finalAnswer
+  if (!fa || !isStepActive(fa)) return ''
+  return chat.streamingText || ''
+})
+
+/** 流式中本 turn 的"正文"实时文本(finalAnswer 尚未成形、纯推理已是 step 时用)。
+ *  推理留在思考块,正文在此独立流式;done 后由 finalAnswer 承接,避免推理被当正文。 */
+const liveStreamText = computed(() => {
+  if (!turnInProgress.value || props.turn.finalAnswer) return ''
+  const id = activeMessageId.value
+  if (!id) return ''
+  const owns = props.turn.steps.some((s) => s.message.agentMessageId === id)
+  if (!owns) return ''
+  return chat.streamingText || ''
+})
+
 // ---------- 推理段包裹卡片 ----------
 
-/** 推理段展开状态:流式中的段自动展开、结束后自动折叠;用户点击后记入手动覆盖 */
+/** 推理段展开状态:流式期间本回合的推理段全部展开(思考随输出持续可见,不被新步骤收起);
+ *  结束后自动折叠;用户点击后记入手动覆盖 */
 const reasonOpen = ref<Record<string, boolean>>({})
 const reasonKey = (i: number) => `${props.turn.id}-r${i}`
 function isReasonOpen(step: Step, i: number): boolean {
   const manual = reasonOpen.value[reasonKey(i)]
   if (manual !== undefined) return manual
-  return isStepActive(step)
+  // 流式中的本回合:所有推理段保持展开;完成后折叠
+  if (turnInProgress.value && step.message.agentMessageId === activeMessageId.value) return true
+  return false
 }
 function toggleReason(i: number) {
   const k = reasonKey(i)
@@ -97,19 +137,40 @@ function setReasonBody(key: string, el: unknown) {
   if (el) reasonBodies.set(key, el as HTMLElement)
   else reasonBodies.delete(key)
 }
-/** 活跃推理段内容增长时,把展开的推理框滚到底部 */
-watch(
-  () => props.turn.steps.find((s) => s.kind === 'reason' && isStepActive(s))?.narration.length ?? 0,
-  async () => {
-    await nextTick()
-    for (const [key, el] of reasonBodies) {
-      const idx = Number(key.slice(key.lastIndexOf('-r') + 2))
-      const st = props.turn.steps[idx]
-      if (!st || !isReasonOpen(st, idx)) continue
-      el.scrollTop = el.scrollHeight
-    }
-  },
-)
+
+/** 步骤时间线容器(.timeline,限高 420px 内部滚动):流式期间若用户未上翻则吸底跟随最新步骤 */
+const timelineEl = ref<HTMLElement | null>(null)
+let timelineStuck = true
+function onTimelineScroll() {
+  const el = timelineEl.value
+  if (!el) return
+  timelineStuck = el.scrollTop + el.clientHeight >= el.scrollHeight - 60
+}
+function scrollTimelineToBottom() {
+  const el = timelineEl.value
+  if (!el || !timelineStuck) return
+  if (el.scrollHeight > el.clientHeight) el.scrollTop = el.scrollHeight
+}
+/** 活跃推理段内容增长时,把展开的推理框滚到底部(读 displayContent,以感知 liveReasoning) */
+const activeReasonLen = computed(() => {
+  const s = props.turn.steps.find((x) => x.kind === 'reason' && isStepActive(x))
+  return s ? displayContent(s).length : 0
+})
+watch(activeReasonLen, async () => {
+  await nextTick()
+  scrollTimelineToBottom()
+  for (const [key, el] of reasonBodies) {
+    const idx = Number(key.slice(key.lastIndexOf('-r') + 2))
+    const st = props.turn.steps[idx]
+    if (!st || !isReasonOpen(st, idx)) continue
+    el.scrollTop = el.scrollHeight
+  }
+})
+// 新步骤(工具/更多推理段)追加进时间线时也吸底,保证流式中最新输出无需手动滚动
+watch(() => props.turn.steps.length, () => {
+  if (!turnInProgress.value) return
+  nextTick(scrollTimelineToBottom)
+})
 
 // ---------- 简单模式(单条 assistant 无 tool)----------
 
@@ -124,7 +185,12 @@ const simpleMessage = computed(() => {
   const fa = props.turn.finalAnswer
   if (!fa) return null
   // 剥离 [结果文件] 标记行,避免 simpleMode 正文里显示标记(标记只在 DeliverableBar 展示)
-  const raw = isStepActive(fa) ? (chat.streamingText || '') : (fa.message.content || '')
+  // 活跃时段:优先正文(streamingText);无正文且为活跃推理段时读 liveReasoning,
+  // 保证首个 reason 一到即开始流式输出(而非憋到最后一次性出现)
+  const raw = isStepActive(fa)
+    ? (chat.streamingText ||
+        (fa.kind === 'reason' ? (chat.liveReasoning || '') : ''))
+    : (fa.message.content || '')
   return { ...fa.message, content: stripDeliverableMarkers(raw) }
 })
 
@@ -247,12 +313,71 @@ function stepWidgetPaths(step: Step | null): string[] {
     .filter((p) => /^widgets\/[^/]+\.html$/i.test(p))
 }
 
-/** chip 展示过滤:已完成且已内联渲染的 pure_show_widget 不再显示原始 chip(避免 [WIDGET_FILE] 噪声) */
+/** 已完成/出错且输出为空的工具 → 视为无内容记录,时间线不展示 */
+function isBlankToolOutput(tc: ToolCall): boolean {
+  return (tc.status === 'completed' || tc.status === 'error') && !(tc.output ?? '').trim()
+}
+
+/** chip 展示过滤:pure_show_widget 已完成的不再显示原始 chip(避免 [WIDGET_FILE] 噪声);
+ *  空输出的已定稿工具也不展示(时间线里一堆没内容的命令行记录) */
 function displayToolCalls(step: Step | null): ToolCall[] {
   if (!step) return []
   return (step.toolCalls ?? []).filter(
-    (tc) => !(tc.name === 'pure_show_widget' && tc.outputs?.length),
+    (tc) => !(tc.name === 'pure_show_widget' && tc.outputs?.length) && !isBlankToolOutput(tc),
   )
+}
+
+/** 步骤是否值得展示:无解说、无可显示工具(如 pure_show_widget 已转组件区/输出为空被过滤)的步骤整行隐藏 */
+function stepVisible(step: Step): boolean {
+  if (displayContent(step).trim()) return true
+  return displayToolCalls(step).length > 0
+}
+
+// ---------- 时间线分组收纳:连续同名纯工具步骤合并为一行"工具 × N",点击展开逐条 ----------
+
+type TimelineBlock =
+  | { type: 'step'; step: Step; index: number }
+  | { type: 'group'; name: string; items: { step: Step; index: number }[] }
+
+const displayBlocks = computed<TimelineBlock[]>(() => {
+  const raw: TimelineBlock[] = []
+  for (let i = 0; i < props.turn.steps.length; i++) {
+    const step = props.turn.steps[i]
+    if (!stepVisible(step)) continue
+    const tools = displayToolCalls(step)
+    const isPureTool = !displayContent(step).trim() && tools.length > 0
+    if (!isPureTool) {
+      raw.push({ type: 'step', step, index: i })
+      continue
+    }
+    const name = tools[0]?.name || ''
+    const last = raw[raw.length - 1]
+    if (last && last.type === 'group' && last.name === name) {
+      last.items.push({ step, index: i })
+    } else {
+      raw.push({ type: 'group', name, items: [{ step, index: i }] })
+    }
+  }
+  // 单项目组退化为普通步骤行("× 1"没有意义)
+  return raw.map((b) =>
+    b.type === 'group' && b.items.length === 1
+      ? { type: 'step', step: b.items[0].step, index: b.items[0].index }
+      : b,
+  )
+})
+
+const openGroups = ref<Record<number, boolean>>({})
+function toggleGroup(i: number) {
+  openGroups.value[i] = !openGroups.value[i]
+}
+function groupStatus(items: { step: Step }[]): 'run' | 'ok' | 'err' {
+  for (const it of items) {
+    for (const tc of it.step.toolCalls ?? []) {
+      if (tc.status === 'running') return 'run'
+      if (tc.status === 'error') return 'err'
+    }
+  }
+  return 'ok'
 }
 
 /** 组件内「追问」按钮(window.sendPrompt):直接作为新消息发送 */
@@ -313,17 +438,47 @@ const hasStepWidgets = computed(
     stepWidgetPaths(props.turn.finalAnswer).length > 0,
 )
 
-const expandedNames = computed<string[]>(() => {
-  const ov = chat.manualCollapseOverride[props.turn.id]
-  if (ov !== undefined) return ov ? ['thinking'] : []
-  // 流式期间展开(推理/步骤按序滚动),完成后折叠;用户可点头部手动展开/收起。
-  // 含内联组件的 turn 例外:默认保持展开,否则组件会随折叠一起消失。
-  if (turnInProgress.value || hasStepWidgets.value) return ['thinking']
-  return []
+/** 全部组件路径(跨 steps 与 finalAnswer 去重,保持顺序)。集中渲染在时间线下方,避免组件在思考链中跳动/分散 */
+const allWidgetPaths = computed<string[]>(() => {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const s of props.turn.steps) {
+    for (const wp of stepWidgetPaths(s)) {
+      if (!seen.has(wp)) { seen.add(wp); out.push(wp) }
+    }
+  }
+  const fa = props.turn.finalAnswer
+  if (fa) {
+    for (const wp of stepWidgetPaths(fa)) {
+      if (!seen.has(wp)) { seen.add(wp); out.push(wp) }
+    }
+  }
+  return out
 })
 
-function handleExpand(names: string[] | null) {
-  chat.setCollapse(props.turn.id, (names || []).includes('thinking'))
+/** 流式 live 组件是否还应显示:最近一个 pure_show_widget 工具若已定稿(文件版接管),
+ *  隐藏 live,避免与文件版叠加成双图;新工具开始流式时(状态 running)恢复显示。 */
+const liveWidgetActive = computed(() => {
+  const sw = chat.streamingWidgetCode
+  if (!sw?.code) return false
+  const widgets = [
+    ...props.turn.steps.flatMap((s) => s.toolCalls ?? []),
+    ...(props.turn.finalAnswer?.toolCalls ?? []),
+  ].filter((t) => t.name === 'pure_show_widget')
+  const last = widgets[widgets.length - 1]
+  if (last && (last.status === 'completed' || last.status === 'error')) return false
+  return true
+})
+
+const stepsOpen = computed<boolean>(() => {
+  const ov = chat.manualCollapseOverride[props.turn.id]
+  if (ov !== undefined) return ov
+  // 流式期间展开(推理/步骤按序滚动),完成后折叠;用户可点头部手动展开/收起。
+  return turnInProgress.value
+})
+
+function toggleSteps() {
+  chat.setCollapse(props.turn.id, !stepsOpen.value)
 }
 
 // ---------- 工具 chip 状态 ----------
@@ -443,102 +598,133 @@ function stepHtml(step: Step): string {
       @downloadAll="downloadAllFiles"
     />
   </template>
-  <!-- 多步模式:单气泡 = 可折叠思考区 + 最终答案 + pending UI -->
-  <div v-else class="msg assistant">
-    <div class="avatar">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2.5l1.9 5.9 6.1 1.9-5 4.4 1.5 6.3L12 17.5l-4.5 3.5 1.5-6.3-5-4.4 6.1-1.9L12 2.5z"/></svg>
+  <!-- 多步模式:时间线步骤流(Trae 风格)= 头部 + 可折叠步骤时间线 + 最终答案 -->
+  <div v-else class="turn">
+    <div class="turn-head">
+      <span class="turn-logo">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5l1.9 5.9 6.1 1.9-5 4.4 1.5 6.3L12 17.5l-4.5 3.5 1.5-6.3-5-4.4 6.1-1.9L12 2.5z"/></svg>
+      </span>
+      <span class="turn-name">AI Workbench</span>
+      <span v-if="faTime" class="msg-time">{{ fmtMessageTime(faTime) }}</span>
     </div>
-    <div class="bubble">
-      <div class="msg-head">
-        <span class="author">AI</span>
-        <span v-if="faTime" class="msg-time">{{ fmtMessageTime(faTime) }}</span>
-      </div>
-      <!-- 思考过程(可折叠) -->
-      <NCollapse
-        v-if="turn.steps.length > 0 || (turn.finalAnswer && turn.finalAnswer.toolCalls.length)"
-        :expanded-names="expandedNames"
-        :display-directive="'show'"
-        @update:expanded-names="handleExpand"
-      >
-        <NCollapseItem name="thinking">
-          <template #header>
-            <span class="think-header" :class="{ active: turnInProgress }">
-              <span v-if="turnInProgress" class="think-spinner"><span class="think-ring" /></span>
-              <span class="think-label">{{ thinkingHeader }}</span>
+    <div class="turn-body">
+      <!-- 思考过程:自定义折叠头 + v-show 时间线(常驻 DOM,无挂载延迟,思考内容即时可见) -->
+      <div v-if="turn.steps.length > 0 || (turn.finalAnswer && turn.finalAnswer.toolCalls.length)">
+        <div class="think-header" :class="{ active: turnInProgress }" @click="toggleSteps">
+          <span v-if="turnInProgress" class="think-spinner"><span class="think-ring" /></span>
+          <span class="think-label">{{ thinkingHeader }}</span>
+          <svg class="rc-chev" :class="{ open: stepsOpen }" viewBox="0 0 24 24" width="12" height="12"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
+        </div>
+        <div v-show="stepsOpen" class="timeline" :ref="(el) => (timelineEl = (el as HTMLElement))" @scroll="onTimelineScroll">
+          <template v-for="(b, bi) in displayBlocks" :key="b.type + '-' + bi">
+          <!-- 单步骤块:思考/解说/含解说的工具步骤 -->
+          <div v-if="b.type === 'step'" class="tstep">
+            <span class="tstep-icon" :class="{ dim: b.step.kind === 'reason' }">
+              <svg v-if="b.step.kind === 'reason'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 4.6L18 9l-4.2 1.4L12 15l-1.8-4.6L6 9l4.2-1.4L12 3z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15z"/></svg>
+              <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg>
             </span>
-          </template>
-          <div v-for="(step, i) in turn.steps" :key="step.message.id ?? i" class="step">
-            <!-- 推理段:独立包裹卡片,流式时限高滚动吸底,结束自动折叠,可点开回看 -->
-            <div v-if="step.kind === 'reason' && displayContent(step)" class="reason-box">
-              <div class="reason-head" @click.stop="toggleReason(i)">
-                <span class="rc-tag">推理</span>
-                <svg
-                  class="rc-chev"
-                  :class="{ open: isReasonOpen(step, i) }"
-                  viewBox="0 0 24 24"
-                  width="12"
-                  height="12"
-                ><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
+            <div class="tstep-body">
+              <!-- 推理段:可折叠"思考"行,流式时限高滚动吸底,结束自动折叠,可点开回看 -->
+              <div v-if="b.step.kind === 'reason' && displayContent(b.step)" class="reason-box">
+                <div class="reason-head" @click.stop="toggleReason(b.index)">
+                  <span class="rc-tag">思考</span>
+                  <svg
+                    class="rc-chev"
+                    :class="{ open: isReasonOpen(b.step, b.index) }"
+                    viewBox="0 0 24 24"
+                    width="12"
+                    height="12"
+                  ><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
+                </div>
+                <div
+                  v-show="isReasonOpen(b.step, b.index)"
+                  :ref="(el) => setReasonBody(reasonKey(b.index), el)"
+                  class="reason-body"
+                ><TypeReveal v-if="isStepActive(b.step)" :text="displayContent(b.step)" :dim-tail="0" :max-chars="1200" active /><template v-else>{{ displayContent(b.step) }}</template></div>
               </div>
               <div
-                v-show="isReasonOpen(step, i)"
-                :ref="(el) => setReasonBody(reasonKey(i), el)"
-                class="reason-body"
-              >{{ step.narration }}<span v-if="isStepActive(step)" class="cursor">▋</span></div>
+                v-else-if="displayContent(b.step)"
+                class="step-narration"
+              ><TypeReveal v-if="isStepActive(b.step)" :text="displayContent(b.step)" :dim-tail="0" active /><template v-else v-html="stepHtml(b.step)" /></div>
+              <div v-if="displayToolCalls(b.step).length" class="tool-calls">
+                <ToolCallItem
+                  v-for="tc in displayToolCalls(b.step)"
+                  :key="tc.id || tc.name"
+                  :tc="tc"
+                  @download="downloadFile"
+                />
+              </div>
             </div>
-            <div
-              v-else-if="displayContent(step)"
-              class="step-narration"
-              v-html="stepHtml(step)"
-            />
-            <span v-if="isStepActive(step) && step.kind !== 'reason'" class="cursor">▋</span>
-            <div v-if="displayToolCalls(step).length" class="tool-calls">
-              <ToolCallItem
-                v-for="tc in displayToolCalls(step)"
-                :key="tc.id || tc.name"
-                :tc="tc"
-                @download="downloadFile"
-              />
-            </div>
-            <!-- dynamic-ui 内联组件:紧跟其调用发生的步骤位置,穿插在回答时间线中 -->
-            <WidgetFrame
-              v-for="wp in stepWidgetPaths(step)"
-              :key="wp"
-              :path="wp"
-              @prompt="onWidgetPrompt"
-            />
           </div>
+          <!-- 同名工具组块:连续同类操作收纳为一行,点击展开逐条 -->
+          <div v-else class="tstep">
+            <span class="tstep-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg>
+            </span>
+            <div class="tstep-body">
+              <div class="tool-group-head" @click="toggleGroup(bi)">
+                <span class="group-name">{{ b.name }}</span>
+                <span class="group-count">{{ b.items.length }}</span>
+                <span class="group-status" :class="groupStatus(b.items)">{{ groupStatus(b.items) === 'run' ? '…' : groupStatus(b.items) === 'err' ? '✗' : '✓' }}</span>
+                <svg class="rc-chev" :class="{ open: openGroups[bi] }" viewBox="0 0 24 24" width="12" height="12"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
+              </div>
+              <div v-show="openGroups[bi]" class="tool-group-items">
+                <template v-for="it in b.items" :key="it.index">
+                  <div class="tool-calls">
+                    <ToolCallItem
+                      v-for="tc in displayToolCalls(it.step)"
+                      :key="tc.id || tc.name"
+                      :tc="tc"
+                      @download="downloadFile"
+                    />
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+          </template>
           <div
-            v-if="turn.finalAnswer && turn.finalAnswer.toolCalls.length"
-            class="step"
+            v-if="turn.finalAnswer && displayToolCalls(turn.finalAnswer).length"
+            class="tstep"
           >
-            <div class="tool-calls" v-if="displayToolCalls(turn.finalAnswer).length">
-              <ToolCallItem
-                v-for="tc in displayToolCalls(turn.finalAnswer)"
-                :key="tc.id || tc.name"
-                :tc="tc"
-                @download="downloadFile"
-              />
+            <span class="tstep-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg>
+            </span>
+            <div class="tstep-body">
+              <div class="tool-calls" v-if="displayToolCalls(turn.finalAnswer).length">
+                <ToolCallItem
+                  v-for="tc in displayToolCalls(turn.finalAnswer)"
+                  :key="tc.id || tc.name"
+                  :tc="tc"
+                  @download="downloadFile"
+                />
+              </div>
             </div>
-            <WidgetFrame
-              v-for="wp in stepWidgetPaths(turn.finalAnswer)"
-              :key="wp"
-              :path="wp"
-              @prompt="onWidgetPrompt"
-            />
           </div>
-          <!-- 正在流式生成的组件:CSS 先到先解析,HTML/SVG 块到一块画一块;定稿后由文件版无缝接管(仅限正在生成的回合,避免历史回合重复渲染) -->
-          <WidgetFrame
-            v-if="turnInProgress && chat.streamingWidgetCode?.code"
-            :live-code="chat.streamingWidgetCode.code"
-            @prompt="onWidgetPrompt"
-          />
-        </NCollapseItem>
-      </NCollapse>
+        </div>
+      </div>
+
+      <!-- 内联组件集中区:位于时间线下方、最终答案之前,稳定渲染不随步骤跳动 -->
+      <div
+        v-if="allWidgetPaths.length || (turnInProgress && liveWidgetActive)"
+        class="turn-widgets"
+      >
+        <WidgetFrame
+          v-for="wp in allWidgetPaths"
+          :key="wp"
+          :path="wp"
+          @prompt="onWidgetPrompt"
+        />
+        <WidgetFrame
+          v-if="turnInProgress && liveWidgetActive"
+          :live-code="chat.streamingWidgetCode!.code"
+          @prompt="onWidgetPrompt"
+        />
+      </div>
 
       <!-- 最终答案 -->
-      <div v-if="turn.finalAnswer" class="content">
-        <div class="fa-tools">
+      <div v-if="turn.finalAnswer || liveStreamText" class="content">
+        <div v-if="turn.finalAnswer" class="fa-tools">
           <button
             class="copy-btn star-btn"
             :class="{ on: faStarred }"
@@ -552,7 +738,7 @@ function stepHtml(step: Step): string {
             title="复制回答"
             @click="copyFinalAnswer"
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2-2v1"/></svg>
           </button>
           <button
             class="copy-btn export-btn"
@@ -571,10 +757,11 @@ function stepHtml(step: Step): string {
           </button>
         </div>
         <span
-          v-if="displayContent(turn.finalAnswer)"
-          v-html="renderMarkdown(stripDeliverableMarkers(displayContent(turn.finalAnswer)))"
+          v-if="liveStreamText || faStreamingText || displayContent(turn.finalAnswer)"
+          class="md-streaming"
+          :class="{ 'md-tail-dim': isStepActive(turn.finalAnswer) }"
+          v-html="renderMarkdown(stripDeliverableMarkers(liveStreamText || faStreamingText || displayContent(turn.finalAnswer)))"
         />
-        <span v-if="isStepActive(turn.finalAnswer)" class="cursor">▋</span>
       </div>
       <div v-if="followUpQuestions.length" class="followups">
         <span class="fu-label">继续问:</span>
@@ -647,13 +834,21 @@ function stepHtml(step: Step): string {
 </template>
 
 <style scoped>
-.msg {
+/* 时间线步骤流(Trae 风格):头部 + 竖线时间线 + 无气泡答案 */
+.turn { margin-bottom: 26px; padding: 0 4px; }
+.turn-head {
   display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  margin-bottom: 26px;
-  padding: 0 4px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
 }
+.turn-logo {
+  width: 22px; height: 22px; border-radius: 6px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent); color: #fff;
+}
+.turn-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.msg-time { font-size: 11px; color: var(--text-3); }
 .followups { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
 .fu-label { font-size: 12px; color: var(--text-3); }
 .fu-chip {
@@ -663,28 +858,6 @@ function stepHtml(step: Step): string {
   transition: border-color .15s, color .15s;
 }
 .fu-chip:hover { border-color: var(--accent); color: var(--accent); }
-.avatar {
-  width: 32px; height: 32px; border-radius: 10px; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  background: var(--accent); color: #fff;
-  margin-top: 1px;
-}
-.bubble {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-  background: transparent;
-  line-height: 1.6; word-break: break-word;
-  border: none;
-  box-shadow: none;
-}
-.msg-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 6px;
-  min-height: 20px;
-}
 
 /* 人工确认卡:危险操作待用户允许/拒绝 */
 .perm-block {
@@ -731,8 +904,12 @@ function stepHtml(step: Step): string {
   margin-top: 10px;
 }
 .author { font-size: 13px; font-weight: 600; color: var(--text); }
-.msg-time { font-size: 11px; color: var(--text-3); }
-.content { position: relative; font-size: 14px; line-height: 1.8; letter-spacing: 0.01em; color: var(--text); }
+.content { position: relative; margin-top: 10px; font-size: 14px; line-height: 1.8; letter-spacing: 0.01em; color: var(--text); }
+/* 流式中的答案:markdown 实时渲染,尾部一行渐隐(隐藏光效),随输出推进自然固化 */
+.md-tail-dim {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2.2em), rgba(0, 0, 0, 0.25) calc(100% - 0.5em));
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 2.2em), rgba(0, 0, 0, 0.25) calc(100% - 0.5em));
+}
 .content :deep(p) { margin: 8px 0; }
 .content :deep(p:first-child) { margin-top: 0; }
 .content :deep(p:last-child) { margin-bottom: 0; }
@@ -796,10 +973,18 @@ function stepHtml(step: Step): string {
 .content :deep(td) { color: var(--text-2); }
 .content :deep(tr:nth-child(even) td) { background: var(--surface); }
 
-/* 思考区 */
+/* 思考区折叠头:朴素可点击文字行 + 右 chevron */
 .think-header {
   display: inline-flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--text-3);
+  cursor: pointer; user-select: none;
+  padding: 4px 6px;
+  margin-left: -6px;
+  border-radius: 6px;
+  transition: background .15s;
 }
+.think-header:hover { background: var(--surface-hover); }
+.think-header .rc-chev { opacity: .6; }
 .think-spinner {
   position: relative; width: 13px; height: 13px; flex-shrink: 0;
   display: inline-flex;
@@ -812,7 +997,7 @@ function stepHtml(step: Step): string {
 }
 @keyframes think-spin { to { transform: rotate(360deg); } }
 .think-label {
-  font-size: 13px; font-weight: 600; color: var(--text-3);
+  font-size: 13px; font-weight: 500; color: var(--text-3);
   transition: color .2s;
 }
 .think-header.active .think-label {
@@ -821,40 +1006,122 @@ function stepHtml(step: Step): string {
 }
 @keyframes think-pulse { 50% { opacity: .6; } }
 
-.step { padding: 4px 0; border-bottom: 1px dashed var(--border-soft); }
-.step:last-child { border-bottom: none; }
+/* 时间线:左侧竖向连接线 + 节点图标 + 内容;限高内部滚动 */
+.timeline {
+  position: relative;
+  margin: 4px 0 8px 9px;
+  max-height: 420px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px 6px 2px 0;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.timeline:hover { scrollbar-color: var(--border) transparent; }
+.timeline::-webkit-scrollbar { width: 4px; }
+.timeline::-webkit-scrollbar-thumb { background: transparent; border-radius: 2px; }
+.timeline:hover::-webkit-scrollbar-thumb { background: var(--border); }
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 16px;
+  bottom: 16px;
+  width: 1px;
+  background: var(--border);
+}
+.tstep {
+  position: relative;
+  display: flex;
+  gap: 11px;
+  padding: 4px 0;
+}
+.tstep-icon {
+  width: 15px; height: 15px;
+  margin-top: 2.5px;
+  flex-shrink: 0;
+  color: var(--text-3);
+  background: var(--bg);
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  position: relative; z-index: 1;
+  box-shadow: 0 0 0 3px var(--bg);
+}
+.tstep-icon svg { width: 11px; height: 11px; }
+.tstep-icon.dim { color: var(--text-4); }
+.tstep-body { flex: 1; min-width: 0; padding-top: 1px; }
+/* 同名工具组:一行收纳,点击展开逐条 */
+.tool-group-head {
+  display: inline-flex; align-items: center; gap: 7px;
+  cursor: pointer; user-select: none;
+  padding: 3px 8px;
+  margin-left: -8px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-2);
+  transition: background .15s;
+}
+.tool-group-head:hover { background: var(--surface-hover); }
+.group-name { font-weight: 500; }
+.group-count {
+  min-width: 17px; text-align: center;
+  font-size: 11px; line-height: 16px;
+  color: var(--text-3);
+  background: var(--surface-hover);
+  border-radius: 8px; padding: 0 5px;
+}
+.group-status { font-size: 11px; font-weight: 600; }
+.group-status.ok { color: var(--ok); }
+.group-status.err { color: var(--err); }
+.group-status.run { color: var(--text-3); animation: chip-pulse 1.6s ease-in-out infinite; }
+.tool-group-head .rc-chev { color: var(--text-3); opacity: .7; }
+.tool-group-items { margin: 2px 0 2px 2px; display: flex; flex-direction: column; gap: 1px; }
+/* 内联组件集中区:位于时间线下方,组件依次竖排 */
+.turn-widgets {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 12px 0 4px;
+}
+.turn-widgets :deep(.widget-frame) { width: 100%; }
 .step-narration {
   font-size: 13px; color: var(--text-2); opacity: .85;
 }
 .step-narration :deep(p) { margin: 4px 0; }
-/* 推理段包裹卡片:头部可点开合,正文限高滚动 */
+/* 推理段:朴素"思考 ⌄"行,展开内容为圆角浅底卡片 */
 .reason-box {
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
   margin: 2px 0;
-  background: var(--surface-hover);
-  overflow: hidden;
+  background: transparent;
 }
 .reason-head {
-  display: flex; align-items: center; gap: 6px;
-  padding: 4px 8px; font-size: 11px;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 6px; font-size: 12px;
   color: var(--text-3); cursor: pointer; user-select: none;
+  border-radius: 6px;
 }
-.reason-head:hover { color: var(--text-2); }
+.reason-head:hover { color: var(--text-2); background: var(--surface-hover); }
 .rc-chev { transition: transform .15s ease; opacity: .7; }
 .rc-chev.open { transform: rotate(180deg); }
 .reason-body {
-  padding: 2px 10px 8px;
-  font-size: 12px; line-height: 1.55;
-  color: var(--text-3); font-style: italic;
+  margin: 4px 0 2px;
+  padding: 8px 12px;
+  font-size: 12px; line-height: 1.6;
+  color: var(--text-2); font-style: italic;
   white-space: pre-wrap; word-break: break-word;
-  max-height: 180px; overflow-y: auto;
+  max-height: 220px; overflow-y: auto;
+  background: var(--surface);
+  border-radius: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
 }
+.reason-body:hover { scrollbar-color: var(--border) transparent; }
+.reason-body::-webkit-scrollbar { width: 6px; }
+.reason-body::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
+.reason-body:hover::-webkit-scrollbar-thumb { background: var(--border); }
 .reason-body .cursor { margin-left: 2px; }
 .rc-tag {
-  display: inline-block; margin-right: 6px; padding: 0 6px;
-  border-radius: 8px; font-size: 11px; font-style: normal;
-  background: var(--surface-hover); color: var(--text-3);
+  font-size: 12px; font-style: normal; font-weight: 500;
+  color: var(--text-3);
 }
 .step-narration :deep(pre.hljs) { background: var(--code-bg); border-radius: var(--radius-sm); padding: 8px; overflow-x: auto; }
 .step-narration :deep(code) { font-family: ui-monospace, monospace; font-size: 12px; }
@@ -872,9 +1139,6 @@ function stepHtml(step: Step): string {
   object-fit: contain;
 }
 .zoom-img { width: 100%; border-radius: 8px; background: #fff; }
-
-.cursor { animation: blink 1s steps(2) infinite; color: var(--accent); }
-@keyframes blink { 50% { opacity: 0; } }
 
 .pending { display: flex; align-items: center; gap: 8px; color: var(--text-3); font-size: 13px; padding: 4px 0; }
 .pending-elapsed { color: var(--text-2); font-size: 12px; }

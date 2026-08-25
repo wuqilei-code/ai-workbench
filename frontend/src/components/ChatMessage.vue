@@ -7,6 +7,7 @@ import { useFavoritesStore } from '@/stores/favorites'
 import { useChatStore } from '@/stores/chat'
 import { fileApi } from '@/api/files'
 import { fmtMessageTime } from '@/utils/time'
+import TypeReveal from './TypeReveal.vue'
 import type { MessageVo } from '@/types'
 
 const props = defineProps<{
@@ -188,7 +189,10 @@ async function submitEdit() {
       </template>
       <template v-else>
         <div class="content-area" :class="{ card: isUser }">
-          <div v-if="parsed.text" class="content" v-html="html" />
+          <div v-if="parsed.text" class="content">
+            <TypeReveal v-if="streaming" :text="parsed.text" active />
+            <div v-else v-html="html" />
+          </div>
           <div v-if="parsed.attachments.length" class="att-list">
             <a
               v-for="a in parsed.attachments"
@@ -199,7 +203,6 @@ async function submitEdit() {
               @click="downloadAttachment(a.path)"
             >{{ downloading === a.path ? '⏳ ' : '📎 ' }}{{ a.name }}</a>
           </div>
-          <span v-if="streaming" class="cursor">▋</span>
         </div>
       </template>
     </div>
@@ -229,7 +232,10 @@ async function submitEdit() {
   background: var(--accent);
   color: #fff;
 }
-.msg-body { flex: 1; min-width: 0; position: relative; }
+/* Trae 风格:assistant 回答不带头像/作者行,与多步时间线一致 */
+.msg.assistant .avatar { display: none; }
+.msg.assistant .author { display: none; }
+.msg.assistant .msg-body { flex: 1; min-width: 0; position: relative; }
 .msg.user .msg-body { display: flex; flex-direction: column; align-items: flex-end; }
 .msg-head {
   display: flex;
@@ -325,8 +331,19 @@ async function submitEdit() {
 .content :deep(tr:nth-child(even) td) { background: var(--surface); }
 .status { font-size: 12px; color: var(--text-3); margin-bottom: 4px; }
 .status.err { color: var(--err); }
-.cursor { animation: blink 1s steps(2) infinite; color: var(--accent); }
-@keyframes blink { 50% { opacity: 0; } }
+.cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  color: transparent;
+  border-radius: 1px;
+  background: linear-gradient(180deg, transparent, var(--accent), transparent);
+  box-shadow: 0 0 6px var(--accent), 0 0 14px var(--accent);
+  animation: cursor-glow 1s ease-in-out infinite;
+}
+@keyframes cursor-glow { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
 .att-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .att-link {
