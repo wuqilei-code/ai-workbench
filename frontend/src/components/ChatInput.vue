@@ -71,7 +71,7 @@ function onKeydown(e: KeyboardEvent) {
 
 
 /** 会话内上传:文件落入工作区 uploads/ 目录,并把相对路径拼到消息文本里,
- *  让 opencode 智能体(运行在同一 workspace)能按相对路径读取/操作该文件。 */
+ *  让 agent 智能体(运行在同一 workspace)能按相对路径读取/操作该文件。 */
 const UPLOAD_DIR = 'uploads'
 interface Attachment { name: string; path: string }
 const attachments = ref<Attachment[]>([])
@@ -629,16 +629,10 @@ async function startNewChat() {
 .tool-btn svg { flex-shrink: 0; }
 .tool-btn-text { padding: 5px 10px; }
 
-/* 模型下拉(紧凑):默认隐藏,鼠标悬停工具栏时淡入显现 */
+/* 模型下拉(紧凑) */
 .toolbar-select {
   max-width: 200px;
   flex-shrink: 0;
-  opacity: 0;
-  transition: opacity .15s ease;
-}
-.toolbar:hover .toolbar-select,
-.toolbar-select:focus-within {
-  opacity: 1;
 }
 .toolbar-select :deep(.n-base-selection) {
   background: transparent;

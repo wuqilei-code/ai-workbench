@@ -92,7 +92,7 @@ async function apply() {
   applying.value = true
   try {
     await adminApi.apply()
-    msg.success('配置已应用，opencode 已重启')
+    msg.success('配置已应用，agent 已重启')
   } catch (e: any) { msg.error(e.message) }
   finally { applying.value = false }
 }
@@ -107,7 +107,7 @@ onMounted(load)
       <h2>模型配置</h2>
       <div class="spacer" />
       <n-button type="primary" @click="showProvider = true">+ 添加 Provider</n-button>
-      <n-button type="warning" :loading="applying" @click="apply">应用并重启 opencode</n-button>
+      <n-button type="warning" :loading="applying" @click="apply">应用并重启 agent</n-button>
     </div>
 
     <n-spin :show="loading">

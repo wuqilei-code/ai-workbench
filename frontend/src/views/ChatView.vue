@@ -464,10 +464,15 @@ onMounted(() => {
     const scroller = scrollRef.value
     const inner = contentRef.value
     if (scroller && inner && typeof ResizeObserver !== 'undefined') {
+      _prevScrollHeight = scroller.scrollHeight
       const ro = new ResizeObserver(() => {
-        if (!stickToBottom.value) return
-        if (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight > 4) {
-          scroller.scrollTop = scroller.scrollHeight
+        const prev = _prevScrollHeight
+        _prevScrollHeight = scroller.scrollHeight
+        if (scroller.scrollHeight > prev) {
+          // 内容撑高(图片加载等):若之前贴底则跟随,不因内容增长误判为用户上翻
+          if (stickToBottom.value) {
+            scroller.scrollTop = scroller.scrollHeight
+          }
         }
       })
       ro.observe(inner)
@@ -514,6 +519,8 @@ let _openSettleUntil = 0
 function pinOnOpen() {
   stickToBottom.value = true
   _openSettleUntil = Date.now() + 1000
+  const el = scrollRef.value
+  if (el) _prevScrollHeight = el.scrollHeight
   scrollToBottomNow()
   const tick = () => {
     scrollToBottomNow()
@@ -545,6 +552,7 @@ watch(() => chat.isStreaming, (now, prev) => {
 
 /** 用户是否停留在底部区域(阈值内视为贴底)。贴底时流式输出自动跟随;上翻阅读时不被拉回。 */
 const stickToBottom = ref(true)
+let _prevScrollHeight = 0
 let _prevScrollTop = 0
 /** 正在前插更早分页:期间抑制自动滚底(messages.length 变化由 loadOlderMessages 前插引起) */
 const isBackfilling = ref(false)
@@ -557,6 +565,12 @@ function handleVirtualScroll() {
     stickToBottom.value = true
     return
   }
+  // 内容撑高(图片加载等):scrollHeight 增长说明是内容变化而非用户主动上翻,不释放钉底
+  if (el.scrollHeight > _prevScrollHeight) {
+    _prevScrollHeight = el.scrollHeight
+    return
+  }
+  _prevScrollHeight = el.scrollHeight
   const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 120
   stickToBottom.value = nearBottom
   // 滚动到顶:加载更早历史(loadingOlder 防重入;hasOlder=false 表示已到最早)

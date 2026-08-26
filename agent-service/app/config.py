@@ -52,12 +52,34 @@ AGENT_SANDBOX_BACKEND: str = os.environ.get("AGENT_SANDBOX_BACKEND", "docker").s
 AGENT_SANDBOX_IMAGE: str = os.environ.get("AGENT_SANDBOX_IMAGE", "ai-workbench-sandbox:latest")
 # 沙箱容器挂入的自定义网络(与网关同网,按容器名直连 CDP/MCP);compose 网络名 aiwb-agents
 AGENT_SANDBOX_NETWORK_NAME: str = os.environ.get("AGENT_SANDBOX_NETWORK_NAME", "aiwb-agents")
+
+
+def _resolve_volume_root() -> str:
+    """解析 workspace 卷的真实宿主路径,供沙箱 bind mount 用。
+
+    优先使用环境变量 AGENT_SANDBOX_VOLUME_ROOT(手动指定)。
+    未指定时自动查询 Docker daemon 解析 <compose项目>_workspace 卷的宿主挂载点,
+    避免默认路径在容器内不存在导致 bind mount 失败。
+    """
+    env_val = os.environ.get("AGENT_SANDBOX_VOLUME_ROOT", "").strip()
+    if env_val:
+        return env_val
+    try:
+        import docker as _docker
+
+        cli = _docker.from_env()
+        # compose 卷命名规则: <project>_workspace
+        vol_name = os.environ.get("COMPOSE_PROJECT_NAME", "docker") + "_workspace"
+        vol = cli.volumes.get(vol_name)
+        mount_point = vol.attrs["Mountpoint"]  # 如 /var/lib/docker/volumes/docker_workspace/_data
+        return mount_point + "/users"
+    except Exception:
+        # 回退:常见 Linux Docker 默认路径
+        return "/var/lib/docker/volumes/docker_workspace/_data/users"
+
+
 # 宿主(daemon 视角)workspace 卷下 users 根:用于按用户 bind 子目录到沙箱 /workspace。
-# compose 默认把共享卷命名为 docker_workspace,对应 daemon 路径如下。
-AGENT_SANDBOX_VOLUME_ROOT: str = os.environ.get(
-    "AGENT_SANDBOX_VOLUME_ROOT",
-    "/var/lib/docker/volumes/docker_workspace/_data/users",
-)
+AGENT_SANDBOX_VOLUME_ROOT: str = _resolve_volume_root()
 # 沙箱内运行 uid(非 root);agent-service 会先把该用户 project 目录 chown 成此 uid。
 AGENT_SANDBOX_UID: int = _int("AGENT_SANDBOX_UID", 10001)
 # 是否允许沙箱访问网络(合并浏览器后需开网,execute 也随之可联网)

@@ -37,9 +37,20 @@ _MAX_OUTPUT_BYTES = 100_000
 
 
 def _safe_rel(path: str) -> PurePosixPath:
-    """校验并归一化后端收到的相对路径(拒绝绝对路径与目录穿越)。"""
+    """校验并归一化后端收到的相对路径(拒绝绝对路径与目录穿越)。
+    兼容 agent 传入 /workspace/xxx 绝对路径——自动剥离前缀后按相对路径处理。"""
     p = PurePosixPath(path.replace("\\", "/"))
-    if p.is_absolute() or ".." in p.parts or str(p).startswith("~"):
+    if p.is_absolute():
+        s = str(p)
+        for prefix in ("/workspace/", "/workspace"):
+            if s.startswith(prefix):
+                s = s[len(prefix):]
+                break
+        s = s.lstrip("/")
+        if not s:
+            raise ValueError(f"非法路径: {path!r}")
+        p = PurePosixPath(s)
+    if ".." in p.parts or str(p).startswith("~"):
         raise ValueError(f"非法路径: {path!r}")
     return p
 
@@ -301,8 +312,8 @@ class DockerSandbox(BaseSandbox):
                     data.size = len(content)
                     data.mtime = int(time.time())
                     tf.addfile(data, io.BytesIO(content))
-                ok, err = c.put_archive(path=f"/workspace/{parent}", data=buf.getvalue())
-                results.append(FileUploadResponse(path=path, error=None if ok else (err or "put_archive failed")))
+                ok = c.put_archive(path=f"/workspace/{parent}", data=buf.getvalue())
+                results.append(FileUploadResponse(path=path, error=None if ok else "put_archive failed"))
             except ValueError as exc:
                 results.append(FileUploadResponse(path=path, error=str(exc)))
             except Exception as exc:  # noqa: BLE001

@@ -568,6 +568,7 @@ export const useChatStore = defineStore('chat', () => {
 
       case 'message.start': {
         const id: string = data.id
+        console.debug('[timeline] event message.start', { id, prevStreamingMsgId: streamingMessageId.value })
         if (id) {
           ensureAssistantShell(id)
           streamingMessageId.value = id
@@ -584,6 +585,7 @@ export const useChatStore = defineStore('chat', () => {
         const content: string = data.content || ''
         if (!content) break
         if (id && id !== streamingMessageId.value) {
+          console.debug('[timeline] delta new msg id', { oldId: streamingMessageId.value, newId: id })
           ensureAssistantShell(id)
           streamingMessageId.value = id
           streamingText.value = ''
@@ -597,6 +599,7 @@ export const useChatStore = defineStore('chat', () => {
         if (isStreaming.value) touchStreamActivity()
         const rc: string = data.content || ''
         if (!rc) break
+        console.debug('[timeline] reason chunk', { len: rc.length, liveReasoningLen: liveReasoning.value.length, tail: rc.slice(-60) })
         // 推理段独立累积到 liveReasoning(轻量纯标量),让"思考"块随 reason 逐块实时可见;
         // 不再逐个写 messages.timeline,避免 buildTurns 全量重算阻塞主线程致内容成批跳出。
         // 在与工具/文本/结束的边界处才由 flushLiveReasoning 定稿合并进时间线(落库结构一致)。
@@ -609,6 +612,7 @@ export const useChatStore = defineStore('chat', () => {
       case 'tool': {
         isStreaming.value = true
         touchStreamActivity()
+        console.debug('[timeline] event tool', { id: data.id, name: data.name, streamingTextLen: streamingText.value.length, liveReasoningLen: liveReasoning.value.length })
         flushLiveSteps()
         const tc: ToolCall = {
           id: typeof data.id === 'string' ? data.id : undefined,
@@ -660,6 +664,7 @@ export const useChatStore = defineStore('chat', () => {
         const id: string = data.id
         const status: string = data.status
         const finalText = streamingText.value
+        console.debug('[timeline] event message.end', { id, status, finalTextLen: finalText.length, streamingMsgId: streamingMessageId.value })
         // 边界处一次性把实时缓冲(reason+text)定稿进时间线并清空,保证历史结构与后端落库一致
         flushLiveSteps()
         if (status === 'error') {
@@ -669,6 +674,7 @@ export const useChatStore = defineStore('chat', () => {
         } else {
           // completed / aborted:把最终文本定稿到该消息(文本已随 flushLiveSteps 并入时间线)
           if (id && id === streamingMessageId.value && finalText) {
+            console.debug('[timeline] message.end finalizing text part', { id, finalTextLen: finalText.length })
             finalizeTextPart(id, finalText, status === 'completed')
           }
           if (id) {
@@ -699,6 +705,7 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       case 'done':
+        console.debug('[timeline] event done', { streamingMsgId: streamingMessageId.value, streamingTextLen: streamingText.value.length })
         finishStreaming()
         break
 
@@ -757,6 +764,7 @@ export const useChatStore = defineStore('chat', () => {
     // 若 v 为空则该占位"思考"步骤根本不出现,导致 buildTurns 回退为空 finalAnswer,
     // 思考内容直到边界 flush 前都渲染不出来。写入非空值即可让"思考"步骤立即存在,
     // 渲染时 displayContent 直接读 liveReasoning(实时)而非此占位 v。
+    console.debug('[timeline] ensureLiveReasonStep ADD', { tlLen: tl.length, lastK: last?.k, liveReasoningLen: liveReasoning.value.length })
     tl.push({ k: 'reason', v: liveReasoning.value })
     messages.value[idx] = { ...msg, parts: { ...(msg.parts || {}), timeline: tl } } as any
   }
@@ -768,20 +776,25 @@ export const useChatStore = defineStore('chat', () => {
   function flushLiveReasoning() {
     const txt = liveReasoning.value
     liveReasoning.value = ''
-    if (!txt) return
+    if (!txt) { console.debug('[timeline] flushReasoning: empty, skip'); return }
     const targetId = streamingMessageId.value
     let idx = targetId ? messages.value.findIndex((m) => m.agentMessageId === targetId) : -1
     if (idx < 0 && messages.value.length && messages.value[messages.value.length - 1].role === 'assistant') {
       idx = messages.value.length - 1
     }
-    if (idx < 0) return
+    if (idx < 0) { console.debug('[timeline] flushReasoning: no target msg'); return }
     const msg = messages.value[idx]
     const tl: { k: string; v?: string }[] = Array.isArray((msg.parts as any)?.timeline)
       ? [...((msg.parts as any).timeline as unknown[])]
       : []
     const last = tl.length ? tl[tl.length - 1] : null
-    if (last && last.k === 'reason') tl[tl.length - 1] = { k: 'reason', v: txt }
-    else tl.push({ k: 'reason', v: txt })
+    if (last && last.k === 'reason') {
+      console.debug('[timeline] flushReasoning MERGE into existing', { prevLen: (last.v || '').length, addedLen: txt.length, tail: txt.slice(-60) })
+      tl[tl.length - 1] = { k: 'reason', v: txt }
+    } else {
+      console.debug('[timeline] flushReasoning NEW entry', { tlLen: tl.length, txtLen: txt.length, tail: txt.slice(-60) })
+      tl.push({ k: 'reason', v: txt })
+    }
     messages.value[idx] = { ...msg, parts: { ...(msg.parts || {}), timeline: tl } }
   }
 
@@ -789,38 +802,48 @@ export const useChatStore = defineStore('chat', () => {
    *  liveReasoning / streamingText 在流式期间是轻量纯标量,不触发 buildTurns 全量重算;
    *  仅在此处一次性合并,既保证逐块实时可见,又保证刷新/断线后的历史重建与后端落库一致。 */
   function flushLiveSteps() {
+    console.debug('[timeline] flushLiveSteps called', { streamingTextLen: streamingText.value.length, liveReasoningLen: liveReasoning.value.length })
     flushLiveReasoning()
     if (streamingText.value) {
+      console.debug('[timeline] flushLiveSteps appending text', { len: streamingText.value.length, tail: streamingText.value.slice(-80) })
       appendLiveTimeline('text', streamingText.value)
       streamingText.value = ''
     }
   }
 
   /** 追加实时时间线条目(reason/text 合并同类尾段,tool 记 id),与网关落库结构一致 */
-  function appendLiveTimeline(k: 'reason' | 'text' | 'tool', v?: string, toolId?: string) {    const targetId = streamingMessageId.value
+  function appendLiveTimeline(k: 'reason' | 'text' | 'tool', v?: string, toolId?: string) {
+    const targetId = streamingMessageId.value
     let idx = targetId ? messages.value.findIndex((m) => m.agentMessageId === targetId) : -1
     if (idx < 0 && messages.value.length && messages.value[messages.value.length - 1].role === 'assistant') {
       idx = messages.value.length - 1
     }
-    if (idx < 0) return
+    if (idx < 0) { console.debug('[timeline] append skipped: no target msg', { k, targetId }); return }
     const msg = messages.value[idx]
     const tl: { k: string; v?: string; id?: string }[] = Array.isArray((msg.parts as any)?.timeline)
       ? [...((msg.parts as any).timeline as unknown[])]
       : []
     const last = tl.length ? (tl[tl.length - 1] as { k: string; v?: string }) : null
+    const prevLen = tl.length
     if ((k === 'reason' || k === 'text') && last && last.k === k) {
+      const oldLen = (last.v || '').length
       tl[tl.length - 1] = { k, v: (last.v || '') + (v || '') }
+      console.debug('[timeline] append MERGE', { k, prevLen, oldContentLen: oldLen, addedLen: (v || '').length, newContentLen: (last.v || '').length + (v || '').length, tail: (v || '').slice(-60) })
     } else if (k === 'tool') {
       if (!toolId) return
       tl.push({ k, id: toolId })
+      console.debug('[timeline] append TOOL', { k: 'tool', toolId, prevLen, newLen: tl.length })
     } else {
       tl.push({ k, v: v || '' })
+      console.debug('[timeline] append NEW', { k, prevLen, newLen: tl.length, contentLen: (v || '').length, tail: (v || '').slice(-60) })
     }
     messages.value[idx] = { ...msg, parts: { ...(msg.parts || {}), timeline: tl } }
   }
 
   /** 把流式文本落定到目标 assistant 消息 */
-  function finalizeTextPart(id: string, text: string, completed: boolean) {    const idx = messages.value.findIndex((m) => m.agentMessageId === id)
+  function finalizeTextPart(id: string, text: string, completed: boolean) {
+    console.debug('[timeline] finalizeTextPart', { id, textLen: text.length, completed, tail: text.slice(-80) })
+    const idx = messages.value.findIndex((m) => m.agentMessageId === id)
     if (idx >= 0) {
       messages.value[idx] = {
         ...messages.value[idx],
@@ -832,6 +855,7 @@ export const useChatStore = defineStore('chat', () => {
         streamingMessageId.value = null
       }
     } else {
+      console.debug('[timeline] finalizeTextPart creating new msg', { id })
       messages.value.push({
         id: -Date.now(),
         agentMessageId: id,
@@ -923,9 +947,10 @@ export const useChatStore = defineStore('chat', () => {
 
   /** 会话空闲:生成结束,兜底落定未提交的流式文本 */
   function finishStreaming() {
+    console.debug('[timeline] finishStreaming called', { streamingMsgId: streamingMessageId.value, streamingTextLen: streamingText.value.length, liveReasoningLen: liveReasoning.value.length })
     flushLiveReasoning()
     if (streamingMessageId.value && streamingText.value) {
-      // 兜底(done 未伴随 message.end 时):把最终文本并入时间线再定稿
+      console.debug('[timeline] finishStreaming finalizing leftover text', { len: streamingText.value.length })
       appendLiveTimeline('text', streamingText.value)
       finalizeTextPart(streamingMessageId.value, streamingText.value, true)
       streamingText.value = ''

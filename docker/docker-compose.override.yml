@@ -7,12 +7,5 @@ services:
       args:
         # 基镜像走 daocloud 镜像加速,绕开 docker.io(本机 IPv6 解析异常)
         DOCKER_REGISTRY: "docker.m.daocloud.io"
-        # opencode 二进制经 ghfast.top 代理 GitHub release
-        OPENCODE_DOWNLOAD_URL: "https://ghfast.top/https://github.com/sst/opencode/releases/download/v1.18.16/opencode-linux-x64-baseline.tar.gz"
-  agent-build:
-    build:
-      args:
-        DOCKER_REGISTRY: "docker.m.daocloud.io"
-        OPENCODE_DOWNLOAD_URL: "https://ghfast.top/https://github.com/sst/opencode/releases/download/v1.18.16/opencode-linux-x64-baseline.tar.gz"
   mysql:
     image: docker.m.daocloud.io/mysql:8.0

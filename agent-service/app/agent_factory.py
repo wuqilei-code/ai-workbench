@@ -13,6 +13,117 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Path-normalising wrapper
+# ---------------------------------------------------------------------------
+# deepagents CompositeBackend 路由规则:
+#   /workspace/xxx → sandbox,  /skills/xxx → skills,  其余 → default(sandbox)
+# 当 LLM 传 "/" 或不含已知前缀的裸路径时,default 后端会把 "/" 当沙箱根目录,
+# 导致 ls 返回系统目录、read/write 找不到文件。此 wrapper 在所有文件操作入口
+# 强制规范化路径,确保 "/" → "/workspace/",裸路径补 "/workspace/" 前缀。
+# ---------------------------------------------------------------------------
+
+_KNOWN_PREFIXES = ("/workspace/", "/skills/")
+
+
+def _normalize_fs_path(path: str) -> str:
+    """把 LLM 传入的路径规范化为 CompositeBackend 能正确路由的绝对路径。"""
+    if not path:
+        return "/workspace/"
+    # "/" 或 "/workspace" (无尾斜杠) → 工作区根
+    if path == "/" or path == "/workspace":
+        return "/workspace/"
+    # 已有已知前缀,原样返回
+    for pfx in _KNOWN_PREFIXES:
+        if path.startswith(pfx):
+            return path
+    # 裸绝对路径如 "/test.txt" → 补 /workspace/ 前缀
+    if path.startswith("/"):
+        return "/workspace" + path
+    # 相对路径 → 补 /workspace/ 前缀
+    return "/workspace/" + path
+
+
+class _PathNormalizingProxy:
+    """轻量代理:把 CompositeBackend 的路径操作统一规范化,其余方法直通。"""
+
+    def __init__(self, inner: CompositeBackend) -> None:
+        # 使用 object.__setattr__ 避免触发 __setattr__ 递归
+        object.__setattr__(self, "_inner", inner)
+
+    # --- 路径敏感操作:规范化后委托 ---
+    def ls(self, path: str):
+        return self._inner.ls(_normalize_fs_path(path))
+
+    def als(self, path: str):
+        return self._inner.als(_normalize_fs_path(path))
+
+    def read(self, file_path: str, **kw):
+        return self._inner.read(_normalize_fs_path(file_path), **kw)
+
+    def aread(self, file_path: str, **kw):
+        return self._inner.aread(_normalize_fs_path(file_path), **kw)
+
+    def write(self, file_path: str, *a, **kw):
+        return self._inner.write(_normalize_fs_path(file_path), *a, **kw)
+
+    def awrite(self, file_path: str, *a, **kw):
+        return self._inner.awrite(_normalize_fs_path(file_path), *a, **kw)
+
+    def edit(self, file_path: str, *a, **kw):
+        return self._inner.edit(_normalize_fs_path(file_path), *a, **kw)
+
+    def aedit(self, file_path: str, *a, **kw):
+        return self._inner.aedit(_normalize_fs_path(file_path), *a, **kw)
+
+    def glob(self, pattern: str, *a, **kw):
+        return self._inner.glob(_normalize_fs_path(pattern), *a, **kw)
+
+    def aglob(self, pattern: str, *a, **kw):
+        return self._inner.aglob(_normalize_fs_path(pattern), *a, **kw)
+
+    def grep(self, pattern: str, path: str = "/", **kw):
+        return self._inner.grep(pattern, _normalize_fs_path(path), **kw)
+
+    def agrep(self, pattern: str, path: str = "/", **kw):
+        return self._inner.agrep(pattern, _normalize_fs_path(path), **kw)
+
+    def delete(self, file_path: str, *a, **kw):
+        return self._inner.delete(_normalize_fs_path(file_path), *a, **kw)
+
+    def adelete(self, file_path: str, *a, **kw):
+        return self._inner.adelete(_normalize_fs_path(file_path), *a, **kw)
+
+    # --- 非路径操作:直通 ---
+    def execute(self, *a, **kw):
+        return self._inner.execute(*a, **kw)
+
+    def aexecute(self, *a, **kw):
+        return self._inner.aexecute(*a, **kw)
+
+    def upload_files(self, *a, **kw):
+        return self._inner.upload_files(*a, **kw)
+
+    def aupload_files(self, *a, **kw):
+        return self._inner.aupload_files(*a, **kw)
+
+    def download_files(self, *a, **kw):
+        return self._inner.download_files(*a, **kw)
+
+    def adownload_files(self, *a, **kw):
+        return self._inner.adownload_files(*a, **kw)
+
+    # --- 兜底:未知属性直通 inner ---
+    def __getattr__(self, name: str):
+        return getattr(self._inner, name)
+
+    def __repr__(self) -> str:
+        return f"PathNormalizingProxy({self._inner!r})"
+
+
+
+
 from deepagents import FilesystemPermission, create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellBackend
 from deepagents.middleware.skills import SkillsMiddleware
@@ -132,7 +243,7 @@ def _build_backend(user_id: str, visible_skills: set[str] | None = None) -> Comp
     else:
         raise ValueError(f"非法 AGENT_SANDBOX_BACKEND: {mode!r}(可选 docker|local)")
 
-    return CompositeBackend(
+    backend = CompositeBackend(
         default=workspace_backend,
         # artifacts_root:summarization 中间件把被压缩的旧历史/媒体卸载到
         # {artifacts_root}/conversation_history。默认 "/" 在容器内不可写
@@ -149,6 +260,7 @@ def _build_backend(user_id: str, visible_skills: set[str] | None = None) -> Comp
             ),
         },
     )
+    return _PathNormalizingProxy(backend)
 
 
 def _build_permissions() -> list[FilesystemPermission]:
@@ -208,7 +320,9 @@ _DEFAULT_SYSTEM_PROMPT = (
     "就是 /workspace 对应的真实目录,所以在命令行里请用相对路径读写文件"
     "(例如 python3 gen.py 生成 report.docx);write_file/read_file 的 "
     "/workspace/xxx 与命令行相对路径指向同一个位置,不要混用 /workspace/xxx "
-    "做 shell 路径。沙箱默认无法访问外部网络与工作区之外的文件,"
+    "做 shell 路径。重要:ls/read_file/write_file/edit_file 的路径必须以"
+    "/workspace/ 开头(如 ls(\"/workspace/\")),绝对不要用 \"/\" 作为 ls 路径,"
+    "否则会列出沙箱系统根目录而非用户工作区。沙箱默认无法访问外部网络与工作区之外的文件,"
     "预装了 python3 及常用文档/数据处理库(python-docx/pptx/openpyxl/"
     "reportlab/pandas/matplotlib 等),不要尝试 pip install。"
     "\n\n生成或修改文件后,必须在回复末尾以 `[结果文件] <相对路径>` 单独列出"

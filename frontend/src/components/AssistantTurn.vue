@@ -619,7 +619,7 @@ function stepHtml(step: Step): string {
           <template v-for="(b, bi) in displayBlocks" :key="b.type + '-' + bi">
           <!-- 单步骤块:思考/解说/含解说的工具步骤 -->
           <div v-if="b.type === 'step'" class="tstep">
-            <span class="tstep-icon" :class="{ dim: b.step.kind === 'reason' }">
+            <span v-if="!displayToolCalls(b.step).length" class="tstep-icon" :class="{ dim: b.step.kind === 'reason' }">
               <svg v-if="b.step.kind === 'reason'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 4.6L18 9l-4.2 1.4L12 15l-1.8-4.6L6 9l4.2-1.4L12 3z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15z"/></svg>
               <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg>
             </span>
@@ -658,9 +658,6 @@ function stepHtml(step: Step): string {
           </div>
           <!-- 同名工具组块:连续同类操作收纳为一行,点击展开逐条 -->
           <div v-else class="tstep">
-            <span class="tstep-icon">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg>
-            </span>
             <div class="tstep-body">
               <div class="tool-group-head" @click="toggleGroup(bi)">
                 <span class="group-name">{{ b.name }}</span>
