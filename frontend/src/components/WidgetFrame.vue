@@ -127,11 +127,38 @@ function balancedScripts(code: string): string {
   return open > close ? code + '<' + '/script>'.repeat(open - close) : code
 }
 
+/**
+ * 主题上下文兜底样式(注入壳 <head>):
+ * - 设定 color-scheme,让原生控件/滚动条跟随 App 主题;
+ * - 提供标准令牌的暗/亮默认值(:root[data-widget-theme=...])。当某 widget 只改背景/未自定
+ *   义文字令牌、或暗色块没覆盖到所有文字时,兜底保证文字继承正确的可读前景色,避免
+ *   "背景变深但字色不清" 的情况。widget 自身显式指定的颜色优先,不受此覆盖。
+ * - 让 body/根的文字颜色回退到主题前景色,text-muted 使用主题次级前景。
+ */
+function themeFallback(): string {
+  const fallback = (scheme: 'light' | 'dark') =>
+    `:root[data-widget-theme="${scheme}"]{color-scheme:${scheme};` +
+    (scheme === 'dark'
+      ? '--text:#E5E5E5;--text-muted:#A1A1AA;--surface:#171717;--surface-muted:#1F1F1F;--border:#333;'
+      : '--text:#171717;--text-muted:#71717A;--surface:#F7F7F8;--surface-muted:#ECECEF;--border:#D9D9DE;') +
+    `}`
+  return (
+    `<style>` +
+    /* 若无任何 data-widget-theme 门控(老 widget),也按 App 当前主题提供可读前景 */
+    `:root{color-scheme:${isDark() ? 'dark' : 'light'}}` +
+    fallback(isDark() ? 'dark' : 'light') +
+    `html,body{margin:0;padding:0;background:transparent;color:var(--text,#E5E5E5)}` +
+    `</style>`
+  )
+}
+
 function buildDoc(code: string): string {
   return (
     `<!doctype html><html data-widget-theme="${isDark() ? 'dark' : 'light'}"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
-    `<style>html,body{margin:0;padding:0;background:transparent}</style></head><body>` +
+    `<style>html,body{margin:0;padding:0;background:transparent}</style>` +
+    themeFallback() +
+    `</head><body>` +
     balancedScripts(normalizeWidgetTheme(code)) +
     BOOT +
     `</body></html>`
@@ -150,6 +177,7 @@ function buildLiveShell(): string {
     `<!doctype html><html data-widget-theme="${isDark() ? 'dark' : 'light'}"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
     `<style>html,body{margin:0;padding:0;background:transparent}</style>` +
+    themeFallback() +
     `</head><body><div id="__wd"></div>${BOOT}</body></html>`
   )
 }
