@@ -30,6 +30,11 @@ function stripScripts(code: string): string {
   return code.replace(/<script\b[\s\S]*?<\/script\s*>/gi, '').replace(/<script\b[\s\S]*$/i, '')
 }
 
+/** 检测 widget 代码是否自身支持暗色主题(data-widget-theme 门控 / prefers-color-scheme) */
+function hasThemeSupport(code: string): boolean {
+  return /data-widget-theme/.test(code) || /prefers-color-scheme/.test(code)
+}
+
 /**
  * 把生成的 CSS 里的 `@media (prefers-color-scheme: dark|light) { :root { ... } }`
  * 转成 `:root[data-widget-theme="dark"] { ... }` 属性门控,让组件跟随 App 主题
@@ -68,6 +73,7 @@ const BOOT = `
   window.addEventListener('message',function(e){
     var d=e.data;if(!d||d.__aiwb_host!==1)return;
     if(d.type==='theme'&&document.documentElement){document.documentElement.setAttribute('data-widget-theme',d.value);return}
+    if(d.type==='nodark'&&document.documentElement){document.documentElement.setAttribute('data-aiwb-nodark','1');return}
     if(d.type==='patch'){apply(String(d.html||''))}
   });
   function setAttrs(dn,sn){
@@ -153,11 +159,19 @@ function themeFallback(): string {
 }
 
 function buildDoc(code: string): string {
+  const themeVal = isDark() ? 'dark' : 'light'
+  // 无暗色支持的 widget:整体反色+色相旋转,让硬编码浅色在暗色下可读
+  const needsInvert = isDark() && !hasThemeSupport(code)
+  const nodarkAttr = needsInvert ? ' data-aiwb-nodark="1"' : ''
+  const invertCSS = needsInvert
+    ? ':root[data-aiwb-nodark="1"] [data-dynamic-ui-widget]{filter:invert(1) hue-rotate(180deg)}'
+    : ''
   return (
-    `<!doctype html><html data-widget-theme="${isDark() ? 'dark' : 'light'}"><head><meta charset="utf-8">` +
+    `<!doctype html><html data-widget-theme="${themeVal}"${nodarkAttr}><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
     `<style>html,body{margin:0;padding:0;background:transparent}</style>` +
     themeFallback() +
+    (invertCSS ? `<style>${invertCSS}</style>` : '') +
     `</head><body>` +
     balancedScripts(normalizeWidgetTheme(code)) +
     BOOT +
@@ -171,6 +185,7 @@ const LIVE_THROTTLE = 150
 let _liveTimer: ReturnType<typeof setTimeout> | null = null
 let _pendingLive = ''
 let _liveReady = false
+let _liveDarkChecked = false
 
 function buildLiveShell(): string {
   return (
@@ -196,6 +211,13 @@ function postToFrame(payload: Record<string, unknown>): boolean {
 function pushPatch(code: string) {
   const stripped = stripScripts(normalizeWidgetTheme(code))
   if (!stripped.trim()) return
+  // 流式期间首次收到有效代码时检测暗色支持;若无,通知壳添加反色滤镜
+  if (isDark() && !_liveDarkChecked && code.trim().length > 50) {
+    _liveDarkChecked = true
+    if (!hasThemeSupport(code)) {
+      postToFrame({ type: 'nodark' })
+    }
+  }
   if (!_liveReady || !postToFrame({ type: 'patch', html: stripped })) {
     _pendingLive = code
   }
@@ -225,6 +247,7 @@ watch(() => props.liveCode, (v) => {
 async function load() {
   failed.value = false
   srcdoc.value = ''
+  _liveDarkChecked = false
   try {
     const raw = await fileApi.content(props.path || '')
     if (!raw) throw new Error('empty')
