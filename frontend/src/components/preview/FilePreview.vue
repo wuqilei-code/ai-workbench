@@ -8,6 +8,7 @@ import PreviewCode from './PreviewCode.vue'
 import PreviewMarkdown from './PreviewMarkdown.vue'
 import PreviewImage from './PreviewImage.vue'
 import PreviewPdf from './PreviewPdf.vue'
+import PreviewHtml from './PreviewHtml.vue'
 import PreviewDocx from './PreviewDocx.vue'
 import PreviewXlsx from './PreviewXlsx.vue'
 import PreviewPptx from './PreviewPptx.vue'
@@ -137,6 +138,7 @@ onBeforeUnmount(() => {
         <PreviewMarkdown     v-else-if="kind === 'markdown'" :content="displayText" />
         <PreviewImage        v-else-if="kind === 'image'"    :src="safeBlobUrl" :path="path" />
         <PreviewPdf          v-else-if="kind === 'pdf'"      :src="safeBlobUrl" />
+        <PreviewHtml         v-else-if="kind === 'html'"     :path="path" />
         <PreviewDocx         v-else-if="kind === 'docx'"     :blob="safeBlob" />
         <PreviewXlsx         v-else-if="kind === 'xlsx'"     :blob="safeBlob" />
         <PreviewPptx         v-else-if="kind === 'pptx'"     :blob="safeBlob" />

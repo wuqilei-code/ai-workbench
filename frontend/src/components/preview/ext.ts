@@ -1,7 +1,7 @@
 /** 文件预览类型分发 */
 
 export type PreviewKind =
-  | 'image' | 'pdf' | 'markdown' | 'code' | 'text'
+  | 'image' | 'pdf' | 'html' | 'markdown' | 'code' | 'text'
   | 'docx' | 'xlsx' | 'pptx' | 'audio' | 'video' | 'unsupported'
 
 const EXT_MAP: Record<string, PreviewKind> = {
@@ -25,7 +25,7 @@ const EXT_MAP: Record<string, PreviewKind> = {
   vue: 'code', py: 'code', java: 'code', kt: 'code', go: 'code', rs: 'code',
   c: 'code', h: 'code', cpp: 'code', cc: 'code', cs: 'code',
   rb: 'code', php: 'code', swift: 'code', scala: 'code',
-  html: 'code', htm: 'code', css: 'code', scss: 'code', sass: 'code', less: 'code',
+  html: 'html', htm: 'html', css: 'code', scss: 'code', sass: 'code', less: 'code',
   json: 'code', json5: 'code', yml: 'code', yaml: 'code', toml: 'code', ini: 'code',
   sh: 'code', bash: 'code', zsh: 'code', ps1: 'code', bat: 'code',
   sql: 'code', xml: 'code', graphql: 'code', dockerfile: 'code',
