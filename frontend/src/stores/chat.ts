@@ -660,6 +660,24 @@ export const useChatStore = defineStore('chat', () => {
         break
       }
 
+      // agent 向用户提问(ask_user 工具触发)
+      case 'question': {
+        const requestId: string = data.id || ''
+        const question: string = data.question || '请提供更多信息'
+        if (!requestId) break
+        suspendForPermission({
+          requestId,
+          tool: {
+            name: 'ask_user',
+            args: { question },
+            description: question,
+          },
+          allowed: ['reply'],
+          _replied: false,
+        })
+        break
+      }
+
       case 'message.end': {
         const id: string = data.id
         const status: string = data.status
@@ -1000,15 +1018,31 @@ export const useChatStore = defineStore('chat', () => {
     touchStreamActivity()
   }
 
-  /** 用户处置确认:批准/拒绝 → 后端桥续跑被中断的生成;失败向上抛由 UI 提示 */
-  async function replyPermission(requestId: string, decision: 'approve' | 'reject') {
-    if (!currentSessionId.value) return false
-    const pp = pendingPermission.value
-    if (pp && pp.requestId === requestId) {
-      pp._replied = true
+  /** 清除指定消息中的 pendingPermission(本地+数据库),提问框立即消失且刷新不重现 */
+  function dismissPendingPermission(requestId: string) {
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      const m = messages.value[i]
+      if (m.parts?.pendingPermission?.requestId === requestId) {
+        const { pendingPermission: _, ...restParts } = m.parts || {}
+        messages.value[i] = { ...m, parts: restParts as StepParts }
+        break
+      }
     }
-    const ok = await chatApi.replyPermission(currentSessionId.value, requestId, decision)
-    // 后端可能仍在会话上等待 → 立即恢复流式态;真实事件到来后自然续播
+    if (currentSessionId.value) {
+      chatApi.clearPermission(currentSessionId.value, requestId).catch(() => {})
+    }
+  }
+
+  /** 用户处置确认:批准/拒绝/回答提问 → 后端桥续跑被中断的生成;失败则清除提问框 */
+  async function replyPermission(requestId: string, decision: 'approve' | 'reject' | 'reply', answer?: string) {
+    if (!currentSessionId.value) return false
+    const ok = await chatApi.replyPermission(currentSessionId.value, requestId, decision, answer)
+    if (!ok) {
+      // 权限已失效:清除本地+数据库中的 pendingPermission,提问框消失且刷新不重现
+      dismissPendingPermission(requestId)
+      isStreaming.value = false
+      return ok
+    }
     resumeStreaming()
     return ok
   }

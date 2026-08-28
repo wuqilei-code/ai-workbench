@@ -399,22 +399,51 @@ const turnPending = computed(() => {
 })
 
 const permSubmitting = ref(false)
-async function onPerm(decision: 'approve' | 'reject') {
+const questionAnswer = ref('')
+const selectedOptions = ref<string[]>([])
+const questionOptions = computed<string[]>(() => {
+  const raw = turnPending.value?.tool?.args?.options
+  if (!raw) return []
+  if (Array.isArray(raw)) return raw
+  if (typeof raw === 'string') return raw.split('|').map(s => s.trim()).filter(Boolean)
+  return []
+})
+const questionMultiple = computed(() => turnPending.value?.tool?.args?.multiple || false)
+
+function toggleOption(opt: string) {
+  if (questionMultiple.value) {
+    const idx = selectedOptions.value.indexOf(opt)
+    if (idx >= 0) selectedOptions.value.splice(idx, 1)
+    else selectedOptions.value.push(opt)
+  } else {
+    selectedOptions.value = [opt]
+  }
+}
+
+function buildAnswer(): string {
+  if (questionOptions.value.length) {
+    return selectedOptions.value.join(',')
+  }
+  return questionAnswer.value
+}
+
+async function onPerm(decision: 'approve' | 'reject' | 'reply', answer?: string) {
   const pp = turnPending.value
   if (!pp || permSubmitting.value) return
   if (!props.sessionId) {
     msg.error('会话未就绪,请刷新后重试')
     return
   }
+  const finalAnswer = answer ?? buildAnswer()
   permSubmitting.value = true
   try {
-    const ok = await chat.replyPermission(pp.requestId, decision)
+    const ok = await chat.replyPermission(pp.requestId, decision, finalAnswer)
     if (!ok) msg.warning('确认已失效或生成已中断,可能需要重新发送')
-    else if (pp) pp._replied = true
   } catch (e: any) {
     msg.error(e?.response?.data?.message || e?.message || '提交确认失败,请重试')
   } finally {
     permSubmitting.value = false
+    questionAnswer.value = ''
   }
 }
 
@@ -428,6 +457,9 @@ const permArgsText = computed(() => {
     return String(args).slice(0, 240)
   }
 })
+
+/** 是否为 agent 提问(ask_user 工具) */
+const isQuestion = computed(() => turnPending.value?.tool?.name === 'ask_user')
 
 // ---------- 折叠控制(受控 expanded-names)----------
 
@@ -778,25 +810,68 @@ function stepHtml(step: Step): string {
         </template>
       </div>
 
-      <!-- 人工确认:危险操作需用户允许/拒绝,生成在此暂停 -->
-      <div v-if="turnPending" class="perm-block">
+      <!-- 人工确认:危险操作需用户允许/拒绝,或回答 agent 提问,生成在此暂停 -->
+      <div v-if="turnPending" class="perm-block" :class="{ 'question-block': isQuestion }">
         <div class="perm-head">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>
-          <span class="perm-title">需要您的允许</span>
+          <svg v-if="!isQuestion" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>
+          <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+          <span class="perm-title">{{ isQuestion ? 'AI 向您提问' : '需要您的允许' }}</span>
         </div>
         <div class="perm-body">
           <div class="perm-tool">
-            <span class="perm-tool-name">{{ turnPending.tool?.name || 'tool' }}</span>
-            <span v-if="turnPending.tool?.description" class="perm-desc">{{ turnPending.tool.description }}</span>
+            <span v-if="isQuestion" class="perm-question">{{ turnPending.tool?.args?.question || '请提供更多信息' }}</span>
+            <template v-else>
+              <span class="perm-tool-name">{{ turnPending.tool?.name || 'tool' }}</span>
+              <span v-if="turnPending.tool?.description" class="perm-desc">{{ turnPending.tool.description }}</span>
+            </template>
           </div>
-          <pre v-if="permArgsText" class="perm-args">{{ permArgsText }}</pre>
+          <pre v-if="!isQuestion && permArgsText" class="perm-args">{{ permArgsText }}</pre>
+          <div v-if="isQuestion" class="perm-question-input">
+            <template v-if="questionOptions.length">
+              <div class="perm-options">
+                <div
+                  v-for="opt in questionOptions"
+                  :key="opt"
+                  class="perm-option-card"
+                  :class="{ selected: selectedOptions.includes(opt) }"
+                  @click="toggleOption(opt)"
+                >
+                  <div class="perm-option-check">
+                    <div v-if="questionMultiple" class="perm-checkbox" :class="{ checked: selectedOptions.includes(opt) }">
+                      <svg v-if="selectedOptions.includes(opt)" viewBox="0 0 16 16" fill="currentColor"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>
+                    </div>
+                    <div v-else class="perm-radio" :class="{ checked: selectedOptions.includes(opt) }">
+                      <div v-if="selectedOptions.includes(opt)" class="perm-radio-dot"/>
+                    </div>
+                  </div>
+                  <span class="perm-option-text">{{ opt }}</span>
+                </div>
+              </div>
+            </template>
+            <template v-else>
+              <n-input
+                v-model:value="questionAnswer"
+                type="textarea"
+                placeholder="请输入您的回答…"
+                :autosize="{ minRows: 2, maxRows: 6 }"
+                @keydown.enter.ctrl="onPerm('reply', questionAnswer)"
+              />
+            </template>
+          </div>
           <div class="perm-actions">
-            <n-button size="small" :loading="permSubmitting" :disabled="permSubmitting" @click="onPerm('reject')">
-              拒绝
-            </n-button>
-            <n-button size="small" type="primary" :loading="permSubmitting" :disabled="permSubmitting" @click="onPerm('approve')">
-              允许执行
-            </n-button>
+            <template v-if="isQuestion">
+              <n-button size="small" :loading="permSubmitting" :disabled="permSubmitting || (!questionOptions.length && !questionAnswer.trim()) || (questionOptions.length && !selectedOptions.length)" type="primary" @click="onPerm('reply')">
+                提交回答
+              </n-button>
+            </template>
+            <template v-else>
+              <n-button size="small" :loading="permSubmitting" :disabled="permSubmitting" @click="onPerm('reject')">
+                拒绝
+              </n-button>
+              <n-button size="small" type="primary" :loading="permSubmitting" :disabled="permSubmitting" @click="onPerm('approve')">
+                允许执行
+              </n-button>
+            </template>
           </div>
         </div>
       </div>
@@ -1177,6 +1252,36 @@ function stepHtml(step: Step): string {
 
 .question-block { border-color: rgba(245, 158, 11, 0.3); }
 .question-block .pending-block-header { background: rgba(245, 158, 11, 0.08); color: var(--warn); }
+.perm-question { font-size: 15px; line-height: 1.6; color: var(--text-1); white-space: pre-wrap; }
+.perm-question-input { margin-top: 10px; }
+.perm-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.perm-option-card {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; border-radius: 8px;
+  border: 1.5px solid var(--border-soft, #e0e0e6);
+  background: var(--surface, #fff); cursor: pointer;
+  transition: all 0.15s ease; flex: 1 1 calc(50% - 4px); min-width: 140px;
+}
+.perm-option-card:hover { border-color: var(--accent, #8b5cf6); background: var(--surface-hover, #f5f5f5); }
+.perm-option-card.selected { border-color: var(--accent, #8b5cf6); background: rgba(139, 92, 246, 0.06); }
+.perm-option-check { flex-shrink: 0; }
+.perm-checkbox {
+  width: 16px; height: 16px; border-radius: 4px;
+  border: 1.5px solid var(--border-soft, #c0c0c8);
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s ease; color: #fff;
+}
+.perm-checkbox.checked { background: var(--accent, #8b5cf6); border-color: var(--accent, #8b5cf6); }
+.perm-checkbox svg { width: 11px; height: 11px; }
+.perm-radio {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 1.5px solid var(--border-soft, #c0c0c8);
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s ease;
+}
+.perm-radio.checked { border-color: var(--accent, #8b5cf6); }
+.perm-radio-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent, #8b5cf6); }
+.perm-option-text { font-size: 14px; color: var(--text-1); line-height: 1.4; }
 .permission-block { border-color: rgba(139, 92, 246, 0.3); }
 .permission-block .pending-block-header { background: rgba(139, 92, 246, 0.08); color: var(--accent); }
 

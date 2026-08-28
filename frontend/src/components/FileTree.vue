@@ -155,7 +155,7 @@ async function load(path = '', silent = false) {
     // tasks/ 是后台任务运行目录,由右侧抽屉「任务」标签专门管理,同样从文件树隐藏。
     // jobs/ 保留展示:里面是定时任务执行报告(report.md)与日志,供用户直接查看。
     nodes.value = all.filter(
-      (n) => n.name !== '.git' && n.name !== '.opencode' && n.name !== '.gitignore' && n.name !== 'tasks',
+      (n) => n.name !== '.git' && n.name !== '.opencode' && n.name !== '.gitignore' && n.name !== 'tasks' && n.name !== '.sandbox-probe',
     )
     currentPath.value = path
     // 技能模式:读取技能目录的 SKILL.md 元信息(图标/友好名称),仅在根目录执行

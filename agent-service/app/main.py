@@ -165,7 +165,30 @@ def stream(user_id: str, body: InvokeRequest) -> StreamingResponse:
                         hreq = getattr(payload, "value", payload)
                         logger.info("[%s][%s] hitl interrupt: %s",
                                     user_id, body.thread_id, str(hreq)[:200])
-                        yield _sse("permission", hreq if isinstance(hreq, dict) else {})
+                        # 检查是否为 ask_user 工具的提问
+                        tool_name = ""
+                        tool_args = {}
+                        if isinstance(hreq, dict):
+                            action_requests = hreq.get("action_requests", [])
+                            if action_requests:
+                                req = action_requests[0]
+                                tool_name = req.get("tool_name", "")
+                                tool_args = req.get("args", {})
+                        if tool_name == "ask_user":
+                            # agent 向用户提问:提取问题内容,发送 question 事件
+                            question = tool_args.get("question", "请提供更多信息")
+                            options_str = tool_args.get("options", "")
+                            multiple = tool_args.get("multiple", "false") == "true"
+                            yield _sse("question", {
+                                "id": hreq.get("id", "") if isinstance(hreq, dict) else "",
+                                "question": question,
+                                "tool": "ask_user",
+                                "options": [o.strip() for o in options_str.split("|") if o.strip()] if options_str else [],
+                                "multiple": multiple,
+                            })
+                        else:
+                            # 普通 HITL 审批
+                            yield _sse("permission", hreq if isinstance(hreq, dict) else {})
                         return
                     for out in _emit_update(value, user_id, emitted_tools):
                         yield out

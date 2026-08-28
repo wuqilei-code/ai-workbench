@@ -314,9 +314,17 @@ public class ChatMessageService {
     }
 
     /** 用户处置人工确认:转发决策给桥,续跑被中断的生成。 */
-    public boolean resumePermission(Long sessionId, Long userId, String requestId, String decision) {
+    public boolean resumePermission(Long sessionId, Long userId, String requestId, String decision, String answer) {
         ChatSession s = chatSessionService.getOwned(sessionId, userId);
-        return agentStreamBridge.resumePermission(s.getAgentSessionId(), requestId, decision);
+        return agentStreamBridge.resumePermission(s.getAgentSessionId(), requestId, decision, answer);
+    }
+
+    /** 前端提交回复发现已失效时,清除数据库中的 pendingPermission,防止刷新后重现。 */
+    public void clearPendingPermissionBySession(Long sessionId, Long userId, String requestId) {
+        ChatSession s = chatSessionService.getOwned(sessionId, userId);
+        if (s != null) {
+            clearPendingPermission(s.getAgentSessionId(), requestId);
+        }
     }
 
     /**

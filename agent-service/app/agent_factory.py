@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # 强制规范化路径,确保 "/" → "/workspace/",裸路径补 "/workspace/" 前缀。
 # ---------------------------------------------------------------------------
 
-_KNOWN_PREFIXES = ("/workspace/", "/skills/")
+_KNOWN_PREFIXES = ("/workspace/", "/skills/", "/skills")
 
 
 def _normalize_fs_path(path: str) -> str:
@@ -34,6 +34,9 @@ def _normalize_fs_path(path: str) -> str:
     # "/" 或 "/workspace" (无尾斜杠) → 工作区根
     if path == "/" or path == "/workspace":
         return "/workspace/"
+    # "/skills" (无尾斜杠) → 技能根
+    if path == "/skills":
+        return "/skills/"
     # 已有已知前缀,原样返回
     for pfx in _KNOWN_PREFIXES:
         if path.startswith(pfx):
@@ -51,6 +54,17 @@ class _PathNormalizingProxy:
     def __init__(self, inner: CompositeBackend) -> None:
         # 使用 object.__setattr__ 避免触发 __setattr__ 递归
         object.__setattr__(self, "_inner", inner)
+
+    # 让 isinstance(proxy, CompositeBackend) 返回 True,
+    # 否则 deepagents is_backend_sandbox_capable() 检查失败,
+    # execute 工具不可用("Execution not available...SandboxBackendProtocol")。
+    @property
+    def __class__(self):
+        return CompositeBackend
+
+    @property
+    def default(self):
+        return self._inner.default
 
     # --- 路径敏感操作:规范化后委托 ---
     def ls(self, path: str):
@@ -134,6 +148,7 @@ from app import config
 from app import workspace as ws
 from app.browser import build_browser_tools
 from app.memory_tool import build_memory_tools
+from app.question_tool import build_question_tools
 from app.skill_tool import ReadOnlyBackend, SelectedSkillsBackend, build_skill_tools
 from app.widget_tool import build_widget_tools
 
@@ -308,6 +323,12 @@ def _build_interrupt_on() -> dict | None:
             "description": "创建或更新用户技能库(写入 SKILL.md 并入库),需用户允许后执行。",
             "when": lambda req: True,
         },
+        # agent 向用户提问以获取补充信息
+        "ask_user": {
+            "allowed_decisions": ["approve", "reject"],
+            "description": "agent 需要向您提问以获取更多信息,请回答后继续。",
+            "when": lambda req: True,
+        },
     }
 
 
@@ -356,6 +377,13 @@ _DEFAULT_SYSTEM_PROMPT = (
     "记忆会跨会话持久化。当用户提到重要偏好/习惯/需求时主动记录。"
     "记忆超过 4KB 时自动压缩(保留最近 20 条,旧条目摘要化)。"
     "可用 read_memory 查看当前记忆,compress_memory 手动压缩,clear_section 清空分区。"
+    "\n\n向用户提问:当用户请求信息不完整、需要确认细节、或有多种实现方式需要选择时,"
+    "使用 ask_user 工具向用户提问。提问要具体明确。"
+    "如果有明确的几个选项,用 options 参数传入选项(用 | 分隔,如 options=\"Python|JavaScript|都可以\")。"
+    "需要用户选多个时设 multiple=\"true\"。没有固定选项时留空 options,用户自由输入。"
+    "只在真正需要用户输入时才提问,不要用提问代替思考。"
+    "\n\n不要主动创建测试/示例文件(如 hello.docx、test.py、demo 等),除非用户明确要求。"
+    "首次对话时直接回应用户需求,不要用生成文件来\u201c演示能力\u201d。"
 )
 
 
@@ -398,7 +426,7 @@ class AgentManager:
         agent = create_deep_agent(
             model=_build_model(),
             tools=list(extra_tools or []) + build_browser_tools(user_id) + build_skill_tools(user_id)
-            + build_widget_tools(user_id) + build_memory_tools(user_id),
+            + build_widget_tools(user_id) + build_memory_tools(user_id) + build_question_tools(),
             system_prompt=effective_prompt,
             backend=backend,
             # 技能不走 deepagents 内置 skills 参数(它每线程只加载一次);改用强制重载中间件,

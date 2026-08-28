@@ -136,10 +136,11 @@ public class AgentStreamBridge {
      *
      * @param sessionId 会话外部 id
      * @param requestId 待确认请求 id(permission.asked 下发)
-     * @param decision  approve | reject
+     * @param decision  approve | reject | reply
+     * @param answer    用户回答内容(reply 时必填)
      * @return 是否是有效的暂停态并被恢复
      */
-    public boolean resumePermission(String sessionId, String requestId, String decision) {
+    public boolean resumePermission(String sessionId, String requestId, String decision, String answer) {
         TurnStream ts = streams.get(sessionId);
         if (ts == null || !ts.pausedOnPermission) {
             return false;
@@ -157,6 +158,9 @@ public class AgentStreamBridge {
         ObjectNode d = objectMapper.createObjectNode();
         if ("approve".equals(decision)) {
             d.put("type", "approve");
+        } else if ("reply".equals(decision)) {
+            d.put("type", "approve");
+            d.put("output", answer != null ? answer : "");
         } else {
             d.put("type", "reject");
             d.put("message", "用户拒绝了该操作");
@@ -386,6 +390,43 @@ public class AgentStreamBridge {
                     hub.dispatch(ts.sessionId, "permission.asked", perm);
                     log.info("permission.asked session={} requestId={} tool={}",
                             ts.sessionId, requestId, toolName);
+                }
+                case "question" -> {
+                    // agent 向用户提问:与 permission 类似,但 allowed 只有 reply
+                    String question = payload.path("question").asText("请提供更多信息");
+                    String requestId = "perm-" + UUID.randomUUID();
+                    ts.pausedOnPermission = true;
+                    ts.pendingPermissionRequestId = requestId;
+                    // 提取 options 和 multiple 字段
+                    JsonNode optionsNode = payload.path("options");
+                    boolean multiple = payload.path("multiple").asBoolean(false);
+                    try {
+                        ObjectNode argsNode = objectMapper.createObjectNode();
+                        argsNode.put("question", question);
+                        argsNode.set("options", optionsNode);
+                        argsNode.put("multiple", multiple);
+                        chatMessageService.upsertPendingPermission(
+                                ts.sessionId, ts.assistantMessageId, requestId,
+                                "ask_user",
+                                argsNode.toString(),
+                                question,
+                                java.util.List.of("reply"));
+                    } catch (Exception e) {
+                        log.warn("persist pending question failed (session={}): {}", ts.sessionId, e.toString());
+                    }
+                    ObjectNode perm = objectMapper.createObjectNode();
+                    perm.put("id", requestId);
+                    perm.put("name", "ask_user");
+                    ObjectNode qArgs = objectMapper.createObjectNode();
+                    qArgs.put("question", question);
+                    qArgs.set("options", optionsNode);
+                    qArgs.put("multiple", multiple);
+                    perm.set("args", qArgs);
+                    perm.put("description", question);
+                    ArrayNode allowed = perm.putArray("allowed");
+                    allowed.add("reply");
+                    hub.dispatch(ts.sessionId, "permission.asked", perm);
+                    log.info("question session={} requestId={} options={}", ts.sessionId, requestId, optionsNode);
                 }
                 case "done" -> {
                     hub.dispatch(ts.sessionId, "done", payload);

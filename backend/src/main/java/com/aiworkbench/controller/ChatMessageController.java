@@ -120,18 +120,26 @@ public class ChatMessageController {
         return R.ok(chatMessageService.abort(id, SecurityUtil.currentUserId()));
     }
 
-    /** 人工确认(HITL):允许/拒绝危险操作,续跑被中断的生成。 */
+    /** 人工确认(HITL):允许/拒绝危险操作,或回答 agent 提问,续跑被中断的生成。 */
     @PostMapping("/permission/{requestId}/reply")
     @AuditLog(action = "处置权限确认", targetSpel = "#id")
     public R<Boolean> replyPermission(@PathVariable Long id,
                                       @PathVariable String requestId,
                                       @RequestBody Map<String, String> body) {
         String decision = body != null ? body.get("decision") : null;
-        if (!"approve".equals(decision) && !"reject".equals(decision)) {
+        String answer = body != null ? body.get("answer") : null;
+        if (!"approve".equals(decision) && !"reject".equals(decision) && !"reply".equals(decision)) {
             throw new com.aiworkbench.common.BusinessException(
-                    com.aiworkbench.common.ResultCode.BAD_REQUEST.getCode(), "decision 只能为 approve 或 reject");
+                    com.aiworkbench.common.ResultCode.BAD_REQUEST.getCode(), "decision 只能为 approve、reject 或 reply");
         }
-        return R.ok(chatMessageService.resumePermission(id, SecurityUtil.currentUserId(), requestId, decision));
+        return R.ok(chatMessageService.resumePermission(id, SecurityUtil.currentUserId(), requestId, decision, answer));
+    }
+
+    /** 清除过期/失效的待确认请求(前端提交回复发现已失效时调用),防止刷新后重现。 */
+    @PostMapping("/permission/{requestId}/clear")
+    public R<Boolean> clearPermission(@PathVariable Long id, @PathVariable String requestId) {
+        chatMessageService.clearPendingPermissionBySession(id, SecurityUtil.currentUserId(), requestId);
+        return R.ok(true);
     }
 
     /**

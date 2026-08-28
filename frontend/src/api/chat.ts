@@ -34,9 +34,12 @@ export const chatApi = {
   sendMessage: (id: number, data: { text: string; providerId?: string; modelId?: string }) =>
     http.post(`/chat/sessions/${id}/messages`, data),
   abort: (id: number) => http.post<boolean>(`/chat/sessions/${id}/abort`).then(unwrap),
-  /** 人工确认(HITL):允许/拒绝危险操作,续跑被中断的生成 */
-  replyPermission: (sessionId: number, requestId: string, decision: 'approve' | 'reject') =>
-    http.post<boolean>(`/chat/sessions/${sessionId}/permission/${requestId}/reply`, { decision }).then(unwrap),
+  /** 人工确认(HITL):允许/拒绝危险操作,或回答 agent 提问,续跑被中断的生成 */
+  replyPermission: (sessionId: number, requestId: string, decision: 'approve' | 'reject' | 'reply', answer?: string) =>
+    http.post<boolean>(`/chat/sessions/${sessionId}/permission/${requestId}/reply`, { decision, answer }).then(unwrap),
+  /** 清除过期/失效的待确认请求(防止刷新后重现) */
+  clearPermission: (sessionId: number, requestId: string) =>
+    http.post<boolean>(`/chat/sessions/${sessionId}/permission/${requestId}/clear`).then(unwrap),
   listTemplates: () => http.get<TemplateVo[]>('/chat/templates').then(unwrap),
   /** 首页展示的模板(用户启用的) */
   homeTemplates: () => http.get<TemplateVo[]>('/chat/templates/home').then(unwrap),

@@ -28,6 +28,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 COPY skills /app/skills
+RUN find /app -name '*.py' -exec sed -i 's/\r$//' {} +
 
 EXPOSE 8000
 
