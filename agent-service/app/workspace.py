@@ -41,6 +41,9 @@ def agent_md(user_id: str) -> Path:
 def ensure_user_dirs(user_id: str) -> None:
     for p in (workspace_root(user_id), skills_root(user_id), memory_root(user_id)):
         p.mkdir(parents=True, exist_ok=True)
+    # 创建标准文件分类子目录
+    for sub in ("widgets", "reports", "charts", "scripts", "data", "uploads", "tpl"):
+        (workspace_root(user_id) / sub).mkdir(parents=True, exist_ok=True)
     seed_global_skills(user_id)
 
 
