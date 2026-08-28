@@ -133,6 +133,7 @@ from langchain_openai import ChatOpenAI
 from app import config
 from app import workspace as ws
 from app.browser import build_browser_tools
+from app.memory_tool import build_memory_tools
 from app.skill_tool import ReadOnlyBackend, SelectedSkillsBackend, build_skill_tools
 from app.widget_tool import build_widget_tools
 
@@ -351,6 +352,10 @@ _DEFAULT_SYSTEM_PROMPT = (
     "按需使用 browser_get_text(读页面文字)、browser_click/browser_click_text(点击)、"
     "browser_type(输入)、browser_scroll(滚动)、browser_go_back(返回)、"
     "browser_screenshot(截图,仅当用户要求截图时用;截图用 [结果文件] 标记交付)。默认不截图。"
+    "\n\n用户记忆管理:使用 update_memory 记录用户的重要信息(偏好、习惯、关键事实),"
+    "记忆会跨会话持久化。当用户提到重要偏好/习惯/需求时主动记录。"
+    "记忆超过 4KB 时自动压缩(保留最近 20 条,旧条目摘要化)。"
+    "可用 read_memory 查看当前记忆,compress_memory 手动压缩,clear_section 清空分区。"
 )
 
 
@@ -393,7 +398,7 @@ class AgentManager:
         agent = create_deep_agent(
             model=_build_model(),
             tools=list(extra_tools or []) + build_browser_tools(user_id) + build_skill_tools(user_id)
-            + build_widget_tools(user_id),
+            + build_widget_tools(user_id) + build_memory_tools(user_id),
             system_prompt=effective_prompt,
             backend=backend,
             # 技能不走 deepagents 内置 skills 参数(它每线程只加载一次);改用强制重载中间件,
