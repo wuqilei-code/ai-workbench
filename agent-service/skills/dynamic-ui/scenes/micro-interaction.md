@@ -126,9 +126,22 @@ root.querySelectorAll('[data-action]').forEach(el => {
 
 ## Reference materials
 
+Check `templates/manifest.json` for `scene: micro-interaction` ready materials and read the selected `templates/<id>/template.md` before adapting. The ready interactive materials:
+
 | Data relationship / Intent | Reference material | Usage notes |
 |---|---|---|
-| — | No dedicated template | This scene is custom-built per specific interaction requirement using HTML/JS fragments |
+| Ordered stages / cyclic / loop process | `stepper-guide` | `● ○ ○` indicator, prev/next, wraps from last to first. Use for loops/cycles — never draw a loop as a ring or return arc. |
+| Switch between complementary views (overview/detail/compare) | `tab-switch` | `role=tablist` tabs switching hidden panels; keyboard arrow navigation. |
+| Filter a short list by keyword | `live-filter` | Single text input filters rows live; empty-state message on no match. |
+| Toggle options, see a live computed total | `live-calc` | Checkbox rows drive a running total (and optional progress bar); rounded numbers with units. |
+
+When no ready interactive material matches, build custom from HTML/JS fragments, still choosing one fallback primitive and staying on the token/typography/spacing/radius/theme contract.
+
+## Routing rules (borrowed intent)
+
+- **Cyclic / loop processes** (a Krebs cycle, an event loop, a recurring refresh): route to `stepper-guide` and render the stages as an HTML stepper with `● ○ ○` indicators. Do NOT draw a cycle as a ring diagram or a static return-arc SVG.
+- **Database schema / ERD**: express as mermaid.js `erDiagram` markup in the surrounding text/report, not as a hand-drawn SVG entity diagram. (Inline widget diagrams stay SVG for flow/structure/mechanism; a schema belongs to report-style output, not a dynamic widget.)
+- **Single-step linear sequence** (no wrap-around intended): `stepper-guide` is still acceptable for an ordered walkthrough; set the wrap-around as the loop-encoding only when the process truly repeats.
 
 ## Composition guidelines
 

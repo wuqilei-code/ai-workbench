@@ -60,6 +60,8 @@ const hasVisibleOutput = computed(() => {
 
 const showWorkingHint = computed(() =>
   turnInProgress.value &&
+  // 思考块头部已在转 spinner 时不再重复显示等待行
+  props.turn.steps.length === 0 &&
   (chat.runningActivity?.kind === 'tool' || !hasVisibleOutput.value),
 )
 
@@ -91,6 +93,14 @@ function displayContent(step: Step | null): string {
     return chat.liveReasoning || step.narration || ''
   }
   return step.narration || ''
+}
+
+/** 步骤可见文本:正文类剥离 [结果文件]/[WIDGET_FILE] 标记行(标记已单独渲染为
+ *  组件/交付卡),避免"只剩标记行"的步骤渲染出一个右侧无内容的孤立图标行。 */
+function stepDisplayText(step: Step | null): string {
+  if (!step) return ''
+  const raw = displayContent(step)
+  return step.kind === 'reason' ? raw : stripDeliverableMarkers(raw)
 }
 
 /** 流式期间最终答案的实时文本:非 simpleMode 下 displayContent 只读 step.narration,
@@ -131,13 +141,6 @@ function toggleReason(i: number) {
   reasonOpen.value[k] = !isReasonOpen(props.turn.steps[i], i)
 }
 
-/** 已挂载的推理正文容器(用于流式吸底滚动) */
-const reasonBodies = new Map<string, HTMLElement>()
-function setReasonBody(key: string, el: unknown) {
-  if (el) reasonBodies.set(key, el as HTMLElement)
-  else reasonBodies.delete(key)
-}
-
 /** 步骤时间线容器(.timeline,限高 420px 内部滚动):流式期间若用户未上翻则吸底跟随最新步骤 */
 const timelineEl = ref<HTMLElement | null>(null)
 let timelineStuck = true
@@ -151,7 +154,7 @@ function scrollTimelineToBottom() {
   if (!el || !timelineStuck) return
   if (el.scrollHeight > el.clientHeight) el.scrollTop = el.scrollHeight
 }
-/** 活跃推理段内容增长时,把展开的推理框滚到底部(读 displayContent,以感知 liveReasoning) */
+/** 活跃推理段内容增长时,时间线吸底(读 displayContent,以感知 liveReasoning) */
 const activeReasonLen = computed(() => {
   const s = props.turn.steps.find((x) => x.kind === 'reason' && isStepActive(x))
   return s ? displayContent(s).length : 0
@@ -159,12 +162,6 @@ const activeReasonLen = computed(() => {
 watch(activeReasonLen, async () => {
   await nextTick()
   scrollTimelineToBottom()
-  for (const [key, el] of reasonBodies) {
-    const idx = Number(key.slice(key.lastIndexOf('-r') + 2))
-    const st = props.turn.steps[idx]
-    if (!st || !isReasonOpen(st, idx)) continue
-    el.scrollTop = el.scrollHeight
-  }
 })
 // 新步骤(工具/更多推理段)追加进时间线时也吸底,保证流式中最新输出无需手动滚动
 watch(() => props.turn.steps.length, () => {
@@ -222,6 +219,28 @@ const faMessageId = computed(() => props.turn.finalAnswer?.message.id ?? 0)
 
 /** 最终答案消息时间(多步气泡顶部) */
 const faTime = computed(() => props.turn.finalAnswer?.message.createdAt || '')
+
+/** 本轮生成耗时(秒)。
+ *  1) 当前会话内:store 在流式结束时按 assistant 消息 id 记录(从发送时刻精确计时)
+ *  2) 刷新后(内存态丢失):读后端落库的 parts.elapsedSec(流开始→定稿的真实耗时)。
+ *     注意不能用 createdAt 差值——assistant 消息在流式期间即已首次落库,其时间戳≈流开始 */
+const turnElapsedSec = computed(() => {
+  const msgs = [...props.turn.steps.map((s) => s.message)]
+  if (props.turn.finalAnswer) msgs.push(props.turn.finalAnswer.message)
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i]
+    const id = m.agentMessageId
+    if (id && chat.turnElapsed[id]) return chat.turnElapsed[id]
+    const p = m.parts as { elapsedSec?: number } | null
+    if (p && typeof p.elapsedSec === 'number' && p.elapsedSec > 0) return p.elapsedSec
+  }
+  return 0
+})
+const elapsedText = computed(() => {
+  const s = turnElapsedSec.value
+  if (!s) return ''
+  return s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s` : `${s}s`
+})
 
 const faStarred = computed(() =>
   props.sessionId != null && faMessageId.value > 0
@@ -327,9 +346,9 @@ function displayToolCalls(step: Step | null): ToolCall[] {
   )
 }
 
-/** 步骤是否值得展示:无解说、无可显示工具(如 pure_show_widget 已转组件区/输出为空被过滤)的步骤整行隐藏 */
+/** 步骤是否值得展示:无可见解说(标记行已剥离)、无可显示工具(如 pure_show_widget 已转组件区/输出为空被过滤)的步骤整行隐藏 */
 function stepVisible(step: Step): boolean {
-  if (displayContent(step).trim()) return true
+  if (stepDisplayText(step).trim()) return true
   return displayToolCalls(step).length > 0
 }
 
@@ -345,7 +364,7 @@ const displayBlocks = computed<TimelineBlock[]>(() => {
     const step = props.turn.steps[i]
     if (!stepVisible(step)) continue
     const tools = displayToolCalls(step)
-    const isPureTool = !displayContent(step).trim() && tools.length > 0
+    const isPureTool = !stepDisplayText(step).trim() && tools.length > 0
     if (!isPureTool) {
       raw.push({ type: 'step', step, index: i })
       continue
@@ -401,14 +420,21 @@ const turnPending = computed(() => {
 const permSubmitting = ref(false)
 const questionAnswer = ref('')
 const selectedOptions = ref<string[]>([])
-const questionOptions = computed<string[]>(() => {
+const OTHER_LABEL = '其他(自由输入)'
+const rawOptions = computed<string[]>(() => {
   const raw = turnPending.value?.tool?.args?.options
   if (!raw) return []
   if (Array.isArray(raw)) return raw
   if (typeof raw === 'string') return raw.split('|').map(s => s.trim()).filter(Boolean)
   return []
 })
+const questionOptions = computed<string[]>(() => {
+  if (!rawOptions.value.length) return []
+  if (rawOptions.value.some(o => o.startsWith('其他'))) return rawOptions.value
+  return [...rawOptions.value, OTHER_LABEL]
+})
 const questionMultiple = computed(() => turnPending.value?.tool?.args?.multiple || false)
+const isOtherSelected = computed(() => selectedOptions.value.includes(OTHER_LABEL))
 
 function toggleOption(opt: string) {
   if (questionMultiple.value) {
@@ -422,7 +448,9 @@ function toggleOption(opt: string) {
 
 function buildAnswer(): string {
   if (questionOptions.value.length) {
-    return selectedOptions.value.join(',')
+    const opts = selectedOptions.value.filter(o => o !== OTHER_LABEL)
+    if (isOtherSelected.value && questionAnswer.value.trim()) opts.push(questionAnswer.value.trim())
+    return opts.join(',')
   }
   return questionAnswer.value
 }
@@ -598,14 +626,24 @@ const thinkingStepCount = computed(() => {
   return Math.max(n, 1)
 })
 
-const thinkingHeader = computed(() =>
-  turnInProgress.value
-    ? `思考中… 已执行 ${thinkingStepCount.value} 步`
-    : `已折叠 ${thinkingStepCount.value} 步操作`,
-)
+const thinkingHeader = computed(() => {
+  const n = thinkingStepCount.value
+  if (turnInProgress.value) {
+    // 占位壳阶段(尚无任何真实思考/工具内容):只显示"思考中…"
+    return n > 1 || props.turn.steps.some((s) => stepDisplayText(s).trim())
+      ? `思考中… 已执行 ${n} 步`
+      : '思考中…'
+  }
+  // 定稿:耗时与步数合并为一行(不再用"已折叠"字样——展开后文案会与状态矛盾);
+  // 展开/收起状态由右侧 chevron 方向表达。
+  const parts: string[] = []
+  if (elapsedText.value) parts.push(`已完成 ${elapsedText.value}`)
+  if (n > 0) parts.push(`${n} 步操作`)
+  return parts.join(' · ') || '执行过程'
+})
 
 function stepHtml(step: Step): string {
-  return renderMarkdown(displayContent(step))
+  return renderMarkdown(stepDisplayText(step))
 }
 
 // (deepagents 无提问/权限环节:原 pending question/permission 收集与提交逻辑已移除)
@@ -649,12 +687,9 @@ function stepHtml(step: Step): string {
         </div>
         <div v-show="stepsOpen" class="timeline" :ref="(el) => (timelineEl = (el as HTMLElement))" @scroll="onTimelineScroll">
           <template v-for="(b, bi) in displayBlocks" :key="b.type + '-' + bi">
-          <!-- 单步骤块:思考/解说/含解说的工具步骤 -->
+          <!-- 单步骤块:思考/解说/含解说的工具步骤;节点统一为小圆点,含义由内容自表达 -->
           <div v-if="b.type === 'step'" class="tstep">
-            <span v-if="!displayToolCalls(b.step).length" class="tstep-icon" :class="{ dim: b.step.kind === 'reason' }">
-              <svg v-if="b.step.kind === 'reason'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 4.6L18 9l-4.2 1.4L12 15l-1.8-4.6L6 9l4.2-1.4L12 3z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15z"/></svg>
-              <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg>
-            </span>
+            <span class="tstep-dot" :class="{ active: isStepActive(b.step) }" />
             <div class="tstep-body">
               <!-- 推理段:可折叠"思考"行,流式时限高滚动吸底,结束自动折叠,可点开回看 -->
               <div v-if="b.step.kind === 'reason' && displayContent(b.step)" class="reason-box">
@@ -670,14 +705,13 @@ function stepHtml(step: Step): string {
                 </div>
                 <div
                   v-show="isReasonOpen(b.step, b.index)"
-                  :ref="(el) => setReasonBody(reasonKey(b.index), el)"
                   class="reason-body"
                 ><TypeReveal v-if="isStepActive(b.step)" :text="displayContent(b.step)" :dim-tail="0" :max-chars="1200" active /><template v-else>{{ displayContent(b.step) }}</template></div>
               </div>
               <div
-                v-else-if="displayContent(b.step)"
+                v-else-if="stepDisplayText(b.step)"
                 class="step-narration"
-              ><TypeReveal v-if="isStepActive(b.step)" :text="displayContent(b.step)" :dim-tail="0" active /><template v-else v-html="stepHtml(b.step)" /></div>
+              ><TypeReveal v-if="isStepActive(b.step)" :text="stepDisplayText(b.step)" :dim-tail="0" active /><span v-else class="narration-md" v-html="stepHtml(b.step)" /></div>
               <div v-if="displayToolCalls(b.step).length" class="tool-calls">
                 <ToolCallItem
                   v-for="tc in displayToolCalls(b.step)"
@@ -690,6 +724,7 @@ function stepHtml(step: Step): string {
           </div>
           <!-- 同名工具组块:连续同类操作收纳为一行,点击展开逐条 -->
           <div v-else class="tstep">
+            <span class="tstep-dot" />
             <div class="tstep-body">
               <div class="tool-group-head" @click="toggleGroup(bi)">
                 <span class="group-name">{{ b.name }}</span>
@@ -716,9 +751,7 @@ function stepHtml(step: Step): string {
             v-if="turn.finalAnswer && displayToolCalls(turn.finalAnswer).length"
             class="tstep"
           >
-            <span class="tstep-icon">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg>
-            </span>
+            <span class="tstep-dot" />
             <div class="tstep-body">
               <div class="tool-calls" v-if="displayToolCalls(turn.finalAnswer).length">
                 <ToolCallItem
@@ -847,6 +880,15 @@ function stepHtml(step: Step): string {
                   <span class="perm-option-text">{{ opt }}</span>
                 </div>
               </div>
+              <div v-if="isOtherSelected" class="perm-other-input">
+                <n-input
+                  v-model:value="questionAnswer"
+                  type="textarea"
+                  placeholder="请输入您的回答…"
+                  :autosize="{ minRows: 2, maxRows: 6 }"
+                  @keydown.enter.ctrl="onPerm('reply')"
+                />
+              </div>
             </template>
             <template v-else>
               <n-input
@@ -860,7 +902,7 @@ function stepHtml(step: Step): string {
           </div>
           <div class="perm-actions">
             <template v-if="isQuestion">
-              <n-button size="small" :loading="permSubmitting" :disabled="permSubmitting || (!questionOptions.length && !questionAnswer.trim()) || (questionOptions.length && !selectedOptions.length)" type="primary" @click="onPerm('reply')">
+              <n-button size="small" :loading="permSubmitting" :disabled="permSubmitting || (!questionOptions.length && !questionAnswer.trim()) || (questionOptions.length && !selectedOptions.length) || (isOtherSelected && !questionAnswer.trim())" type="primary" @click="onPerm('reply')">
                 提交回答
               </n-button>
             </template>
@@ -976,7 +1018,19 @@ function stepHtml(step: Step): string {
   margin-top: 10px;
 }
 .author { font-size: 13px; font-weight: 600; color: var(--text); }
-.content { position: relative; margin-top: 10px; font-size: 14px; line-height: 1.8; letter-spacing: 0.01em; color: var(--text); }
+.content { position: relative; margin-top: 10px; font-size: 15px; line-height: 1.75; letter-spacing: 0.01em; color: var(--text); }
+/* 输出正文标题:参考 Trae 风格,加大加粗、与正文拉开层级 */
+.content :deep(h1),
+.content :deep(h2),
+.content :deep(h3),
+.content :deep(h4) { margin: 16px 0 8px; font-weight: 700; color: var(--text); line-height: 1.4; }
+.content :deep(h1:first-child),
+.content :deep(h2:first-child),
+.content :deep(h3:first-child) { margin-top: 0; }
+.content :deep(h1) { font-size: 20px; }
+.content :deep(h2) { font-size: 18px; }
+.content :deep(h3) { font-size: 16px; }
+.content :deep(strong) { font-weight: 650; }
 /* 流式中的答案:markdown 实时渲染,尾部一行渐隐(隐藏光效),随输出推进自然固化 */
 .md-tail-dim {
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2.2em), rgba(0, 0, 0, 0.25) calc(100% - 0.5em));
@@ -1093,34 +1147,47 @@ function stepHtml(step: Step): string {
 .timeline::-webkit-scrollbar { width: 4px; }
 .timeline::-webkit-scrollbar-thumb { background: transparent; border-radius: 2px; }
 .timeline:hover::-webkit-scrollbar-thumb { background: var(--border); }
-.timeline::before {
-  content: '';
-  position: absolute;
-  left: 7px;
-  top: 16px;
-  bottom: 16px;
-  width: 1px;
-  background: var(--border);
-}
+/* 连接线逐步骤自绘(而非容器级 ::before):时间线限高内滚动时,
+   容器级绝对线只覆盖可视框高度,长内容滚动后中后段会断线 */
 .tstep {
   position: relative;
   display: flex;
   gap: 11px;
   padding: 4px 0;
 }
-.tstep-icon {
+.tstep::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+}
+/* 线从首个圆点中心(约 16px)起,到末个圆点中心止 */
+.tstep:first-child::before { top: 16px; }
+.tstep:last-child::before { bottom: auto; top: 0; height: 16px; }
+/* 时间线节点:统一小圆点(含义由内容自表达:思考行/工具 chip/解说文本),
+   不再按步骤类型混用星号/终端等图标,视觉更整齐 */
+.tstep-dot {
   width: 15px; height: 15px;
   margin-top: 2.5px;
   flex-shrink: 0;
-  color: var(--text-3);
-  background: var(--bg);
-  border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
+  display: flex; align-items: flex-start; justify-content: center;
   position: relative; z-index: 1;
+}
+.tstep-dot::after {
+  content: '';
+  width: 7px; height: 7px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--border-strong, #9aa0aa);
   box-shadow: 0 0 0 3px var(--bg);
 }
-.tstep-icon svg { width: 11px; height: 11px; }
-.tstep-icon.dim { color: var(--text-4); }
+.tstep-dot.active::after {
+  background: var(--accent);
+  animation: chip-pulse 1.6s ease-in-out infinite;
+}
 .tstep-body { flex: 1; min-width: 0; padding-top: 1px; }
 /* 同名工具组:一行收纳,点击展开逐条 */
 .tool-group-head {
@@ -1180,16 +1247,10 @@ function stepHtml(step: Step): string {
   font-size: 12px; line-height: 1.6;
   color: var(--text-2); font-style: italic;
   white-space: pre-wrap; word-break: break-word;
-  max-height: 220px; overflow-y: auto;
+  /* 不再内嵌滚动:滚动统一交给外层 .timeline,避免双滚动条 */
   background: var(--surface);
   border-radius: 8px;
-  scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
 }
-.reason-body:hover { scrollbar-color: var(--border) transparent; }
-.reason-body::-webkit-scrollbar { width: 6px; }
-.reason-body::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
-.reason-body:hover::-webkit-scrollbar-thumb { background: var(--border); }
 .reason-body .cursor { margin-left: 2px; }
 .rc-tag {
   font-size: 12px; font-style: normal; font-weight: 500;
@@ -1282,6 +1343,7 @@ function stepHtml(step: Step): string {
 .perm-radio.checked { border-color: var(--accent, #8b5cf6); }
 .perm-radio-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent, #8b5cf6); }
 .perm-option-text { font-size: 14px; color: var(--text-1); line-height: 1.4; }
+.perm-other-input { margin-top: 8px; width: 100%; }
 .permission-block { border-color: rgba(139, 92, 246, 0.3); }
 .permission-block .pending-block-header { background: rgba(139, 92, 246, 0.08); color: var(--accent); }
 

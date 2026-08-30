@@ -217,6 +217,12 @@ Read the user's intent, then route to ONE scene file:
 | Explain principles, physical/abstract mechanisms, causal chains | `scenes/mechanism-explanation.md` |
 | Local interaction demos, parameter switching, state changes | `scenes/micro-interaction.md` |
 
+Routing rules for borrowed intent:
+
+- **Cyclic / loop processes** (a Krebs cycle, an event loop, a recurring refresh process) route to `micro-interaction` and render as an HTML stepper (`stepper-guide`, `● ○ ○` indicators) that wraps from last step to first. Never draw a loop as a ring diagram or a static return-arc SVG.
+- **Database schema / ERD** is a report-style deliverable: express it as mermaid.js `erDiagram` markup, not a hand-drawn SVG entity diagram. A schema is not a compact inline dynamic widget.
+- **Ordered walkthroughs** (setup steps, decision trees, an explicit multi-stage sequence) route to `micro-interaction`/`stepper-guide` when advancing one stage at a time is clearer than a static diagram.
+
 Workflow:
 These workflow steps are internal. Do not narrate them to the user.
 
@@ -232,7 +238,7 @@ These workflow steps are internal. Do not narrate them to the user.
 10. Fallback uses neutral structure first, then brand/chart-series color for focus or peer categories. Semantic colors are exceptions for explicit status/risk encodings only. Keep broad card/panel backgrounds neutral, put color in marks/borders/tags/focal paths/icons/labels, and do not combine fallback primitives unless each block answers a distinct named question.
 11. If fallback cannot fit without tiny text, nested scrolling, clipped labels, overlapping connectors, connector lines through text, hidden overflow, more than four peer chart colors plus Other, or more than two unrelated visual blocks, answer in Markdown or ask for narrower scope instead.
 
-Ready material intent map: `line-trend` trend; `bar-chart-multiple` grouped comparison; `scatter-chart` correlation/outliers; `gantt-chart` schedule/critical path; `funnel-bar-chart` conversion drop-off; `sankey-chart` weighted staged flow; `heatmap-chart` density; `pie-donut-text` composition with total; `bar-stacked-legend` stacked contribution; `pie-chart-label-list` labeled part-to-whole; `radar-chart-legend` and `radar-chart-lines-only` profile comparison; `comparison-cards` option trade-offs; `sequence-diagram` ordered calls; `tree-flow` hierarchy; `architecture-elements` architecture primitives.
+Ready material intent map: `line-trend` trend; `bar-chart-multiple` grouped comparison; `scatter-chart` correlation/outliers; `gantt-chart` schedule/critical path; `funnel-bar-chart` conversion drop-off; `sankey-chart` weighted staged flow; `heatmap-chart` density; `pie-donut-text` composition with total; `bar-stacked-legend` stacked contribution; `pie-chart-label-list` labeled part-to-whole; `radar-chart-legend` and `radar-chart-lines-only` profile comparison; `comparison-cards` option trade-offs; `sequence-diagram` ordered calls; `tree-flow` hierarchy; `architecture-elements` architecture primitives; `stepper-guide` ordered stages or cyclic/loop processes; `tab-switch` multi-view switching; `live-filter` keyword filtering of a short list; `live-calc` toggled options driving a live computed total.
 
 Template file contract: every ready material folder contains `template.md`, `widget-code.html`, and `fixture.json`. `template.md` documents reusable primitives, use/avoid boundaries, data shape, visual/interaction limits, boundary cases, assumptions, and acceptance checks. `widget-code.html` starts with `<style>`, includes content after styles, ends with `<script>` only when needed, avoids page shells, uses `data-dynamic-ui-widget` and `data-template="<template-id>"`, uses a stable root selector, and preserves fallback plus required interaction behavior. `fixture.json` is small, realistic, matches the data shape, and avoids private or production data.
 

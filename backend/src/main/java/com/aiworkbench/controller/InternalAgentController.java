@@ -14,6 +14,9 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+
 /**
  * agent-service 内部回调接口(供 create_skill 工具回写技能库)。
  * 鉴权:X-Internal-Token 必须与 app.internal-token 一致;未配置令牌时一律拒绝。
@@ -33,7 +36,9 @@ public class InternalAgentController {
                                       @RequestHeader(value = "X-Internal-Token", required = false) String token,
                                       @RequestBody UserSkillRequest req) {
         if (internalToken == null || internalToken.isBlank()
-                || token == null || !internalToken.equals(token)) {
+                || token == null
+                || !MessageDigest.isEqual(internalToken.getBytes(StandardCharsets.UTF_8),
+                        token.getBytes(StandardCharsets.UTF_8))) {
             return R.fail(ResultCode.FORBIDDEN);
         }
         return R.ok(userSkillService.upsertFromAgent(userId, req));

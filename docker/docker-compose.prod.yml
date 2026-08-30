@@ -1,39 +1,139 @@
 # ============================================================================
 # 生产/云服务器部署专用 compose(用已 load 的镜像,不再 build)
-# 用法:拷本文件到云服务器,先配置同目录 .env(参考仓库 docker/.env),然后
+# 用法:拷本文件到云服务器,先配置同目录 .env(参考仓库 docker/.env.example),然后
 #       docker compose -f docker-compose.prod.yml up -d
-# 前提:已 docker load 导入 ai-workbench-app 镜像;MySQL 使用宿主机/外部服务,
-#      通过 MYSQL_HOST 指定地址,不再使用容器 MySQL。
+# 前提:已 docker load 导入 ai-workbench-app / ai-workbench-agent-service / ai-workbench-sandbox
+#       三个镜像;所需环境变量与 dev 版一致(见 .env.example / docker-compose.yml)。
 # ============================================================================
 services:
   app:
-    image: ai-workbench-app:latest    # 已 docker load 导入的 app 镜像
-    image_pull_policy: never          # 禁止拉取,只用本地镜像(离线/内网友好)
+    image: ai-workbench-app:latest      # 已 docker load 导入的 app 镜像
+    image_pull_policy: never            # 禁止拉取,只用本地镜像(离线/内网友好)
     ports:
-      - "${APP_PORT:-8080}:80"        # 宿主机端口 -> 容器 80。可用 APP_PORT 覆盖
+      - "${APP_PORT:-8080}:80"          # 宿主机端口 -> 容器 80。可用 APP_PORT 覆盖
     environment:
-      # --- JWT / AES:生产务必在 .env 设随机密钥 ---
+      # -- 网关 ↔ agent-service(base/docker-compose.yml 同款,必须一致) --
+      DEEPAGENTS_BASE_URL: "${DEEPAGENTS_BASE_URL:-http://agent-service:8000}"
+      # --- 用户工作区 / uid 隔离 ---
+      WORKSPACE_ROOT: "${WORKSPACE_ROOT:-/workspace}"
+      WORKSPACE_PER_USER_DATA_ROOT: "${WORKSPACE_PER_USER_DATA_ROOT:-/data/users}"
+      WORKSPACE_UID_BASE: "${WORKSPACE_UID_BASE:-100000}"
+      # --- 定时任务(job 由 agent-service SSE 执行) ---
+      AGENT_JOBS_MAX_CONCURRENT: "${AGENT_JOBS_MAX_CONCURRENT:-1}"
+      AGENT_JOBS_TIMEOUT_MINUTES: "${AGENT_JOBS_TIMEOUT_MINUTES:-30}"
+      AGENT_JOBS_SWEEP_MS: "${AGENT_JOBS_SWEEP_MS:-5000}"
+      # --- JWT / AES / 注册 ---
       JWT_SECRET: "${JWT_SECRET:?set in .env}"
       JWT_TTL_MINUTES: "1440"
       APP_REGISTRATION_ENABLED: "${APP_REGISTRATION_ENABLED:-false}"
       APP_AES_KEY: "${APP_AES_KEY:?set in .env}"
-      # --- MySQL(本机/外部服务,非容器) ---
-      SPRING_DATASOURCE_URL: "jdbc:mysql://${MYSQL_HOST:?set in .env}:3306/ai_workbench?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8&useUnicode=true"
+      # --- 内部回调令牌(与 agent-service 一致) ---
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?set to a random secret in .env, shared with agent-service}
+      # --- MySQL(compose 内 mysql 服务;也可按需改为外部地址) ---
+      SPRING_DATASOURCE_URL: jdbc:mysql://${MYSQL_HOST:-mysql}:3306/ai_workbench?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8&useUnicode=true
       SPRING_DATASOURCE_USERNAME: aiworkbench
-      SPRING_DATASOURCE_PASSWORD: "${SPRING_DATASOURCE_PASSWORD:?set in .env}"
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:?set in .env}
     volumes:
       - workspace:/workspace
       - app-data:/data
-      # 网关经宿主机 docker 守护进程创建/回收每用户 agent 容器
+      - user-data:/data/users
       - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - default
+      - agents
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # deepagents 轨道:python agent-service(与 dev 版同参数)
+  agent-service:
+    image: ai-workbench-agent-service:latest
+    image_pull_policy: never
+    environment:
+      AGENT_MODEL: "${AGENT_MODEL:?set in .env}"
+      AGENT_MODEL_BASE_URL: "${AGENT_MODEL_BASE_URL:-}"
+      AGENT_MODEL_API_KEY: "${AGENT_MODEL_API_KEY:-}"
+      AGENT_WORKERS: "${AGENT_WORKERS:-4}"
+      AGENT_PG_POOL_MIN: "${AGENT_PG_POOL_MIN:-2}"
+      AGENT_PG_POOL_MAX: "${AGENT_PG_POOL_MAX:-10}"
+      AGENT_WS_ROOT: /shared-ws/users
+      AGENT_PG_DSN: "postgresql://aiworkbench:${POSTGRES_PASSWORD:-aiworkbench-pass}@postgres:5432/agent_workbench"
+      AGENT_HITL: "${AGENT_HITL:-true}"
+      AGENT_GLOBAL_SKILLS: /app/skills
+      BACKEND_INTERNAL_URL: "http://app:8080"
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?set to a random secret in .env, shared with app}
+      AGENT_SANDBOX_BACKEND: "${AGENT_SANDBOX_BACKEND:-docker}"
+      AGENT_SANDBOX_IMAGE: "${AGENT_SANDBOX_IMAGE:-ai-workbench-sandbox:latest}"
+      AGENT_SANDBOX_NETWORK: "${AGENT_SANDBOX_NETWORK:-true}"
+      AGENT_SANDBOX_NETWORK_NAME: "${AGENT_SANDBOX_NETWORK_NAME:-aiwb-agents}"
+      AGENT_SANDBOX_VOLUME_ROOT: "${AGENT_SANDBOX_VOLUME_ROOT:-/var/lib/docker/volumes/docker_workspace/_data/users}"
+      AGENT_SANDBOX_UID: "${AGENT_SANDBOX_UID:-10001}"
+      AGENT_SANDBOX_MEM_MB: "${AGENT_SANDBOX_MEM_MB:-2048}"
+      AGENT_SANDBOX_CPUS: "${AGENT_SANDBOX_CPUS:-1.0}"
+      AGENT_SANDBOX_PIDS: "${AGENT_SANDBOX_PIDS:-256}"
+      AGENT_SANDBOX_IDLE_TTL: "${AGENT_SANDBOX_IDLE_TTL:-1800}"
+      AGENT_SANDBOX_MAX_TIMEOUT: "${AGENT_SANDBOX_MAX_TIMEOUT:-120}"
+    volumes:
+      - user-data:/data/users
+      - workspace:/shared-ws
+      - /var/run/docker.sock:/var/run/docker.sock
+    security_opt:
+      - "no-new-privileges:true"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - default
       - agents
     restart: unless-stopped
 
+  # deepagents 持久化(线程 checkpoint + 跨线程 store)
+  postgres:
+    image: docker.m.daocloud.io/postgres:16-alpine
+    environment:
+      POSTGRES_USER: aiworkbench
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-aiworkbench-pass}"
+      POSTGRES_DB: agent_workbench
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aiworkbench -d agent_workbench"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  # 容器化 MySQL(见 dev 版说明;如需外部 MySQL 可自行替换本服务并调 MYSQL_HOST)
+  mysql:
+    image: docker.m.daocloud.io/mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set in .env}
+      MYSQL_DATABASE: ai_workbench
+      MYSQL_USER: aiworkbench
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set in .env}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
 volumes:
   workspace:
   app-data:
+  mysql-data:
+  user-data:
+  postgres-data:
 
 networks:
   agents:

@@ -79,6 +79,10 @@ Current implemented templates:
 - `templates/tree-flow`
 - `templates/architecture-elements`
 - `templates/sequence-diagram`
+- `templates/stepper-guide`
+- `templates/tab-switch`
+- `templates/live-filter`
+- `templates/live-calc`
 
 Use `../scenes/*.md` for scene-level routing and composition guidance. Use `manifest.json` to verify implemented template IDs, status, kind, scene, and machine-readable intent. When no ready template matches, custom output must choose a fallback primitive instead of freehand styling. Do not encode the category in the folder path. When adding a future template, create its folder and update scene references plus the manifest in the same change.
 

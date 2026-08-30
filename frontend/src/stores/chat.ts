@@ -484,12 +484,26 @@ export const useChatStore = defineStore('chat', () => {
       createdAt: new Date().toISOString(),
     }
     messages.value.push(optimistic)
+    // 预建 assistant 占位壳:message.start 可能延迟数秒才到,期间若不渲染
+    // AI Workbench 头部会出现"发完问题后回答区空白一下"的观感。
+    // 占位壳无 agentMessageId,真实 message.start 到达时被 ensureAssistantShell 复用改名。
+    messages.value.push({
+      id: -Date.now() - 1,
+      role: 'assistant',
+      content: '',
+      status: 'streaming',
+      createdAt: new Date().toISOString(),
+      parts: { toolCalls: [] },
+      _streaming: true,
+      _placeholder: true,
+    })
     streamingText.value = ''
     liveReasoning.value = ''
     streamingMessageId.value = null
     isStreaming.value = true
     touchStreamActivity()
     streamStartAt.value = Date.now()
+    _turnStartMs = Date.now()
     interruptedByDisconnect.value = false
     disconnectAborted.value = false
     if (_disconnectAbortTimer) { clearTimeout(_disconnectAbortTimer); _disconnectAbortTimer = null }
@@ -519,6 +533,7 @@ export const useChatStore = defineStore('chat', () => {
       if (idx >= 0) messages.value[idx] = { ...messages.value[idx], _pending: false, status: 'completed' }
     } catch (e: any) {
       isStreaming.value = false
+      removeUnclaimedPlaceholder()
       const idx = messages.value.findIndex((m) => m.id === optimistic.id)
       if (idx >= 0) {
         messages.value[idx] = { ...messages.value[idx], _pending: false, status: 'error', error: '发送失败,请重试' }
@@ -729,7 +744,15 @@ export const useChatStore = defineStore('chat', () => {
 
       case 'error': {
         const msg = data.message || '生成出错,请重试'
-        markAssistantError(streamingMessageId.value, msg)
+        const id = streamingMessageId.value
+        const pendingText = streamingText.value
+        // 先把已流式产出(reason+正文)定稿进时间线再标记错误:否则总结文本会随
+        // streamingText 清空丢失,造成"输出完成后总结消失"(刷新后从后端时间线才能恢复)。
+        flushLiveSteps()
+        if (id && pendingText) {
+          finalizeTextPart(id, pendingText, false)
+        }
+        markAssistantError(id, msg)
         streamingText.value = ''
         streamingMessageId.value = null
         finishStreaming()
@@ -751,6 +774,15 @@ export const useChatStore = defineStore('chat', () => {
   /** 建 assistant 消息壳(message.start 或 delta 先行到达时) */
   function ensureAssistantShell(id: string) {
     if (messages.value.find((m) => m.agentMessageId === id)) return
+    // 复用发送时预建的占位壳(无 agentMessageId 的 streaming assistant),避免重复气泡
+    const phIdx = messages.value.findIndex(
+      (m) => m.role === 'assistant' && m._placeholder && !m.agentMessageId,
+    )
+    if (phIdx >= 0) {
+      const ph = messages.value[phIdx]
+      messages.value[phIdx] = { ...ph, agentMessageId: id, _placeholder: false } as any
+      return
+    }
     messages.value.push({
       id: -Date.now(),
       agentMessageId: id,
@@ -966,6 +998,8 @@ export const useChatStore = defineStore('chat', () => {
   /** 会话空闲:生成结束,兜底落定未提交的流式文本 */
   function finishStreaming() {
     console.debug('[timeline] finishStreaming called', { streamingMsgId: streamingMessageId.value, streamingTextLen: streamingText.value.length, liveReasoningLen: liveReasoning.value.length })
+    // 记录本轮耗时(结束时刻 - 开始时刻)到对应 assistant 消息,供头部"已完成 Xs"展示
+    recordTurnElapsed()
     flushLiveReasoning()
     if (streamingMessageId.value && streamingText.value) {
       console.debug('[timeline] finishStreaming finalizing leftover text', { len: streamingText.value.length })
@@ -983,6 +1017,31 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming.value = false
     streamStartAt.value = 0
     streamingWidgetCode.value = null
+    removeUnclaimedPlaceholder()
+  }
+
+  /** 清理未被复用的占位壳(本轮未产出任何 assistant 内容时),避免残留空气泡 */
+  function removeUnclaimedPlaceholder() {
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      const m = messages.value[i]
+      if (m.role === 'assistant' && m._placeholder && !m.agentMessageId && !(m as any).parts?.timeline?.length) {
+        messages.value.splice(i, 1)
+      }
+    }
+  }
+
+  /**
+   * 本轮生成耗时(秒),按 assistant 消息 agentMessageId 索引。
+   * 纯前端态:刷新后不保留(后端未落库耗时字段),仅在当前会话页面内展示。
+   */
+  const turnElapsed = ref<Record<string, number>>({})
+  /** 本轮开始时刻:sendMessage 记录,resumeStreaming 不重置,保证含 HITL 等待的整轮耗时 */
+  let _turnStartMs = 0
+  function recordTurnElapsed() {
+    const id = streamingMessageId.value
+    if (!id || !_turnStartMs) return
+    const sec = Math.max(1, Math.round((Date.now() - _turnStartMs) / 1000))
+    turnElapsed.value = { ...turnElapsed.value, [id]: sec }
   }
 
   // ---------- HITL 人工确认(危险操作) ----------
@@ -1037,9 +1096,9 @@ export const useChatStore = defineStore('chat', () => {
   async function replyPermission(requestId: string, decision: 'approve' | 'reject' | 'reply', answer?: string) {
     if (!currentSessionId.value) return false
     const ok = await chatApi.replyPermission(currentSessionId.value, requestId, decision, answer)
+    // 无论成功失败都清除本地提问框(成功时 agent 续跑会发新流;失败时直接消失)
+    dismissPendingPermission(requestId)
     if (!ok) {
-      // 权限已失效:清除本地+数据库中的 pendingPermission,提问框消失且刷新不重现
-      dismissPendingPermission(requestId)
       isStreaming.value = false
       return ok
     }
@@ -1120,7 +1179,7 @@ export const useChatStore = defineStore('chat', () => {
   return {
     sessions, archivedSessions, currentSessionId, currentSession, messages, turns, flow, summaries,
     streamingText, liveReasoning, streamingMessageId, isStreaming, streamingStuckSeconds, streamingElapsedSeconds, runningActivity,
-    streamingWidgetCode,
+    streamingWidgetCode, turnElapsed,
     browserToolSignal, lastBrowserToolAt,
     hasPendingInteraction, connected, reconnecting, forceReconnect,
     authExpired, switching, changedFilePaths,

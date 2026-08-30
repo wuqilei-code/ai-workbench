@@ -217,6 +217,7 @@ CREATE TABLE IF NOT EXISTS prompt_template (
     title       VARCHAR(128) NOT NULL,
     category    VARCHAR(32)  NOT NULL DEFAULT 'other',
     content     TEXT         NOT NULL,
+    icon        VARCHAR(32)  NULL DEFAULT '📋',
     sort_order  INT          NOT NULL DEFAULT 0,
     created_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
@@ -225,7 +226,11 @@ CREATE TABLE IF NOT EXISTS prompt_template (
     KEY idx_pt_category (category)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 内置模板种子(幂等:重复主键冲突被 continue-on-error 忽略)
+-- 老库补齐 icon 列(MySQL 8 不支持 ADD COLUMN IF NOT EXISTS;新库 CREATE TABLE 已含该列,
+-- 此处对老库生效,重复列 1060 错误被 spring.sql.init.continue-on-error=true 忽略)
+ALTER TABLE prompt_template ADD COLUMN icon VARCHAR(32) NULL DEFAULT '📋' AFTER content;
+
+-- 内置模板种子(幂等:重复主键冲突被 continue-on-error 忽略;icon 列此时已存在)
 INSERT IGNORE INTO prompt_template (id, user_id, title, category, content, icon, sort_order) VALUES
   (1, NULL, '写周报', '办公', '请帮我把我的工作内容整理成一份周报,包含:本周完成、下周计划、风险与求助三部分。下面是这周我做的事情:\n\n', '🗓️', 10),
   (2, NULL, '会议纪要', '办公', '请把下面这段讨论整理成会议纪要,包含:会议主题、参会人、讨论要点、结论、待办事项(注明负责人与截止时间)。\n\n', '📝', 20),
@@ -240,9 +245,6 @@ INSERT IGNORE INTO prompt_template (id, user_id, title, category, content, icon,
   (11, NULL, '头脑风暴', '其他', '请围绕我下面提出的问题做头脑风暴:给出多个有创意的方案,并从可行性、成本、效果三个维度做简要点评,最后给一个推荐。\n\n', '💡', 110),
   (12, NULL, '翻译润色', '其他', '请把下面的文字翻译成[目标语言],注意保持语气自然、专业。如有更好的表达请同时给出润色建议。\n\n', '✍️', 120),
   (13, NULL, '源码测试分析', '开发', '我上传了一个项目源码压缩包,请用 test-analysis 技能对源码做静态分析:①生成测试点清单 ②生成测试用例 ③生成测试脚本(通过语法校验) ④输出测试报告。沙箱无法安装依赖,不要运行项目,只做静态分析与语法校验。\n\n', '🧪', 130);
-
--- 模板 icon(兼容已有表:ALTER 幂等,列已存在则忽略)
-ALTER TABLE prompt_template ADD COLUMN IF NOT EXISTS icon VARCHAR(8) NULL DEFAULT '📋';
 
 -- 用户模板启用关系:用户把系统内置模板(或自建)添加到自己的首页
 CREATE TABLE IF NOT EXISTS user_template (

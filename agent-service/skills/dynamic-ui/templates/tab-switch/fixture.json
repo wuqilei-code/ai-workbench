@@ -1,0 +1,7 @@
+{
+  "tabs": [
+    { "id": "overview", "label": "Overview", "body": "Core summary of the subject and its main takeaway." },
+    { "id": "detail", "label": "Detail", "body": "Itemized facts and numbers the reader can inspect." },
+    { "id": "compare", "label": "Compare", "body": "Side-by-side trade-offs across the main options." }
+  ]
+}

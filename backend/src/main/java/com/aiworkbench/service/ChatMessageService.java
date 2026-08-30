@@ -185,10 +185,12 @@ public class ChatMessageService {
      * @param agentSessionId 执行轨道会话 id("da-" 前缀)
      * @param agentMessageId 本轮 assistant 消息外部 id
      * @param toolCalls      工具调用节点(callId → {id,name,args,output,status}),保持插入序
+     * @param elapsedSec     本轮生成耗时(秒,自流开始计),写入 parts 供前端刷新后展示
      */
     public void upsertAssistantTurn(String agentSessionId, String agentMessageId,
                                     String text, Map<String, ObjectNode> toolCalls,
-                                    java.util.List<ObjectNode> timeline, String status) {
+                                    java.util.List<ObjectNode> timeline, String status,
+                                    Long elapsedSec) {
         ChatSession session = chatSessionService.findByAgentSessionId(agentSessionId);
         if (session == null) {
             log.debug("upsertAssistantTurn: unknown agent session {}", agentSessionId);
@@ -216,6 +218,10 @@ public class ChatMessageService {
                 // 时间线(文本段/工具调用交错序):有内容才写,旧数据无此键走前端回退逻辑
                 if (timeline != null && !timeline.isEmpty()) {
                     partsNode.putArray("timeline").addAll(timeline);
+                }
+                // 本轮生成耗时(秒):前端刷新后据此展示"已完成 Xs"(内存态计时刷新即丢)
+                if (elapsedSec != null && elapsedSec > 0) {
+                    partsNode.put("elapsedSec", elapsedSec);
                 }
                 m.setParts(objectMapper.writeValueAsString(partsNode));
                 m.setToolCallCount(toolCalls.size());

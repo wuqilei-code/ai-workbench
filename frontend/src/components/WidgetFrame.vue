@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { useMessage } from 'naive-ui'
 import { fileApi } from '@/api/files'
 import { useThemeStore } from '@/stores/theme'
 
@@ -14,12 +15,21 @@ import { useThemeStore } from '@/stores/theme'
 const props = defineProps<{ path?: string; liveCode?: string | null }>()
 const emit = defineEmits<{ (e: 'prompt', text: string): void }>()
 
+const msg = useMessage()
 const theme = useThemeStore()
 const srcdoc = ref('')
 const failed = ref(false)
 const height = ref(220)
 const iframeRef = ref<HTMLIFrameElement | null>(null)
 const dlBusy = ref(false)
+/** 组件原始代码(供 复制代码/查看代码/下载为图片 使用) */
+const rawCode = ref('')
+/** "展示详情"折叠状态:默认展开 */
+const expanded = ref(true)
+/** 代码查看面板开关 */
+const showCode = ref(false)
+/** 图片导出进行中(隐藏捕获 iframe 渲染中) */
+const capBusy = ref(false)
 
 function isDark(): boolean {
   return theme.mode === 'dark'
@@ -247,10 +257,13 @@ watch(() => props.liveCode, (v) => {
 async function load() {
   failed.value = false
   srcdoc.value = ''
+  rawCode.value = ''
+  showCode.value = false
   _liveDarkChecked = false
   try {
     const raw = await fileApi.content(props.path || '')
     if (!raw) throw new Error('empty')
+    rawCode.value = String(raw)
     srcdoc.value = buildDoc(String(raw))
   } catch {
     failed.value = true
@@ -265,6 +278,134 @@ async function download() {
   } finally {
     dlBusy.value = false
   }
+}
+
+// ---------- ⋯ 菜单:下载 / 图片导出 / 复制 / 查看代码 ----------
+
+const menuOpen = ref(false)
+const frameRef = ref<HTMLElement | null>(null)
+function toggleMenu() {
+  menuOpen.value = !menuOpen.value
+}
+function onDocClick(e: MouseEvent) {
+  if (!menuOpen.value) return
+  const el = e.target as Element | null
+  if (el?.closest?.('.wd-menu-wrap')) return
+  menuOpen.value = false
+}
+
+async function copyCode() {
+  menuOpen.value = false
+  if (!rawCode.value) return
+  try {
+    await navigator.clipboard.writeText(rawCode.value)
+    msg.success('代码已复制')
+  } catch {
+    msg.error('复制失败')
+  }
+}
+
+function toggleCodeView() {
+  menuOpen.value = false
+  showCode.value = !showCode.value
+}
+
+/**
+ * 组件代码 → PNG(纯前端,无第三方库):
+ * 片段代码经 DOMParser 规范化后包进 SVG foreignObject,绘入 canvas 导出。
+ * 注意:DOMParser 会把片段开头的 <style> 提升到 <head>,必须把 head 里的样式
+ * 一并搬进 foreignObject,否则组件失去全部 CSS(图形按默认黑色填充、文字消失)。
+ * 脚本不执行(Canvas 类图表落到 HTML 兜底内容,符合 SVG-first 技能契约);
+ * :root 主题门控重写为 #wroot,让令牌与暗色覆盖在片段环境内继续生效。
+ */
+async function captureToImage() {
+  menuOpen.value = false
+  if (!rawCode.value || capBusy.value) return
+  capBusy.value = true
+  try {
+    const url = await widgetPngDataUrl(rawCode.value)
+    const a = document.createElement('a')
+    a.href = url
+    const base = (props.path || 'widget').split(/[\\/]/).pop() || 'widget'
+    a.download = base.replace(/\.html?$/i, '') + '.png'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  } catch {
+    msg.error('导出图片失败(组件可能含外部资源)')
+  } finally {
+    capBusy.value = false
+  }
+}
+
+const CAP_SCALE = 2
+const CAP_MAX_H = 2600
+
+function widgetPngDataUrl(code: string): Promise<string> {
+  const stripped = stripScripts(normalizeWidgetTheme(code)).replace(/:root\b/g, '#wroot')
+  const doc = new DOMParser().parseFromString(stripped, 'text/html')
+  // 关键:样式被 DOMParser 放进 head,需显式取回并置于内容之前
+  const styles = Array.from(doc.head.querySelectorAll('style'))
+    .map((n) => n.textContent || '')
+    .join('\n')
+    // style 文本作为 XML 内容需转义,否则 CSS 里的 < / & 会让 SVG 解析失败
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+  const inner = new XMLSerializer().serializeToString(doc.body)
+  const scheme = isDark() ? 'dark' : 'light'
+  // 导出宽度取组件实际显示宽度,做到所见即所得
+  const capW = Math.max(
+    320,
+    Math.round(frameRef.value?.clientWidth || iframeRef.value?.clientWidth || 640),
+  )
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${capW}" height="${CAP_MAX_H}">` +
+    `<foreignObject width="100%" height="100%">` +
+    `<div xmlns="http://www.w3.org/1999/xhtml" id="wroot" data-widget-theme="${scheme}" ` +
+    `style="width:${capW}px;` +
+    `font-family:system-ui,-apple-system,'Segoe UI',Roboto,'PingFang SC','Microsoft YaHei',sans-serif">` +
+    // 主题令牌兜底在前,组件自身样式在后(组件优先);:root 需改写为 #wroot 才能在 SVG 环境命中
+    `<style>${themeFallback().replace(/:root\b/g, '#wroot')}#wroot{color:${scheme === 'dark' ? '#E5E5E5' : '#171717'}}` +
+    `#wroot>*{max-width:100%}</style>` +
+    (styles ? `<style>${styles}</style>` : '') +
+    inner +
+    `</div></foreignObject></svg>`
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      try {
+        const cv = document.createElement('canvas')
+        cv.width = capW * CAP_SCALE
+        cv.height = CAP_MAX_H * CAP_SCALE
+        const ctx = cv.getContext('2d', { willReadFrequently: true })
+        if (!ctx) throw new Error('no ctx')
+        ctx.drawImage(img, 0, 0, cv.width, cv.height)
+        const data = ctx.getImageData(0, 0, cv.width, cv.height).data
+        // 从底部向上找第一行含不透明像素的行 = 内容实际底部
+        let bottom = 0
+        outer: for (let y = cv.height - 1; y >= 0; y--) {
+          const row = y * cv.width * 4
+          for (let x = 0; x < cv.width; x++) {
+            if (data[row + x * 4 + 3] > 0) { bottom = y + 1; break outer }
+          }
+        }
+        if (bottom <= 0) throw new Error('empty render')
+        const out = document.createElement('canvas')
+        out.width = cv.width
+        out.height = Math.min(bottom + 16 * CAP_SCALE, cv.height)
+        const octx = out.getContext('2d')
+        if (!octx) throw new Error('no ctx')
+        octx.fillStyle = scheme === 'dark' ? '#17171A' : '#FFFFFF'
+        octx.fillRect(0, 0, out.width, out.height)
+        octx.drawImage(cv, 0, 0, out.width, out.height, 0, 0, out.width, out.height)
+        resolve(out.toDataURL('image/png'))
+      } catch (e) {
+        reject(e)
+      }
+    }
+    img.onerror = () => reject(new Error('svg load failed'))
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg)
+  })
 }
 
 function onMessage(e: MessageEvent) {
@@ -294,9 +435,10 @@ function scrollAncestorBy(dy: number) {
       // 用派发原生 WheelEvent 触发浏览器默认滚动,与"光标在文字上滚"走同一路径,
       // 避免虚拟列表对程序化 scrollTop 改动的尺寸估算补偿(上滚被吃)。
       const before = el.scrollTop
+      const target = el
       el.dispatchEvent(new WheelEvent('wheel', { deltaY: dy, bubbles: true, cancelable: true }))
       requestAnimationFrame(() => {
-        if (el.scrollTop === before) el.scrollTop += dy
+        if (target.scrollTop === before) target.scrollTop += dy
       })
       return
     }
@@ -311,6 +453,7 @@ watch(() => theme.mode, (v) => {
 
 onMounted(() => {
   window.addEventListener('message', onMessage)
+  document.addEventListener('click', onDocClick)
   if (props.liveCode != null) {
     srcdoc.value = buildLiveShell()
     scheduleLive(props.liveCode)
@@ -321,35 +464,93 @@ onMounted(() => {
 onBeforeUnmount(() => {
   stopLiveTimer()
   window.removeEventListener('message', onMessage)
+  document.removeEventListener('click', onDocClick)
 })
 </script>
 
 <template>
-  <div class="widget-frame">
-    <button
-      v-if="path && !failed && srcdoc"
-      class="wd-download"
-      :class="{ busy: dlBusy }"
-      :title="dlBusy ? '下载中…' : '下载组件(.html)'"
-      @click="download"
-    >
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="12" y1="4" x2="12" y2="15" /><polyline points="6 11 12 17 18 11" /><line x1="5" y1="20" x2="19" y2="20" />
-      </svg>
-    </button>
-    <div v-if="failed" class="widget-failed">组件加载失败</div>
-    <iframe
-      v-else-if="srcdoc"
-      ref="iframeRef"
-      class="widget-iframe"
-      sandbox="allow-scripts allow-popups"
-      :srcdoc="srcdoc"
-      :style="{ height: height + 'px' }"
-      scrolling="no"
-    ></iframe>
-    <div v-else class="widget-loading">
-      {{ liveCode != null ? '正在生成组件…' : '组件加载中…' }}
+  <div ref="frameRef" class="widget-frame" :class="{ bare: !path }">
+    <!-- 头部:展示详情(点击折叠)+ ⋯ 操作菜单;流式生成中(live)不显示 -->
+    <div v-if="path && !failed" class="wd-head">
+      <button class="wd-head-toggle" @click="expanded = !expanded">
+        <svg
+          class="wd-chev"
+          :class="{ up: !expanded }"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.4"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+        <span>展示详情</span>
+      </button>
+      <div class="wd-menu-wrap">
+        <button
+          class="wd-menu-btn"
+          :class="{ open: menuOpen }"
+          title="更多操作"
+          @click.stop="toggleMenu"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="5" cy="12" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="19" cy="12" r="1.7" />
+          </svg>
+        </button>
+        <div v-if="menuOpen" class="wd-menu" @click.stop>
+          <button class="wd-menu-item" :disabled="dlBusy" @click="download">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            <span>下载到本地</span>
+          </button>
+          <button class="wd-menu-item" :disabled="capBusy || !rawCode" @click="captureToImage">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" />
+            </svg>
+            <span>{{ capBusy ? '正在生成图片…' : '下载为图片' }}</span>
+          </button>
+          <button class="wd-menu-item" :disabled="!rawCode" @click="copyCode">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+            <span>复制代码</span>
+          </button>
+          <button class="wd-menu-item" :disabled="!rawCode" @click="toggleCodeView">
+            <svg v-if="!showCode" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
+            </svg>
+            <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><line x1="3" y1="9" x2="21" y2="9" />
+            </svg>
+            <span>{{ showCode ? '显示UI' : '查看代码' }}</span>
+          </button>
+        </div>
+      </div>
     </div>
+
+    <div v-if="failed" class="widget-failed">组件加载失败</div>
+    <template v-else-if="expanded">
+      <!-- 代码视图与 UI 视图互斥:查看代码时直接在同一区域显示源码 -->
+      <pre v-if="showCode && rawCode" class="wd-code"><code>{{ rawCode }}</code></pre>
+      <template v-else>
+        <iframe
+          v-if="srcdoc"
+          ref="iframeRef"
+          class="widget-iframe"
+          sandbox="allow-scripts allow-popups"
+          :srcdoc="srcdoc"
+          :style="{ height: height + 'px' }"
+          scrolling="no"
+        ></iframe>
+        <div v-else class="widget-loading">
+          {{ liveCode != null ? '正在生成组件…' : '组件加载中…' }}
+        </div>
+      </template>
+    </template>
   </div>
 </template>
 
@@ -357,8 +558,95 @@ onBeforeUnmount(() => {
 .widget-frame {
   position: relative;
   width: 100%;
-  max-width: 560px;
+  border: 1px solid var(--border-soft, #333);
+  border-radius: 12px;
+  background: var(--surface, transparent);
+  overflow: visible;
 }
+/* 流式 live 模式与失败态:保持旧版无边框轻量外观 */
+.widget-frame.bare {
+  border: none;
+  background: transparent;
+}
+.widget-frame:not(.bare) .widget-iframe {
+  border: none;
+  border-radius: 0 0 11px 11px;
+}
+/* 头部:展示详情 + ⋯ */
+.wd-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px 6px 10px;
+  border-bottom: 1px solid var(--border-soft, #333);
+}
+.wd-head-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text, #ddd);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.wd-head-toggle:hover { background: var(--surface-hover, rgba(255, 255, 255, 0.05)); }
+.wd-chev { transition: transform 0.15s ease; color: var(--text-3, #999); }
+.wd-chev.up { transform: rotate(-90deg); }
+.wd-menu-wrap { position: relative; }
+.wd-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-3, #999);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.wd-menu-btn:hover,
+.wd-menu-btn.open {
+  background: var(--surface-hover, rgba(255, 255, 255, 0.07));
+  color: var(--text, #ddd);
+}
+.wd-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  min-width: 148px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--border, #444);
+  border-radius: 10px;
+  background: var(--bg-elev, #23262d);
+  box-shadow: var(--shadow, 0 6px 24px rgba(0, 0, 0, 0.35));
+}
+.wd-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text, #ddd);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.wd-menu-item svg { flex-shrink: 0; color: var(--text-3, #999); }
+.wd-menu-item:hover { background: var(--surface-hover, rgba(255, 255, 255, 0.07)); }
+.wd-menu-item:disabled { opacity: 0.5; pointer-events: none; }
 .widget-iframe {
   display: block;
   width: 100%;
@@ -367,37 +655,19 @@ onBeforeUnmount(() => {
   background: transparent;
   transition: height 0.18s ease;
 }
-/* 下载:默认隐藏,悬停组件时右上角淡入一个轻量下载图标 */
-.wd-download {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  z-index: 2;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  color: var(--text-dim, #aaa);
-  background: color-mix(in srgb, var(--bg-card, #222) 72%, transparent);
-  backdrop-filter: blur(6px);
-  border: 1px solid var(--border-soft, #444);
-  border-radius: 6px;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
-}
-.widget-frame:hover .wd-download {
-  opacity: 1;
-}
-.wd-download:hover {
-  color: var(--text-main, #eee);
-  border-color: var(--primary, #7c8cff);
-  background: color-mix(in srgb, var(--bg-card, #222) 90%, transparent);
-}
-.wd-download.busy {
-  pointer-events: none;
-  opacity: 0.5;
+.wd-code {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-soft, #333);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-2, #bbb);
+  background: var(--code-bg, #1e1e1e);
+  border-radius: 0 0 11px 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 .widget-loading,
 .widget-failed {
@@ -408,6 +678,7 @@ onBeforeUnmount(() => {
   border: 1px dashed var(--border-soft, #333);
   border-radius: 12px;
 }
+.widget-frame:not(.bare) .widget-loading { border: none; }
 .widget-failed {
   color: var(--warn, #e6a23c);
 }

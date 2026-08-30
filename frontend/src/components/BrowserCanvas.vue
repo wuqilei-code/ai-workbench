@@ -50,13 +50,11 @@ let pressX = 0
 let pressY = 0
 let lastDragSend = 0
 
-function getToken(): string {
-  return localStorage.getItem('token') || ''
-}
-
 function getWsUrl(): string {
+  // WebSocket 鉴权改用同源 HttpOnly cookie(握手自动携带),不再把 JWT 放进 URL,
+  // 避免令牌落入访问日志/浏览器历史。见 BrowserWebSocketHandler.authenticate。
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${proto}//${location.host}/ws/browser?token=${getToken()}`
+  return `${proto}//${location.host}/ws/browser`
 }
 
 function connect() {
@@ -216,14 +214,9 @@ function canvasCoords(e: MouseEvent): { x: number; y: number } {
   if (rect.width <= 0 || rect.height <= 0 || canvas.width <= 0 || canvas.height <= 0) {
     return { x: 0, y: 0 }
   }
-  // canvas 以 object-fit:contain 居中显示在盒内,须按实际内容区(去黑边)映射
-  const s = Math.min(rect.width / canvas.width, rect.height / canvas.height)
-  const cw = canvas.width * s
-  const ch = canvas.height * s
-  const left = rect.left + (rect.width - cw) / 2
-  const top = rect.top + (rect.height - ch) / 2
-  const x = Math.round((e.clientX - left) * (canvas.width / cw))
-  const y = Math.round((e.clientY - top) * (canvas.height / ch))
+  // 画面以 object-fit:fill 拉伸铺满整个画布盒(无黑边),直接线性映射整盒
+  const x = Math.round((e.clientX - rect.left) * (canvas.width / rect.width))
+  const y = Math.round((e.clientY - rect.top) * (canvas.height / rect.height))
   // 指针拖出画布时钳制到画布范围内,避免坐标越界
   return {
     x: Math.max(0, Math.min(canvas.width - 1, x)),
@@ -380,16 +373,18 @@ onBeforeUnmount(() => {
       <button class="bc-tabbar-btn bc-power" title="关闭浏览器(停止沙箱容器并释放资源)" @click="closeBrowser">⏻</button>
     </div>
     <div class="bc-stage" :class="{ 'bc-empty': !stateOk }">
-      <canvas
-        ref="canvasRef"
-        class="bc-canvas"
-        tabindex="0"
-        @mousedown="onCanvasMouseDown"
-        @mousemove="onCanvasHover"
-        @contextmenu.prevent="onCanvasContextMenu"
-        @wheel.prevent="onCanvasWheel"
-        @keydown="onCanvasKeyDown"
-      ></canvas>
+      <div class="bc-scroll">
+        <canvas
+          ref="canvasRef"
+          class="bc-canvas"
+          tabindex="0"
+          @mousedown="onCanvasMouseDown"
+          @mousemove="onCanvasHover"
+          @contextmenu.prevent="onCanvasContextMenu"
+          @wheel.prevent="onCanvasWheel"
+          @keydown="onCanvasKeyDown"
+        ></canvas>
+      </div>
       <div v-if="!stateOk" class="bc-placeholder">{{ stateText }}</div>
       <div v-if="stateOk" class="bc-live" :class="{ 'bc-live-cold': clock - lastFrameAt > 8000 }">● 实时</div>
       <div v-if="stateOk && !connected" class="bc-badge">连接断开</div>
@@ -410,11 +405,19 @@ onBeforeUnmount(() => {
   background: #000;
   overflow: hidden;
 }
+.bc-scroll {
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  display: flex;
+  align-items: center;
+  scrollbar-width: thin;
+}
 .bc-canvas {
   display: block;
-  width: 100%;
   height: 100%;
-  object-fit: contain;
+  width: auto;
+  flex-shrink: 0;
   cursor: default;
   outline: none;
   user-select: none;

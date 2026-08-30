@@ -8,4 +8,4 @@ services:
         # 基镜像走 daocloud 镜像加速,绕开 docker.io(本机 IPv6 解析异常)
         DOCKER_REGISTRY: "docker.m.daocloud.io"
   mysql:
-    image: docker.m.daocloud.io/mysql:8.0
+    image: docker.m.daocloud.io/mysql:8.4

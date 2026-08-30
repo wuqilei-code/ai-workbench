@@ -114,6 +114,34 @@
       "kind": "diagram",
       "scene": "architecture-and-flow",
       "intent": "sequence_diagram_call_chain"
+    },
+    {
+      "id": "stepper-guide",
+      "status": "ready",
+      "kind": "interactive",
+      "scene": "micro-interaction",
+      "intent": "step_guide_loop_sequence"
+    },
+    {
+      "id": "tab-switch",
+      "status": "ready",
+      "kind": "interactive",
+      "scene": "micro-interaction",
+      "intent": "multi_view_switch"
+    },
+    {
+      "id": "live-filter",
+      "status": "ready",
+      "kind": "interactive",
+      "scene": "micro-interaction",
+      "intent": "keyword_list_filter"
+    },
+    {
+      "id": "live-calc",
+      "status": "ready",
+      "kind": "interactive",
+      "scene": "micro-interaction",
+      "intent": "checkbox_live_calculation"
     }
   ]
 }

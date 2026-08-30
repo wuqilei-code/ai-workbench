@@ -1,0 +1,237 @@
+<style>
+:root {
+  color-scheme: light;
+  --surface: #F7F7F8;
+  --surface-muted: #EFEFF2;
+  --text: #171717;
+  --text-muted: #52525B;
+  --border: rgba(23, 23, 23, 0.12);
+  --brand: #4B3FE3;
+  --brand-soft: #F2F7FF;
+  --brand-soft-strong: #E5EAFF;
+  --brand-text: #1A1759;
+  --brand-on: #FFFFFF;
+  --chart-series-1: #3C2ECA;
+  --chart-series-2: #A9AEFF;
+  --chart-series-3: #6F6FFF;
+  --chart-series-4: #22A5F7;
+  --chart-other: #D3D4DA;
+  --accent: #27D2BF;
+  --accent-2: #F87454;
+  --accent-soft: #EAFBF8;
+  --accent-text: #0F766E;
+  --success: #1DC981;
+  --warning: #EFAA17;
+  --danger: #E8463A;
+  --radius: 8px;
+  --radius-card: 12px;
+  --radius-full: 999px;
+  --spacer-4: 4px;
+  --spacer-8: 8px;
+  --spacer-12: 12px;
+  --spacer-16: 16px;
+  --spacer-20: 20px;
+  --spacer-24: 24px;
+  --font-sans: "SF Pro Text", "PingFang SC", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-metric: "Inter", "SF Pro Text", "PingFang SC", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-strong: 600;
+  --text-caption: 12px/18px;
+  --text-body: 14px/20px;
+  --text-title: 16px/24px;
+  --text-code: 13px/20px;
+}
+
+:root[data-widget-theme="dark"] {
+  color-scheme: dark;
+  --surface: #171717;
+  --surface-muted: #262626;
+  --text: #E5E5E5;
+  --text-muted: #A1A1AA;
+  --border: rgba(229, 229, 229, 0.12);
+  --brand: #6054F1;
+  --brand-soft: #1A1759;
+  --brand-soft-strong: #3C2ECA;
+  --brand-text: #CFD8FF;
+  --chart-series-1: #4B3FE3;
+  --accent-2: #F87454;
+  --accent-soft: #123F3C;
+  --accent-text: #CCFBF1;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-widget-theme="light"]) {
+    color-scheme: dark;
+    --surface: #171717;
+    --surface-muted: #262626;
+    --text: #E5E5E5;
+    --text-muted: #A1A1AA;
+    --border: rgba(229, 229, 229, 0.12);
+    --brand: #6054F1;
+    --brand-soft: #1A1759;
+    --brand-soft-strong: #3C2ECA;
+    --brand-text: #CFD8FF;
+    --chart-series-1: #4B3FE3;
+    --accent-2: #F87454;
+    --accent-soft: #123F3C;
+    --accent-text: #CCFBF1;
+  }
+}
+
+.widget {
+  color: var(--text);
+  background: transparent;
+  font: var(--weight-regular) var(--text-body) var(--font-sans);
+  letter-spacing: 0;
+  width: 100%;
+}
+
+.stepperPanel {
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--spacer-20);
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--border) 92%, transparent);
+  border-radius: var(--radius-card);
+}
+
+.stepHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacer-12);
+}
+
+.stepTitle {
+  margin: 0;
+  color: var(--text);
+  font: var(--weight-medium) var(--text-body) var(--font-sans);
+}
+
+.stepPosition {
+  margin: 0;
+  color: var(--text-muted);
+  font: var(--weight-regular) var(--text-caption) var(--font-sans);
+  white-space: nowrap;
+}
+
+.stepDelimiter {
+  margin: var(--spacer-16) 0;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+}
+
+.dots {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-8);
+  margin-bottom: var(--spacer-16);
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.dot[data-active="true"] {
+  background: var(--chart-series-1);
+}
+
+.stepBody {
+  margin: 0 0 var(--spacer-20);
+  min-height: 64px;
+  color: var(--text);
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-8);
+}
+
+.control {
+  padding: var(--spacer-8) var(--spacer-16);
+  color: var(--text);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: var(--radius);
+  font: var(--weight-medium) var(--text-body) var(--font-sans);
+  cursor: pointer;
+}
+
+.control:hover,
+.control:focus-visible {
+  border-color: color-mix(in srgb, var(--brand) 55%, var(--border));
+  outline: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .stepBody {
+    transition: opacity 140ms ease, transform 140ms ease;
+  }
+}
+</style>
+<div class="widget" data-dynamic-ui-widget data-template="stepper-guide">
+  <section class="stepperPanel" aria-label="Step-by-step guide">
+    <header class="stepHeader">
+      <h3 class="stepTitle" id="sTitle">Build</h3>
+      <p class="stepPosition" id="sPosition" aria-hidden="true">Step 1 of 3</p>
+    </header>
+    <hr class="stepDelimiter" aria-hidden="true">
+    <div class="dots" id="sDots" aria-hidden="true">
+      <span class="dot" data-active="true"></span>
+      <span class="dot" data-active="false"></span>
+      <span class="dot" data-active="false"></span>
+    </div>
+    <p class="stepBody" id="sBody" aria-live="polite">Compile and lint the source, run unit tests, produce an artifact.</p>
+    <div class="controls">
+      <button type="button" class="control" data-action="prev" aria-label="Previous step">Prev</button>
+      <button type="button" class="control" data-action="next" aria-label="Next step">Next</button>
+    </div>
+  </section>
+</div>
+<script>
+(function () {
+  var root = document.querySelector('[data-dynamic-ui-widget][data-template="stepper-guide"]:not([data-mounted])');
+  if (!root) return;
+  var steps = [
+    { title: 'Build', body: 'Compile and lint the source, run unit tests, produce an artifact.' },
+    { title: 'Stage', body: 'Promote the artifact to a staging environment and run integration checks.' },
+    { title: 'Deploy', body: 'Release to production with a rolling update and health validation.' }
+  ];
+  var idx = 0;
+  var titleEl = root.querySelector('#sTitle');
+  var posEl = root.querySelector('#sPosition');
+  var bodyEl = root.querySelector('#sBody');
+  var dotEls = root.querySelectorAll('#sDots .dot');
+  function render(start) {
+    if (start) {
+      bodyEl.style.opacity = '0';
+      bodyEl.style.transform = 'translateY(2px)';
+    }
+    window.setTimeout(function () {
+      titleEl.textContent = steps[idx].title;
+      posEl.textContent = 'Step ' + (idx + 1) + ' of ' + steps.length;
+      bodyEl.textContent = steps[idx].body;
+      dotEls.forEach(function (d, i) { d.setAttribute('data-active', String(i === idx)); });
+      if (start) {
+        bodyEl.style.opacity = '';
+        bodyEl.style.transform = '';
+      }
+    }, start ? 120 : 0);
+  }
+  root.querySelector('[data-action="prev"]').addEventListener('click', function () {
+    idx = (idx - 1 + steps.length) % steps.length;
+    render(true);
+  });
+  root.querySelector('[data-action="next"]').addEventListener('click', function () {
+    idx = (idx + 1) % steps.length;
+    render(true);
+  });
+  root.setAttribute('data-mounted', '');
+})();
+</script>

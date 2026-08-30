@@ -43,6 +43,14 @@ AGENT_PG_POOL_MAX: int = _int("AGENT_PG_POOL_MAX", 10)
 # 打开后所有 write/edit/execute 需人工审批(deepagents interrupt_on)。
 AGENT_HITL: bool = _bool("AGENT_HITL", False)
 
+# 内部令牌:网关/agent-service 互相调用的共享凭证(X-Internal-Token)。
+# 生产必须设置随机值;缺失即启动失败(fail-fast),不落公开默认值,防默认令牌被滥用。
+INTERNAL_TOKEN: str = os.environ.get("INTERNAL_TOKEN", "")
+if not INTERNAL_TOKEN:
+    raise RuntimeError(
+        "INTERNAL_TOKEN 未设置。请在环境变量中配置随机令牌,并与后端 app.internal-token 保持一致。"
+    )
+
 # --- 执行沙箱 ---
 # AGENT_SANDBOX_BACKEND:
 #   docker = execute 与 /workspace 文件工具全部在 per-user 沙箱容器内执行(推荐,默认)
@@ -102,4 +110,3 @@ AGENT_LOG_LEVEL: str = os.environ.get("AGENT_LOG_LEVEL", "info")
 
 # --- 后端内部接口(create_skill 工具回写技能库;令牌需与后端 app.internal-token 一致) ---
 BACKEND_INTERNAL_URL: str = os.environ.get("BACKEND_INTERNAL_URL", "http://app:8080").rstrip("/")
-INTERNAL_TOKEN: str = os.environ.get("INTERNAL_TOKEN", "aiwb-internal-dev")

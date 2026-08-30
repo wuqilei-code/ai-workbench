@@ -4,9 +4,9 @@
 ARG DOCKER_REGISTRY=docker.m.daocloud.io
 FROM ai-workbench-agent AS base
 
-# 浏览器常驻入口(懒启动版:仅保活)+ 幂等的浏览器栈拉起脚本
-COPY docker/opencode/browser-entrypoint.sh /opt/aiworkbench/browser-entrypoint.sh
-COPY docker/opencode/ensure-browser.sh /opt/aiworkbench/ensure-browser.sh
+# 浏览器常驻入口(懒启动版:仅保活)+ 幂等的浏览器栈拉起脚本(build context 为仓库根)
+COPY agent-service/browser/browser-entrypoint.sh /opt/aiworkbench/browser-entrypoint.sh
+COPY agent-service/browser/ensure-browser.sh /opt/aiworkbench/ensure-browser.sh
 RUN chmod +x /opt/aiworkbench/browser-entrypoint.sh /opt/aiworkbench/ensure-browser.sh
 
 # 中文字体:base 已含 simhei.ttf(/usr/share/fonts/truetype/simhei.ttf),无需重复拷贝。

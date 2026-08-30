@@ -43,17 +43,18 @@ agent-jobs:
   timeout-minutes: ${AGENT_JOBS_TIMEOUT_MINUTES:30}
   sweep-ms: ${AGENT_JOBS_SWEEP_MS:5000}
 
-# JWT
+# JWT:生产必须在环境注入随机密钥;缺失会因 JwtTokenProvider 的 >=32 字节校验启动失败(failfast)
 jwt:
-  secret: ${JWT_SECRET:dev-secret-change-me-in-production-at-least-32-chars-long}
+  secret: ${JWT_SECRET:}
   ttl-minutes: ${JWT_TTL_MINUTES:1440}
 
 # 应用
 app:
   registration:
-    enabled: ${APP_REGISTRATION_ENABLED:true}
-  # agent-service 内部调用令牌(create_skill 工具回写技能库);compose 两容器注入同一值
-  internal-token: ${INTERNAL_TOKEN:aiwb-internal-dev}
+    enabled: ${APP_REGISTRATION_ENABLED:false}
+  # agent-service 内部调用令牌(create_skill 工具回写技能库);compose 两容器注入同一值。
+  # 生产必须在环境注入随机值;缺失时 agent-service 对内部接口会 401,防默认令牌滥用。
+  internal-token: ${INTERNAL_TOKEN:}
   crypto:
     # AES-256 密钥,Base64 编码的 32 字节;留空时用内置 dev key(仅开发,生产必须注入)
     aes-key: ${APP_AES_KEY:}

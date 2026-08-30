@@ -51,9 +51,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<R<Void>> handleOther(Exception e) {
+        // 服务端打全量日志便于排障;对外只返回脱敏后的通用文案,避免泄漏 SQL/路径/堆栈等内部信息。
         log.error("unhandled exception", e);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(R.fail(ResultCode.INTERNAL_ERROR.getCode(), e.getMessage()));
+                .body(R.fail(ResultCode.INTERNAL_ERROR.getCode(),
+                        "服务器内部错误,请稍后重试或联系管理员"));
     }
 
     private HttpStatus mapHttpStatus(int code) {

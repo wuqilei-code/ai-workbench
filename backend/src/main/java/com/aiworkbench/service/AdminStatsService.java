@@ -25,9 +25,17 @@ public class AdminStatsService {
     private final ChatSessionMapper chatSessionMapper;
     private final ChatMessageMapper chatMessageMapper;
 
+    /** 管理员用量看板聚合缓存(短 TTL),避免高频刷新重复扫库。 */
+    private final com.aiworkbench.common.TtlCache<String, UsageStatsVo> cache;
+
     /** 最近 days 天的用量统计(默认 14)。 */
     public UsageStatsVo usage(int days) {
         int n = Math.max(1, Math.min(days, 90));
+        String key = "admin:" + n;
+        UsageStatsVo cached = cache.get(key);
+        if (cached != null) {
+            return cached;
+        }
         LocalDate today = LocalDate.now();
         LocalDateTime since = today.minusDays(n - 1L).atStartOfDay();
         LocalDateTime weekAgo = LocalDateTime.now().minusDays(7);
@@ -57,7 +65,7 @@ public class AdminStatsService {
                 })
                 .toList();
 
-        return UsageStatsVo.builder()
+        UsageStatsVo vo = UsageStatsVo.builder()
                 .overview(overview)
                 .daily(daily.stream().map(d -> UsageStatsVo.DailyPoint.builder()
                         .date(d.date)
@@ -66,6 +74,8 @@ public class AdminStatsService {
                         .build()).toList())
                 .topUsers(topUsers)
                 .build();
+        cache.put(key, vo);
+        return vo;
     }
 
     /** 生成 n 天序列;有数据的日期回填,其余补零。 */

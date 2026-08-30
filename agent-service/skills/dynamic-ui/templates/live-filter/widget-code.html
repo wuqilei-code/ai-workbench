@@ -1,0 +1,202 @@
+<style>
+:root {
+  color-scheme: light;
+  --surface: #F7F7F8;
+  --surface-muted: #EFEFF2;
+  --text: #171717;
+  --text-muted: #52525B;
+  --border: rgba(23, 23, 23, 0.12);
+  --brand: #4B3FE3;
+  --brand-soft: #F2F7FF;
+  --brand-soft-strong: #E5EAFF;
+  --brand-text: #1A1759;
+  --brand-on: #FFFFFF;
+  --chart-series-1: #3C2ECA;
+  --chart-series-2: #A9AEFF;
+  --chart-series-3: #6F6FFF;
+  --chart-series-4: #22A5F7;
+  --chart-other: #D3D4DA;
+  --accent: #27D2BF;
+  --accent-2: #F87454;
+  --accent-soft: #EAFBF8;
+  --accent-text: #0F766E;
+  --success: #1DC981;
+  --warning: #EFAA17;
+  --danger: #E8463A;
+  --radius: 8px;
+  --radius-card: 12px;
+  --radius-full: 999px;
+  --spacer-4: 4px;
+  --spacer-8: 8px;
+  --spacer-12: 12px;
+  --spacer-16: 16px;
+  --spacer-20: 20px;
+  --spacer-24: 24px;
+  --font-sans: "SF Pro Text", "PingFang SC", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-metric: "Inter", "SF Pro Text", "PingFang SC", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-strong: 600;
+  --text-caption: 12px/18px;
+  --text-body: 14px/20px;
+  --text-title: 16px/24px;
+  --text-code: 13px/20px;
+}
+
+:root[data-widget-theme="dark"] {
+  color-scheme: dark;
+  --surface: #171717;
+  --surface-muted: #262626;
+  --text: #E5E5E5;
+  --text-muted: #A1A1AA;
+  --border: rgba(229, 229, 229, 0.12);
+  --brand: #6054F1;
+  --brand-soft: #1A1759;
+  --brand-soft-strong: #3C2ECA;
+  --brand-text: #CFD8FF;
+  --chart-series-1: #4B3FE3;
+  --accent-2: #F87454;
+  --accent-soft: #123F3C;
+  --accent-text: #CCFBF1;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-widget-theme="light"]) {
+    color-scheme: dark;
+    --surface: #171717;
+    --surface-muted: #262626;
+    --text: #E5E5E5;
+    --text-muted: #A1A1AA;
+    --border: rgba(229, 229, 229, 0.12);
+    --brand: #6054F1;
+    --brand-soft: #1A1759;
+    --brand-soft-strong: #3C2ECA;
+    --brand-text: #CFD8FF;
+    --chart-series-1: #4B3FE3;
+    --accent-2: #F87454;
+    --accent-soft: #123F3C;
+    --accent-text: #CCFBF1;
+  }
+}
+
+.widget {
+  color: var(--text);
+  background: transparent;
+  font: var(--weight-regular) var(--text-body) var(--font-sans);
+  letter-spacing: 0;
+  width: 100%;
+}
+
+.filterPanel {
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--spacer-20);
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--border) 92%, transparent);
+  border-radius: var(--radius-card);
+}
+
+.filterInput {
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--spacer-8) var(--spacer-12);
+  color: var(--text);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: var(--radius);
+  font: var(--weight-regular) var(--text-body) var(--font-sans);
+  margin-bottom: var(--spacer-12);
+}
+
+.filterInput::placeholder {
+  color: var(--text-muted);
+}
+
+.filterInput:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--brand) 55%, var(--border));
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacer-12);
+  padding: var(--spacer-8) 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.rowName {
+  margin: 0;
+  color: var(--text);
+  font: var(--weight-regular) var(--text-body) var(--font-sans);
+}
+
+.rowMeta {
+  margin: 0;
+  color: var(--text-muted);
+  font: var(--weight-regular) var(--text-caption) var(--font-sans);
+  white-space: nowrap;
+}
+
+.emptyState {
+  display: none;
+  margin: var(--spacer-8) 0 0;
+  color: var(--text-muted);
+  font: var(--weight-regular) var(--text-body) var(--font-sans);
+}
+
+.emptyState[data-visible="true"] {
+  display: block;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .row {
+    transition: opacity 120ms ease;
+  }
+}
+</style>
+<div class="widget" data-dynamic-ui-widget data-template="live-filter">
+  <section class="filterPanel" aria-label="Filterable list">
+    <input type="search" class="filterInput" id="fInput" placeholder="Type to filter…" aria-label="Filter list items">
+    <ul class="list" id="fList">
+      <li class="row"><p class="rowName">Docker data migration</p><p class="rowMeta">Storage · scheduled</p></li>
+      <li class="row"><p class="rowName">Temp file cleanup</p><p class="rowMeta">Cache · ready</p></li>
+      <li class="row"><p class="rowName">Package manager cache</p><p class="rowMeta">Cache · ready</p></li>
+      <li class="row"><p class="rowName">System update leftovers</p><p class="rowMeta">Storage · review</p></li>
+    </ul>
+    <p class="emptyState" id="fEmpty" role="status" data-visible="false">No matching items.</p>
+  </section>
+</div>
+<script>
+(function () {
+  var root = document.querySelector('[data-dynamic-ui-widget][data-template="live-filter"]:not([data-mounted])');
+  if (!root) return;
+  var input = root.querySelector('#fInput');
+  var list = root.querySelector('#fList');
+  var empty = root.querySelector('#fEmpty');
+  var rows = Array.prototype.slice.call(list.querySelectorAll('.row'));
+  input.addEventListener('input', function () {
+    var kw = input.value.trim().toLowerCase();
+    var shown = 0;
+    rows.forEach(function (r) {
+      var match = kw === '' || r.textContent.toLowerCase().indexOf(kw) !== -1;
+      r.style.display = match ? '' : 'none';
+      if (match) shown += 1;
+    });
+    empty.setAttribute('data-visible', String(shown === 0));
+  });
+  root.setAttribute('data-mounted', '');
+})();
+</script>

@@ -41,11 +41,14 @@ public class JobAgentExecutor {
     public JobAgentExecutor(
             AgentJobProperties props,
             @Value("${deepagents.base-url:http://localhost:8000}") String baseUrl,
+            @Value("${app.internal-token:}") String internalToken,
             ObjectMapper objectMapper) {
         this.props = props;
         this.objectMapper = objectMapper;
         String base = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
-        this.webClient = WebClient.builder().baseUrl(base).build();
+        this.webClient = WebClient.builder().baseUrl(base)
+                .defaultHeader("X-Internal-Token", internalToken)
+                .build();
     }
 
     /**

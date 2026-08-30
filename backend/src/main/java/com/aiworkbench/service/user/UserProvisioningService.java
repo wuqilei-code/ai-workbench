@@ -101,8 +101,9 @@ public class UserProvisioningService {
      * 创建并权限化目录:
      * <ul>
      *   <li>父目录 /workspace/users/&lt;userId&gt; —— 隔离容器,0700</li>
-     *   <li>工作区 /workspace/users/&lt;userId&gt;/project —— 实际工作区(=userDir),git init + .opencode/skills;
-     *       配置类文件(.git/.opencode/.gitignore)与用户文件同处此层,前端文件树隐藏配置项,页面只显示用户文件</li>
+     *   <li>工作区 /workspace/users/&lt;userId&gt;/project —— 实际工作区(=userDir),git init
+     *       (deepagents 架构,技能已移至 users/&lt;id&gt;/skills,不再创建 .opencode);
+     *       配置类文件(.git/.gitignore)与用户文件同处此层,前端文件树隐藏配置项,页面只显示用户文件</li>
      *   <li>私有配置 home /data/users/&lt;uid&gt;/home/.config/opencode/agents —— Phase 2 PerUserConfigWriter 将 seed 配置</li>
      * </ul>
      * 均 chmod 0700 + chown -R uid:gid。
@@ -111,12 +112,10 @@ public class UserProvisioningService {
         Path parent = Paths.get(props.getRoot(), "users", String.valueOf(userId));
         Path ws = parent.resolve("project");
         createDirs(ws); // 同时创建 parent
-        // 把工作区初始化为 git 仓库:opencode 项目级技能发现(.opencode/skills/*/SKILL.md)
-        // 要求 CWD 位于 git 工作树;此处以 root 幂等 init,随后 chown -R 修正 .git/.opencode 属主,
-        // opencode 以 uid 运行时属主匹配,无 git "dubious ownership" 问题。顺带赋予 AI git 工具能力。
+        // 把工作区初始化为 git 仓库:赋予 AI git 工具能力。
+        // 此处以 root 幂等 init,随后 chown -R 修正 .git/.opencode 属主(已不再创建 .opencode,
+        // 仅修正 .git),opencode 以 uid 运行时属主匹配,无 git "dubious ownership" 问题。
         initGitWorkspace(ws);
-        // 预建技能目录,使文件区「技能」标签首启即有空目录可列
-        createDirs(ws.resolve(".opencode/skills"));
         // 父目录与工作区均 0700 + chown:父目录隔离用户,工作区隔离配置与用户文件
         run("chmod", "0700", parent.toString());
         run("chmod", "0700", ws.toString());
@@ -130,7 +129,7 @@ public class UserProvisioningService {
 
     /**
      * 幂等初始化工作区为 git 仓库 + 预置提交身份与 .gitignore(排除 uploads/ 二进制)。
-     * 使 opencode 项目级技能发现生效;身份预置避免 AI 提交时报 "Please tell me who you are"。
+     * 使 AI 具备 git 工具能力;身份预置避免 AI 提交时报 "Please tell me who you are"。
      */
     private void initGitWorkspace(Path ws) {
         run("git", "-c", "init.defaultBranch=main", "init", ws.toString());

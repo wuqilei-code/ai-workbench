@@ -53,6 +53,12 @@ public class BrowserCdpClient {
     private static final int FRAME_MAX_HEIGHT = 1000;
     private static final int FRAME_QUALITY = 70;
 
+    /** 无头 Chromium 页面视口尺寸(Emulation.setDeviceMetricsOverride):
+     *  默认 800x600 太小,放大到面板高度会糊;设为宽屏 1600x900 使画面在大分辨率下清晰,
+     *  FRAME_MAX_WIDTH=1600 恰好能原尺寸推帧,无需降采样。 */
+    private static final int VIEWPORT_W = 1600;
+    private static final int VIEWPORT_H = 900;
+
     /** 帧像素 → CSS 像素的缩放比(>=1);由最新一帧的视口元数据维护。 */
     private volatile double inputScale = 1.0;
     /** 最近一次已知视口 CSS 尺寸(captureFrame 保持与推流同尺寸用;-1 未知)。 */
@@ -245,6 +251,11 @@ public class BrowserCdpClient {
     public void startScreencast(Consumer<byte[]> sink) {
         this.frameSink = sink;
         try {
+            call("Emulation.setDeviceMetricsOverride", Map.of(
+                    "width", VIEWPORT_W,
+                    "height", VIEWPORT_H,
+                    "deviceScaleFactor", 1,
+                    "mobile", false));
             call("Page.enable", Map.of());
             call("Page.startScreencast", Map.of(
                     "format", "jpeg",

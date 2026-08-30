@@ -55,6 +55,8 @@ export interface MessageVo {
   /** 前端本地态 */
   _pending?: boolean
   _streaming?: boolean
+  /** 前端本地态:发送时预建的 assistant 占位壳(尚无真实 agentMessageId) */
+  _placeholder?: boolean
   /** 前端本地态:生成失败时展示的错误文案 */
   error?: string
 }
@@ -88,6 +90,8 @@ export interface StepParts {
   toolCalls?: ToolCall[]
   /** 待确认的权限请求(危险操作 HITL) */
   pendingPermission?: PendingPermission | null
+  /** 本轮生成耗时(秒,后端自流开始计时落库),刷新后前端据此展示"已完成 Xs" */
+  elapsedSec?: number
 }
 
 /** 内置全局技能信息(只读展示) */

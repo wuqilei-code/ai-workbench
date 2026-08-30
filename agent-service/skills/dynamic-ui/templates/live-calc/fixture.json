@@ -1,0 +1,10 @@
+{
+  "totalLabel": "Selected total",
+  "unit": "GB",
+  "max": 7.8,
+  "items": [
+    { "name": "Temp files", "value": 4, "checked": true },
+    { "name": "Package manager cache", "value": 1.6, "checked": true },
+    { "name": "IDE cache", "value": 2.2, "checked": false }
+  ]
+}

@@ -1,5 +1,7 @@
 package com.aiworkbench.security;
 
+import com.aiworkbench.entity.User;
+import com.aiworkbench.mapper.UserMapper;
 import io.jsonwebtoken.Claims;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -21,6 +23,7 @@ import java.util.List;
 public class JwtAuthFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider tokenProvider;
+    private final UserMapper userMapper;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -66,6 +69,12 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         try {
             Claims claims = tokenProvider.parse(token);
             Long userId = Long.valueOf(claims.getSubject());
+            // 账号被禁用时,即使 JWT 未过期也立即拒绝(管理员改状态即时生效,不依赖 token 到期)。
+            User dbUser = userMapper.selectById(userId);
+            if (dbUser == null || Integer.valueOf(0).equals(dbUser.getStatus())) {
+                SecurityContextHolder.clearContext();
+                return false;
+            }
             String username = claims.get("username", String.class);
             String role = claims.get("role", String.class);
             List<SimpleGrantedAuthority> authorities =

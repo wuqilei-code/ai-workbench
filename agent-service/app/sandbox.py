@@ -119,33 +119,37 @@ class DockerSandbox(BaseSandbox):
                         type="bind",
                     )
                 ]
-                c = cli.containers.create(
-                    image=config.AGENT_SANDBOX_IMAGE,
-                    name=self.name,
-                    entrypoint=["/opt/aiworkbench/browser-entrypoint.sh"],
-                    mounts=mounts,
-                    user=str(config.AGENT_SANDBOX_UID),
-                    # HOME/XDG_CACHE_HOME 必须指向非挂载的临时目录:
-                    # 若指向 /workspace,fontconfig(chromium 出 PDF、pango 转档等)
-                    # 会把字体缓存写进用户项目(.cache/fontconfig/*-le64.cache-8),
-                    # 污染工作区文件树与 git。
-                    environment={
-                        "PATH": "/usr/local/bin:/usr/bin:/bin",
-                        "HOME": "/tmp",
-                        "TMPDIR": "/tmp",
-                        "XDG_CACHE_HOME": "/tmp/.cache",
-                    },
-                    network_disabled=not config.AGENT_SANDBOX_NETWORK,
-                    nano_cpus=int(config.AGENT_SANDBOX_CPUS * 1e9),
-                    mem_limit=f"{config.AGENT_SANDBOX_MEM_MB}m",
-                    pids_limit=config.AGENT_SANDBOX_PIDS,
-                    cap_drop=["ALL"],
-                    security_opt=["no-new-privileges:true"],
-                    labels={"aiwb.role": "agent-sandbox", "aiwb.user": self.user_id},
-                    working_dir="/workspace",
-                    tty=False,
-                    stdin_open=False,
-                )
+                try:
+                    c = cli.containers.create(
+                        image=config.AGENT_SANDBOX_IMAGE,
+                        name=self.name,
+                        entrypoint=["/opt/aiworkbench/browser-entrypoint.sh"],
+                        mounts=mounts,
+                        user=str(config.AGENT_SANDBOX_UID),
+                        # HOME/XDG_CACHE_HOME 必须指向非挂载的临时目录:
+                        # 若指向 /workspace,fontconfig(chromium 出 PDF、pango 转档等)
+                        # 会把字体缓存写进用户项目(.cache/fontconfig/*-le64.cache-8),
+                        # 污染工作区文件树与 git。
+                        environment={
+                            "PATH": "/usr/local/bin:/usr/bin:/bin",
+                            "HOME": "/tmp",
+                            "TMPDIR": "/tmp",
+                            "XDG_CACHE_HOME": "/tmp/.cache",
+                        },
+                        network_disabled=not config.AGENT_SANDBOX_NETWORK,
+                        nano_cpus=int(config.AGENT_SANDBOX_CPUS * 1e9),
+                        mem_limit=f"{config.AGENT_SANDBOX_MEM_MB}m",
+                        pids_limit=config.AGENT_SANDBOX_PIDS,
+                        cap_drop=["ALL"],
+                        security_opt=["no-new-privileges:true"],
+                        labels={"aiwb.role": "agent-sandbox", "aiwb.user": self.user_id},
+                        working_dir="/workspace",
+                        tty=False,
+                        stdin_open=False,
+                    )
+                except docker.errors.APIError:
+                    # 跨 worker 竞态:另一进程刚以同名创建成功,改为取回现成的
+                    c = cli.containers.get(self.name)
                 # 并入自定义网络供网关节流面板直连(docker SDK 部分版本不支持 create(networks=),
                 # 采用 create 后 connect 的方式)
                 if config.AGENT_SANDBOX_NETWORK:
@@ -247,16 +251,19 @@ class DockerSandbox(BaseSandbox):
             text += f"\n[command timed out after {effective}s]"
         # 执行后 diff:新增/变更文件 = 本次 execute 的输出物(相对 /workspace,排除系统/隐藏文件)
         try:
-            self._recent_changes = self._diff_snapshot(before, self._file_snapshot(c))
+            changes = self._diff_snapshot(before, self._file_snapshot(c))
         except Exception:  # noqa: BLE001
-            self._recent_changes = []
+            changes = []
+        with self._lock:
+            self._recent_changes = changes
         return ExecuteResponse(output=text, exit_code=exit_code, truncated=truncated)
 
     def pop_recent_changes(self) -> list[str]:
         """取走最近一次 execute 新增/变更的文件(相对 /workspace),供事件层作为结构化输出物;
-        取走后清空,避免重复上报。"""
-        changes = list(self._recent_changes)
-        self._recent_changes = []
+        取走后清空,避免重复上报。加锁防止与并发 execute 写互相覆盖。"""
+        with self._lock:
+            changes = list(self._recent_changes)
+            self._recent_changes = []
         return changes
 
     def _file_snapshot(self, c) -> dict[str, str]:
@@ -385,4 +392,9 @@ def _reap_loop() -> None:
         with _ACTIVE_LOCK:
             stale = [sb for sb in _ACTIVE.values() if sb.last_used < cutoff]
         for sb in stale:
-            sb.stop()
+            # 回收:注销注册表 + 停容器 + 移除容器,释放 DockerClient 与内存/句柄,
+            # 避免注册表只增不减。后续 ensure / 浏览器工具会按需重建。
+            try:
+                sb.destroy()
+            except Exception:  # noqa: BLE001
+                logger.warning("[%s] 沙箱回收失败", sb.user_id, exc_info=True)

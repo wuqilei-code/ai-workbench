@@ -1,3 +1,10 @@
+# 容器日志轮转(json-file):限制磁盘占用,避免长期运行日志无限增长
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 services:
   app:
     build:
@@ -28,9 +35,9 @@ services:
       # --- AES 加密密钥(Base64 编码 32 字节);生产务必替换为随机密钥 ---
       APP_AES_KEY: ${APP_AES_KEY:?set in .env}
       # --- agent-service 内部回调令牌(create_skill 回写技能库;两服务一致) ---
-      INTERNAL_TOKEN: "${INTERNAL_TOKEN:-aiwb-internal-dev}"
-      # --- MySQL(数据源:宿主机本地 MySQL,经 host.docker.internal 访问) ---
-      SPRING_DATASOURCE_URL: jdbc:mysql://host.docker.internal:3306/ai_workbench?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8&useUnicode=true
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?set to a random secret in .env, shared with agent-service}
+      # --- MySQL(数据源:compose 内部 mysql 服务,经服务名访问) ---
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/ai_workbench?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8&useUnicode=true
       SPRING_DATASOURCE_USERNAME: aiworkbench
       SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:?set in .env}
       # 浏览器面板链路排查用 DEBUG(稳定后可删)
@@ -45,7 +52,11 @@ services:
     networks:
       - default
       - agents
-    # 数据源为宿主机本地 MySQL,不再依赖容器化 mysql 服务
+    # 数据源为 compose 内部 mysql 服务(mysql 服务名),等待其就绪后启动
+    depends_on:
+      mysql:
+        condition: service_healthy
+    logging: *default-logging
     restart: unless-stopped
 
   # --- deepagents 轨道:python agent-service(每用户独立工作区/技能 + 可执行脚本) ---
@@ -75,7 +86,8 @@ services:
       AGENT_GLOBAL_SKILLS: /app/skills
       # create_skill 工具回写后端技能库(内部接口 + 共享令牌)
       BACKEND_INTERNAL_URL: "http://app:8080"
-      INTERNAL_TOKEN: "${INTERNAL_TOKEN:-aiwb-internal-dev}"
+      # --- agent-service 内部回调令牌(create_skill 回写技能库;两服务必须一致且为随机值) ---
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?set to a random secret in .env, shared with app}
       # 执行沙箱:execute 与 /workspace 工具在 per-user 容器内跑(docker|local);
       # 沙箱同时承载共享浏览器(CDP/playwright-mcp),容器挂 aiwb-agents 网供网关节流面板直连
       AGENT_SANDBOX_BACKEND: "${AGENT_SANDBOX_BACKEND:-docker}"
@@ -97,12 +109,23 @@ services:
       - workspace:/shared-ws
       # 沙箱容器生命周期管理(per-user 容器由 agent-service 创建)
       - /var/run/docker.sock:/var/run/docker.sock
+    # 运行期加固:agent-service 需 root(对用户工作区 chown 到沙箱 uid)并访问 docker.sock
+    # (创建/回收沙箱容器);no-new-privileges 防止提权放大,降低被攻破后的影响半径。
+    security_opt:
+      - "no-new-privileges:true"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - default
       - agents
+    logging: *default-logging
     restart: unless-stopped
 
   # 沙箱镜像构建载体(execute + 共享浏览器合并镜像);仅用于 docker compose build 产出,
@@ -131,6 +154,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    logging: *default-logging
     restart: unless-stopped
 
   # 容器化 MySQL(2026-08-23 启用):Windows 宿主机到容器的任意端口通路不稳定
@@ -151,6 +175,7 @@ services:
       timeout: 5s
       retries: 30
       start_period: 30s
+    logging: *default-logging
     restart: unless-stopped
 
 volumes:

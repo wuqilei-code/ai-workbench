@@ -140,7 +140,7 @@ onBeforeUnmount(() => {
         <PreviewPdf          v-else-if="kind === 'pdf'"      :src="safeBlobUrl" />
         <PreviewHtml         v-else-if="kind === 'html'"     :path="path" />
         <PreviewDocx         v-else-if="kind === 'docx'"     :blob="safeBlob" />
-        <PreviewXlsx         v-else-if="kind === 'xlsx'"     :blob="safeBlob" />
+        <PreviewXlsx         v-else-if="kind === 'xlsx'"     :blob="safeBlob" :path="path" />
         <PreviewPptx         v-else-if="kind === 'pptx'"     :blob="safeBlob" />
         <div v-else-if="kind === 'audio'" class="media-wrap">
           <audio :src="safeBlobUrl" controls class="fp-audio" />

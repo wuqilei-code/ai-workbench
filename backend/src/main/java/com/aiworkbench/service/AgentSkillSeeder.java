@@ -18,10 +18,13 @@ public class AgentSkillSeeder {
 
     private final WebClient webClient;
 
-    public AgentSkillSeeder(@Value("${deepagents.base-url:http://localhost:8000}") String agentBaseUrl) {
+    public AgentSkillSeeder(@Value("${deepagents.base-url:http://localhost:8000}") String agentBaseUrl,
+                            @Value("${app.internal-token:}") String internalToken) {
         String base = (agentBaseUrl == null || agentBaseUrl.isBlank()) ? "http://localhost:8000" : agentBaseUrl;
         if (base.endsWith("/")) base = base.substring(0, base.length() - 1);
-        this.webClient = WebClient.builder().baseUrl(base).build();
+        this.webClient = WebClient.builder().baseUrl(base)
+                .defaultHeader("X-Internal-Token", internalToken)
+                .build();
     }
 
     public void seed(Long userId) {

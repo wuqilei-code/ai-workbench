@@ -6,12 +6,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import hmac
 import json
 import logging
 import re
 from typing import Literal, Optional
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from langgraph.types import Command
 from pydantic import BaseModel, Field
@@ -23,6 +25,34 @@ logging.basicConfig(level=config.AGENT_LOG_LEVEL.upper())
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="ai-workbench agent-service", version=__version__)
+
+# 排除鉴权的路径:健康检查(healthcheck/冒烟用)、以及内部工具回写无需二次鉴权。
+_PUBLIC_PATHS = {"/health"}
+
+
+def verify_internal_token(
+    request: Request,
+    x_internal_token: str | None = Header(default=None, alias="X-Internal-Token"),
+) -> None:
+    """校验网关/内部调用的共享令牌,拒绝未授权来源。
+
+    agent-service 本身无用户态身份(调用方已按 user_id 维度鉴权),这里只守住
+    服务间边界:任何能访问 :8000 的进程必须持有与网关一致的 INTERNAL_TOKEN。
+    """
+    if request.url.path in _PUBLIC_PATHS:
+        return
+    expected = (config.INTERNAL_TOKEN or "").strip()
+    if not expected:
+        raise HTTPException(status_code=500, detail="INTERNAL_TOKEN 未配置，拒绝内部调用")
+    provided = (x_internal_token or "").strip()
+    # 常量时间比较,避免定时侧信道
+    if not hmac.compare_digest(provided.encode(), expected.encode()):
+        raise HTTPException(status_code=401, detail="无效的内部令牌")
+
+
+def require_token() -> dict:
+    """占位依赖:仅用于对个别端点显式声明需要令牌(语义清晰)。"""
+    return {}
 
 
 class ChatMessage(BaseModel):
@@ -69,7 +99,7 @@ def _deepagents_version() -> str:
         return "unknown"
 
 
-@app.post("/api/users/{user_id}/invoke")
+@app.post("/api/users/{user_id}/invoke", dependencies=[Depends(verify_internal_token)])
 def invoke(user_id: str, body: InvokeRequest) -> InvokeResponse:
     logger.info("[%s][%s] invoke: %d msgs", user_id, body.thread_id, len(body.messages))
     agent = get_manager().get_or_create(user_id, system_prompt=body.system_prompt, skills_override=body.skills)
@@ -82,7 +112,7 @@ def invoke(user_id: str, body: InvokeRequest) -> InvokeResponse:
     return InvokeResponse(thread_id=body.thread_id, content=content or "")
 
 
-@app.post("/api/users/{user_id}/skills/seed")
+@app.post("/api/users/{user_id}/skills/seed", dependencies=[Depends(verify_internal_token)])
 def skills_seed(user_id: str) -> dict:
     """确保该用户已播种平台内置技能(仅拷文件,不起容器);技能栏/前端按需调用。"""
     from app import workspace as ws
@@ -91,7 +121,7 @@ def skills_seed(user_id: str) -> dict:
     return {"status": "ok"}
 
 
-@app.post("/api/users/{user_id}/sandbox/ensure")
+@app.post("/api/users/{user_id}/sandbox/ensure", dependencies=[Depends(verify_internal_token)])
 def sandbox_ensure(user_id: str) -> dict:
     """确保该用户合并沙箱容器已创建运行,并按需拉起浏览器栈(懒启动,已就绪秒回)。
 
@@ -109,7 +139,7 @@ def sandbox_ensure(user_id: str) -> dict:
         return {"status": "error", "error": str(exc)}
 
 
-@app.post("/api/users/{user_id}/sandbox/stop")
+@app.post("/api/users/{user_id}/sandbox/stop", dependencies=[Depends(verify_internal_token)])
 def sandbox_stop(user_id: str) -> dict:
     """停止该用户的沙箱容器(浏览器面板「关闭浏览器」):立即释放 CPU/内存。
 
@@ -126,15 +156,17 @@ def sandbox_stop(user_id: str) -> dict:
         return {"status": "error", "error": str(exc)}
 
 
-@app.post("/api/users/{user_id}/stream")
-def stream(user_id: str, body: InvokeRequest) -> StreamingResponse:
+@app.post("/api/users/{user_id}/stream", dependencies=[Depends(verify_internal_token)])
+def stream(request: Request, user_id: str, body: InvokeRequest) -> StreamingResponse:
     logger.info("[%s][%s] stream: resume=%s msgs=%d",
                 user_id, body.thread_id, body.resume_decision is not None, len(body.messages))
     agent = get_manager().get_or_create(user_id, system_prompt=body.system_prompt, skills_override=body.skills)
     cfg = config_for(user_id, body.thread_id)
 
-    def gen():
+    async def gen():
         emitted_tools: set[str] = set()
+        tool_calls: dict[str, tuple[str, dict]] = {}
+        wc_decoders: dict[str, "_WidgetCodeDecoder"] = {}
         yield _sse("start", {"thread_id": body.thread_id})
         try:
             if body.resume_decision is not None:
@@ -152,10 +184,23 @@ def stream(user_id: str, body: InvokeRequest) -> StreamingResponse:
                     stream_mode=["messages", "updates"],
                     version="v1",
                 )
-            for mode, value in it:
+            # 同步 langgraph 迭代器经线程拉取,避免阻塞事件循环;每步间检查客户端断连。
+            while True:
+                if await request.is_disconnected():
+                    logger.info("[%s][%s] client disconnected, abort stream",
+                                user_id, body.thread_id)
+                    # 线程已由 langgraph checkpoint;无需回滚,直接终止本流
+                    return
+                result = await asyncio.to_thread(_next_stream, it)
+                if result is None:
+                    # 迭代器耗尽,正常结束。不能依赖 StopIteration:经线程池会被
+                    # asyncio 转成 RuntimeError,导致正常完成被误判为流错误,
+                    # 进而使网关给前端发 error 事件、总结文本随流错误被丢弃。
+                    break
+                mode, value = result
                 if mode == "messages":
                     for item in _iter_stream_messages(value):
-                        for out in _emit_stream_message(item):
+                        for out in _emit_stream_message(item, wc_decoders):
                             yield out
                 elif mode == "updates":
                     # Human-in-the-loop 中断:吐出待审批请求后终止本流(线程已 checkpoint),
@@ -172,7 +217,7 @@ def stream(user_id: str, body: InvokeRequest) -> StreamingResponse:
                             action_requests = hreq.get("action_requests", [])
                             if action_requests:
                                 req = action_requests[0]
-                                tool_name = req.get("tool_name", "")
+                                tool_name = req.get("name", "")
                                 tool_args = req.get("args", {})
                         if tool_name == "ask_user":
                             # agent 向用户提问:提取问题内容,发送 question 事件
@@ -190,7 +235,7 @@ def stream(user_id: str, body: InvokeRequest) -> StreamingResponse:
                             # 普通 HITL 审批
                             yield _sse("permission", hreq if isinstance(hreq, dict) else {})
                         return
-                    for out in _emit_update(value, user_id, emitted_tools):
+                    for out in _emit_update(value, user_id, emitted_tools, tool_calls, wc_decoders):
                         yield out
         except Exception as exc:  # noqa: BLE001
             logger.exception("[%s][%s] stream error", user_id, body.thread_id)
@@ -218,6 +263,18 @@ def _iter_stream_messages(value):
             yield item
 
 
+def _next_stream(it):
+    """在线程池中推进同步 langgraph 迭代器,返回 (mode, value);耗尽返回 None。
+
+    注意:不能靠抛 StopIteration 表示耗尽——asyncio.to_thread 会把线程里抛出的
+    StopIteration 转成 RuntimeError("StopIteration interacts badly with generators"),
+    导致正常完成被误判为流错误(网关收到 error 事件,前端总结文本被丢弃)。"""
+    try:
+        return next(it)
+    except StopIteration:
+        return None
+
+
 def _align_decisions(agent, cfg, decision: dict) -> dict:
     """把网关的单条决策对齐到挂起工具调用数量。
 
@@ -240,9 +297,10 @@ def _align_decisions(agent, cfg, decision: dict) -> dict:
     return decision
 
 
-def _emit_stream_message(msg) -> list[str]:
+def _emit_stream_message(msg, wc_decoders: dict) -> list[str]:
     """messages 模式中的 token 增量:reasoning_content → reason 事件,正文文本 → delta 事件,
-    pure_show_widget 参数流 → widget_delta 事件(逐块流式渲染组件)。"""
+    pure_show_widget 参数流 → widget_delta 事件(逐块流式渲染组件)。
+    wc_decoders:本流独有的 widget 参数解码器表(避免跨流/跨用户串扰)。"""
     outs: list[str] = []
     if not getattr(msg, "type", "").endswith("AIMessageChunk"):
         return outs
@@ -262,13 +320,13 @@ def _emit_stream_message(msg) -> list[str]:
         # 先按 name 注册解码器:首个 chunk 带 name 但 args 为空,
         # 后续片段有 args 却不带 name——顺序反了会永远建不了解码器。
         keys = [str(k) for k in (get("id"), f"idx{get('index')}") if k]
-        dec = next((_WC_DECODERS[k] for k in keys if k in _WC_DECODERS), None)
+        dec = next((wc_decoders[k] for k in keys if k in wc_decoders), None)
         if dec is None:
             if get("name") != "pure_show_widget":
                 continue  # 其他工具的参数流不跟踪(仅首个 chunk 带 name)
             dec = _WidgetCodeDecoder(keys)
             for k in keys:
-                _WC_DECODERS[k] = dec
+                wc_decoders[k] = dec
         frag = get("args") or ""
         if not isinstance(frag, str) or not frag:
             continue
@@ -276,7 +334,7 @@ def _emit_stream_message(msg) -> list[str]:
             piece = dec.feed(frag)
         except Exception:  # noqa: BLE001
             for k in dec.keys:
-                _WC_DECODERS.pop(k, None)
+                wc_decoders.pop(k, None)
             continue
         if piece:
             outs.append(_sse("widget_delta", {"id": get("id"), "delta": piece}))
@@ -346,10 +404,6 @@ class _WidgetCodeDecoder:
         return "".join(res)
 
 
-# pure_show_widget 参数流式解码器(按工具调用 id/索引;tool_result 时清理)
-_WC_DECODERS: dict[str, "_WidgetCodeDecoder"] = {}
-
-
 # 读 SKILL.md = 加载技能动作(deepagents 渐进式披露:先读说明再照做)。
 # 捕获后合成 use_skill 工具调用记录,前端/持久化/溯源均按普通工具调用处理。
 _SKILL_MD_RE = re.compile(r"^/?skills/([a-z0-9][a-z0-9-]{0,63})/SKILL\.md$", re.IGNORECASE)
@@ -363,11 +417,17 @@ def _skill_from_read(name: str, args: dict) -> str | None:
     return m.group(1).lower() if m else None
 
 
-def _emit_update(update, user_id: str | None = None, emitted_tools: set | None = None) -> list[str]:
+def _emit_update(update, user_id: str | None = None, emitted_tools: set | None = None,
+                 tool_calls: dict | None = None, wc_decoders: dict | None = None) -> list[str]:
     """updates 模式:发出完整的工具调用与工具结果(含结构化输出物路径)。
     emitted_tools:本轮流内已发过 tool 事件的调用 id 集合——同一调用会在多个节点更新里
-    出现,不去重的话网关时间线会出现重复条目(前端渲染成空步骤)。"""
+    出现,不去重的话网关时间线会出现重复条目(前端渲染成空步骤)。
+    tool_calls/wc_decoders:本流独有的配对表与 widget 解码器表(避免跨流串扰)。"""
     outs = []
+    if tool_calls is None:
+        tool_calls = {}
+    if wc_decoders is None:
+        wc_decoders = {}
     if not isinstance(update, dict):
         return outs
     msgs = []
@@ -375,8 +435,8 @@ def _emit_update(update, user_id: str | None = None, emitted_tools: set | None =
         if isinstance(upd, dict):
             msgs += upd.get("messages", []) or []
     # 本轮 update 内的配对:tool_call_id -> (name, args)。
-    # deepagents 可能把"AI 发起调用"与"工具结果"拆成两次 update,故用模块级最近调用表兜底。
-    calls = dict(_TOOL_CALLS)
+    # deepagents 可能把"AI 发起调用"与"工具结果"拆成两次 update,故用本流最近调用表兜底。
+    calls = dict(tool_calls)
     for m in msgs:
         tcs = getattr(m, "tool_calls", None) or []
         for c in tcs:
@@ -412,10 +472,10 @@ def _emit_update(update, user_id: str | None = None, emitted_tools: set | None =
             if outputs:
                 payload["outputs"] = outputs
             if tc_id:
-                dec = _WC_DECODERS.get(tc_id)
+                dec = wc_decoders.get(tc_id)
                 if dec is not None:
                     for k in dec.keys:
-                        _WC_DECODERS.pop(k, None)
+                        wc_decoders.pop(k, None)
             outs.append(_sse("tool_result", payload))
             # 技能加载溯源:读 /skills/<名>/SKILL.md ⇒ 合成 use_skill 记录(带技能名)
             skill = _skill_from_read(call[0], call[1]) if call else None
@@ -435,19 +495,15 @@ def _emit_update(update, user_id: str | None = None, emitted_tools: set | None =
                         continue  # 同一调用已在先前节点更新里发过,跳过
                     emitted_tools.add(cid)
                 if cid:
-                    _TOOL_CALLS[cid] = (call.get("name", ""), call.get("args", {}) or {})
-                    if len(_TOOL_CALLS) > 128:
-                        # 简单容量保护:保留最近一半
-                        for k in list(_TOOL_CALLS)[:64]:
-                            _TOOL_CALLS.pop(k, None)
+                    tool_calls[cid] = (call.get("name", ""), call.get("args", {}) or {})
+                    if len(tool_calls) > 128:
+                        # 简单容量保护:保留最近一半(本流内也极少超限,防御性处理)
+                        for k in list(tool_calls)[:64]:
+                            tool_calls.pop(k, None)
                 outs.append(
                     _sse("tool", {"name": call["name"], "args": call.get("args", {}), "id": call.get("id")})
                 )
     return outs
-
-
-# 跨 update 的工具调用配对(模块级,容量有上限;key= tool_call_id)
-_TOOL_CALLS: dict[str, tuple[str, dict]] = {}
 
 
 def _current_sandbox(user_id: str):

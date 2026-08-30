@@ -1,0 +1,207 @@
+<style>
+:root {
+  color-scheme: light;
+  --surface: #F7F7F8;
+  --surface-muted: #EFEFF2;
+  --text: #171717;
+  --text-muted: #52525B;
+  --border: rgba(23, 23, 23, 0.12);
+  --brand: #4B3FE3;
+  --brand-soft: #F2F7FF;
+  --brand-soft-strong: #E5EAFF;
+  --brand-text: #1A1759;
+  --brand-on: #FFFFFF;
+  --chart-series-1: #3C2ECA;
+  --chart-series-2: #A9AEFF;
+  --chart-series-3: #6F6FFF;
+  --chart-series-4: #22A5F7;
+  --chart-other: #D3D4DA;
+  --accent: #27D2BF;
+  --accent-2: #F87454;
+  --accent-soft: #EAFBF8;
+  --accent-text: #0F766E;
+  --success: #1DC981;
+  --warning: #EFAA17;
+  --danger: #E8463A;
+  --radius: 8px;
+  --radius-card: 12px;
+  --radius-full: 999px;
+  --spacer-4: 4px;
+  --spacer-8: 8px;
+  --spacer-12: 12px;
+  --spacer-16: 16px;
+  --spacer-20: 20px;
+  --spacer-24: 24px;
+  --font-sans: "SF Pro Text", "PingFang SC", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-metric: "Inter", "SF Pro Text", "PingFang SC", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-strong: 600;
+  --text-caption: 12px/18px;
+  --text-body: 14px/20px;
+  --text-title: 16px/24px;
+  --text-code: 13px/20px;
+}
+
+:root[data-widget-theme="dark"] {
+  color-scheme: dark;
+  --surface: #171717;
+  --surface-muted: #262626;
+  --text: #E5E5E5;
+  --text-muted: #A1A1AA;
+  --border: rgba(229, 229, 229, 0.12);
+  --brand: #6054F1;
+  --brand-soft: #1A1759;
+  --brand-soft-strong: #3C2ECA;
+  --brand-text: #CFD8FF;
+  --chart-series-1: #4B3FE3;
+  --accent-2: #F87454;
+  --accent-soft: #123F3C;
+  --accent-text: #CCFBF1;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-widget-theme="light"]) {
+    color-scheme: dark;
+    --surface: #171717;
+    --surface-muted: #262626;
+    --text: #E5E5E5;
+    --text-muted: #A1A1AA;
+    --border: rgba(229, 229, 229, 0.12);
+    --brand: #6054F1;
+    --brand-soft: #1A1759;
+    --brand-soft-strong: #3C2ECA;
+    --brand-text: #CFD8FF;
+    --chart-series-1: #4B3FE3;
+    --accent-2: #F87454;
+    --accent-soft: #123F3C;
+    --accent-text: #CCFBF1;
+  }
+}
+
+.widget {
+  color: var(--text);
+  background: transparent;
+  font: var(--weight-regular) var(--text-body) var(--font-sans);
+  letter-spacing: 0;
+  width: 100%;
+}
+
+.calcPanel {
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--spacer-20);
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--border) 92%, transparent);
+  border-radius: var(--radius-card);
+}
+
+.resultRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--spacer-12);
+  margin-bottom: var(--spacer-16);
+}
+
+.resultLabel {
+  margin: 0;
+  color: var(--text-muted);
+  font: var(--weight-regular) var(--text-caption) var(--font-sans);
+}
+
+.resultValue {
+  margin: 0;
+  color: var(--text);
+  font: var(--weight-strong) var(--text-title) var(--font-metric);
+  font-variant-numeric: tabular-nums;
+}
+
+.bar {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  margin-bottom: var(--spacer-16);
+  background: var(--surface-muted);
+  border-radius: var(--radius-full);
+}
+
+.barFill {
+  display: block;
+  height: 100%;
+  background: var(--chart-series-1);
+  border-radius: var(--radius-full);
+}
+
+.optionRow {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-12);
+  padding: var(--spacer-8) var(--spacer-12);
+  margin-bottom: var(--spacer-4);
+  background: var(--surface-muted);
+  border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+  border-radius: var(--radius);
+}
+
+.optionRow input {
+  margin: 0;
+  accent-color: var(--chart-series-1);
+}
+
+.optionName {
+  flex: 1;
+  margin: 0;
+  color: var(--text);
+  font: var(--weight-regular) var(--text-body) var(--font-sans);
+}
+
+.optionValue {
+  margin: 0;
+  color: var(--text);
+  font: var(--weight-medium) var(--text-body) var(--font-metric);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .barFill {
+    transition: width 200ms ease;
+  }
+}
+</style>
+<div class="widget" data-dynamic-ui-widget data-template="live-calc">
+  <section class="calcPanel" aria-label="Live calculator">
+    <div class="resultRow">
+      <p class="resultLabel">Selected total</p>
+      <p class="resultValue" id="cTotal">5.6 GB</p>
+    </div>
+    <div class="bar" aria-hidden="true"><span class="barFill" id="cBar" style="width:72%"></span></div>
+    <div id="cOptions">
+      <label class="optionRow"><input type="checkbox" data-value="4" checked><span class="optionName">Temp files</span><span class="optionValue">4 GB</span></label>
+      <label class="optionRow"><input type="checkbox" data-value="1.6" checked><span class="optionName">Package manager cache</span><span class="optionValue">1.6 GB</span></label>
+      <label class="optionRow"><input type="checkbox" data-value="2.2"><span class="optionName">IDE cache</span><span class="optionValue">2.2 GB</span></label>
+    </div>
+  </section>
+</div>
+<script>
+(function () {
+  var root = document.querySelector('[data-dynamic-ui-widget][data-template="live-calc"]:not([data-mounted])');
+  if (!root) return;
+  var max = 7.8;
+  var totalEl = root.querySelector('#cTotal');
+  var barEl = root.querySelector('#cBar');
+  var inputs = Array.prototype.slice.call(root.querySelectorAll('#cOptions input'));
+  function fmt(n) {
+    return (Math.round(n * 10) / 10).toString();
+  }
+  function calc() {
+    var sum = 0;
+    inputs.forEach(function (i) { if (i.checked) sum += parseFloat(i.getAttribute('data-value') || '0'); });
+    totalEl.textContent = fmt(sum) + ' GB';
+    barEl.style.width = Math.min(100, (sum / max) * 100) + '%';
+  }
+  inputs.forEach(function (i) { i.addEventListener('change', calc); });
+  root.setAttribute('data-mounted', '');
+})();
+</script>

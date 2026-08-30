@@ -1,5 +1,7 @@
 package com.aiworkbench.controller;
 
+import com.aiworkbench.entity.User;
+import com.aiworkbench.mapper.UserMapper;
 import com.aiworkbench.security.JwtTokenProvider;
 import com.aiworkbench.service.opencode.BrowserCdpClient;
 import com.aiworkbench.service.opencode.ScreenTileDiffer;
@@ -62,6 +64,7 @@ public class BrowserWebSocketHandler extends TextWebSocketHandler {
     private final JwtTokenProvider tokenProvider;
     private final BrowserContainerManager browserContainerManager;
     private final ObjectMapper objectMapper;
+    private final UserMapper userMapper;
 
     /** 活跃连接:sessionId → session(用于清理) */
     private final Map<String, WebSocketSession> activeSessions = new ConcurrentHashMap<>();
@@ -110,10 +113,12 @@ public class BrowserWebSocketHandler extends TextWebSocketHandler {
 
     public BrowserWebSocketHandler(JwtTokenProvider tokenProvider,
                                    BrowserContainerManager browserContainerManager,
-                                   ObjectMapper objectMapper) {
+                                   ObjectMapper objectMapper,
+                                   UserMapper userMapper) {
         this.tokenProvider = tokenProvider;
         this.browserContainerManager = browserContainerManager;
         this.objectMapper = objectMapper;
+        this.userMapper = userMapper;
     }
 
     @Override
@@ -542,16 +547,41 @@ public class BrowserWebSocketHandler extends TextWebSocketHandler {
     private Long authenticate(WebSocketSession session) {
         try {
             URI uri = session.getUri();
-            if (uri == null) return null;
-            String token = UriComponentsBuilder.fromUri(uri).build()
-                    .getQueryParams().getFirst("token");
+            // 优先用同源 HttpOnly cookie:同一站点 WebSocket 握手会自动携带 Cookie,
+            // 避免把 JWT 放进 URL(?token=)而落入访问日志/浏览器历史。
+            String token = readCookie(session.getHandshakeHeaders().get("cookie"), "aiwb_token");
+            // 兜底:过渡期仍支持 ?token= 查询参数(老客户端)
+            if (token == null && uri != null) {
+                token = UriComponentsBuilder.fromUri(uri).build()
+                        .getQueryParams().getFirst("token");
+            }
             if (token == null || token.isBlank()) return null;
             var claims = tokenProvider.parse(token);
-            return Long.valueOf(claims.getSubject());
+            Long userId = Long.valueOf(claims.getSubject());
+            // 与 JwtAuthFilter 一致:禁用/已删用户即使 token 未过期也拒绝
+            User dbUser = userMapper.selectById(userId);
+            if (dbUser == null || Integer.valueOf(0).equals(dbUser.getStatus())) {
+                return null;
+            }
+            return userId;
         } catch (Exception e) {
             log.debug("browser ws auth failed: {}", e.toString());
             return null;
         }
+    }
+
+    /** 从 Cookie 头解析指定名称的值(逗号分隔多 Cookie / 每条内分号分隔 key=value)。 */
+    private String readCookie(List<String> cookieHeaders, String name) {
+        if (cookieHeaders == null) return null;
+        for (String header : cookieHeaders) {
+            for (String cookie : header.split(";")) {
+                int eq = cookie.indexOf('=');
+                if (eq > 0 && name.equals(cookie.substring(0, eq).trim())) {
+                    return cookie.substring(eq + 1).trim();
+                }
+            }
+        }
+        return null;
     }
 
     // ============ 工具 ============

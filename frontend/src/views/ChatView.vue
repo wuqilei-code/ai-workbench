@@ -906,6 +906,15 @@ const virtualItems = computed<VirtualListItem[]>(() => {
         </div>
 
         <div v-if="chat.currentSessionId" class="composer-wrap">
+          <!-- 未贴底时显示「回到最新」下箭头,点击滚到会话最下方 -->
+          <button
+            v-show="!stickToBottom"
+            class="scroll-to-bottom-btn"
+            title="回到最新消息"
+            @click="scrollToBottom"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
           <ChatInput ref="chatInputRef" @open-doc-gen="docGenShow = true" @open-error-diagnose="errorDiagnoseShow = true" @open-test-analysis="onTestAnalysis" />
         </div>
       </div>
@@ -1185,6 +1194,23 @@ const virtualItems = computed<VirtualListItem[]>(() => {
 .chat-virtual-inner { max-width: 860px; margin: 0 auto; padding: 0 20px; }
 .chat-virtual-inner > * { padding-top: 24px; padding-bottom: 24px; }
 .composer-wrap { max-width: 860px; margin: 0 auto; width: 100%; }
+/* 「回到最新消息」下箭头:显示在输入框上方居中,未贴底时出现 */
+.scroll-to-bottom-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: 50%;
+  margin: 0 auto 16px;
+  color: var(--text-2);
+  background: var(--card-color, var(--bg-color));
+  border: 1px solid var(--border-color, rgba(128,128,128,.25));
+  box-shadow: 0 2px 8px rgba(0,0,0,.08);
+  cursor: pointer;
+  transition: color .15s, background .15s, transform .15s;
+}
+.scroll-to-bottom-btn:hover {
+  color: var(--accent, #18a058);
+  background: var(--action-color, rgba(24,160,88,.08));
+}
+.scroll-to-bottom-btn:active { transform: scale(.94); }
 .thinking { display: flex; align-items: center; gap: 8px; color: var(--text-3); padding: 8px 0; }
 
 /* 历史分页顶部提示条:滚动到顶时自动加载更早消息 */

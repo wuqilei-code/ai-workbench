@@ -21,8 +21,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -50,26 +48,27 @@ public class AgentStreamBridge {
     private final SessionEventHub hub;
     private final ObjectMapper objectMapper;
     private final WebClient webClient;
-    private final ExecutorService executor;
+    private final java.util.concurrent.Executor executor;
 
     /** 在途生成状态,key = 会话外部 id("da-" 前缀)。 */
     private final Map<String, TurnStream> streams = new ConcurrentHashMap<>();
 
     public AgentStreamBridge(
             @Value("${deepagents.base-url:http://localhost:8000}") String baseUrl,
+            @Value("${app.internal-token:}") String internalToken,
             @org.springframework.context.annotation.Lazy ChatMessageService chatMessageService,
             SessionEventHub hub,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            @org.springframework.beans.factory.annotation.Qualifier("taskExecutor")
+                    java.util.concurrent.Executor taskExecutor) {
         String base = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
         this.chatMessageService = chatMessageService;
         this.hub = hub;
         this.objectMapper = objectMapper;
-        this.webClient = WebClient.builder().baseUrl(base).build();
-        this.executor = Executors.newCachedThreadPool(r -> {
-            Thread t = new Thread(r, "agent-stream");
-            t.setDaemon(true);
-            return t;
-        });
+        this.webClient = WebClient.builder().baseUrl(base)
+                .defaultHeader("X-Internal-Token", internalToken)
+                .build();
+        this.executor = taskExecutor;
     }
 
     /**
@@ -159,8 +158,8 @@ public class AgentStreamBridge {
         if ("approve".equals(decision)) {
             d.put("type", "approve");
         } else if ("reply".equals(decision)) {
-            d.put("type", "approve");
-            d.put("output", answer != null ? answer : "");
+            d.put("type", "respond");
+            d.put("message", answer != null ? answer : "");
         } else {
             d.put("type", "reject");
             d.put("message", "用户拒绝了该操作");
@@ -507,9 +506,10 @@ public class AgentStreamBridge {
     /** 把当前轮(文本 + 时间线 + 工具调用)upsert 到 DB。 */
     private void persistTurn(TurnStream ts, String status) {
         try {
+            long elapsedSec = Math.max(1, (System.currentTimeMillis() - ts.startedAt) / 1000);
             chatMessageService.upsertAssistantTurn(
                     ts.sessionId, ts.assistantMessageId,
-                    ts.fullText.toString(), ts.toolCalls, ts.timeline, status);
+                    ts.fullText.toString(), ts.toolCalls, ts.timeline, status, elapsedSec);
         } catch (Exception e) {
             log.warn("persist turn failed (session={}): {}", ts.sessionId, e.toString());
         }

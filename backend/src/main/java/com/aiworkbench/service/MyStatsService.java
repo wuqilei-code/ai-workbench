@@ -39,19 +39,29 @@ public class MyStatsService {
     private final UserDailyMetricMapper userDailyMetricMapper;
     private final ModelPriceMapper modelPriceMapper;
 
+    /** 个人仪表盘聚合缓存(短 TTL):多次快速刷新不重复扫库;由 DashboardCacheConfig 注入。 */
+    private final com.aiworkbench.common.TtlCache<String, MyStatsVo> cache;
+
     public MyStatsVo dashboard(Long userId, int days) {
         int n = Math.max(1, Math.min(days, 90));
+        String key = userId + ":" + n;
+        MyStatsVo cached = cache.get(key);
+        if (cached != null) {
+            return cached;
+        }
         LocalDate today = LocalDate.now();
         LocalDate since = today.minusDays(n - 1L);
 
         List<MyStatsVo.DailyPoint> daily = buildDaily(userId, since, today);
 
-        return MyStatsVo.builder()
+        MyStatsVo vo = MyStatsVo.builder()
                 .overview(buildOverview(userId, daily))
                 .daily(daily)
                 .agents(toNamedStats(myStatsMapper.agentDistribution(userId), "agent"))
                 .models(buildModelStats(userId))
                 .build();
+        cache.put(key, vo);
+        return vo;
     }
 
     private MyStatsVo.Overview buildOverview(Long userId, List<MyStatsVo.DailyPoint> daily) {

@@ -45,11 +45,14 @@ public class BrowserContainerManager {
 
     public BrowserContainerManager(
             WorkspaceProperties props,
-            @Value("${deepagents.base-url:http://localhost:8000}") String agentBaseUrl) {
+            @Value("${deepagents.base-url:http://localhost:8000}") String agentBaseUrl,
+            @Value("${app.internal-token:}") String internalToken) {
         this.props = props;
         String base = (agentBaseUrl == null || agentBaseUrl.isBlank()) ? "http://localhost:8000" : agentBaseUrl;
         if (base.endsWith("/")) base = base.substring(0, base.length() - 1);
-        this.webClient = WebClient.builder().baseUrl(base).build();
+        this.webClient = WebClient.builder().baseUrl(base)
+                .defaultHeader("X-Internal-Token", internalToken)
+                .build();
     }
 
     public String containerName(Long userId) {

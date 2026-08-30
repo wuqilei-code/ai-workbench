@@ -1,0 +1,9 @@
+{
+  "placeholder": "Type to filter…",
+  "items": [
+    { "name": "Docker data migration", "meta": "Storage · scheduled" },
+    { "name": "Temp file cleanup", "meta": "Cache · ready" },
+    { "name": "Package manager cache", "meta": "Cache · ready" },
+    { "name": "System update leftovers", "meta": "Storage · review" }
+  ]
+}

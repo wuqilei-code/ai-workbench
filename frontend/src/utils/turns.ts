@@ -114,8 +114,26 @@ function finalizeTurn(turn: Turn) {
   // 推理不是"答案":当最后可提升的步骤是纯推理段时不提升,让它保留在思考区,
   // 避免"思考"在流式期被当成正文渲染、结束后才跳进思考块。
   if (turn.steps[idx].kind === 'reason') return
-  turn.finalAnswer = turn.steps[idx]
+  // 空步骤(发送时预建的占位壳)不提升:保留在 steps 里,使 turn 走多步模式
+  // 立即渲染"AI Workbench + 思考中"头部,而非一个空白气泡。
+  if (!(turn.steps[idx].narration || '').trim() && !turn.steps[idx].toolCalls?.length) return
+  const fa = turn.steps[idx]
+  turn.finalAnswer = fa
   turn.steps.splice(idx, 1)
+  // 当末段"正文"整段只是交付文件声明(总结后又插入了 update_memory 等后台工具、单独输出
+  // [结果文件] 行时,末段正文会只剩下标记行),此时把紧邻的上文正文并入 finalAnswer,
+  // 避免真正的总结被孤立在折叠的思考区、只有文件下载块。
+  // 修复:总结消失 bug→finalAnswer 合并紧邻正文。build=20260829-2
+  if (fa.kind === 'text' && !stripDeliverableMarkers(fa.narration || '').trim()) {
+    for (let i = turn.steps.length - 1; i >= 0; i--) {
+      const s = turn.steps[i]
+      if ((s.kind || 'text') === 'text' && (s.narration || '').trim()) {
+        fa.narration = (s.narration || '') + '\n\n' + (fa.narration || '')
+        turn.steps.splice(i, 1)
+        break
+      }
+    }
+  }
 }
 
 function toStep(msg: MessageVo): Step {
@@ -235,6 +253,9 @@ export function isFileProducingTool(tc: ToolCall): boolean {
 /** [结果文件] 标记行正则:整行匹配,path 至少 1 字符;多行模式(m)让 ^/$ 匹配每行首尾 */
 const DELIVERABLE_LINE_RE = /^\[结果文件\]\s*(.+)$/gm
 
+/** [WIDGET_FILE] 标记行:组件已由 toolCall.outputs 渲染为交互组件,正文里的标记行同样剥离 */
+const WIDGET_FILE_LINE_RE = /^\[WIDGET_FILE\]\s*(\S+)\s*$/gm
+
 /** 归一化交付路径:去掉 /workspace 前缀与首尾分隔符,得到相对项目根的路径(前端文件 API 以此为基准)。 */
 export function normalizeDeliverablePath(path: string): string {
   if (!path) return path
@@ -309,11 +330,12 @@ export function collectDeliverables(turn: Turn): { path: string; name: string }[
   return merged
 }
 
-/** 渲染时剥离 [结果文件] 标记行,并清理多余空行,避免正文出现空段。 */
+/** 渲染时剥离 [结果文件] / [WIDGET_FILE] 标记行,并清理多余空行,避免正文出现空段。 */
 export function stripDeliverableMarkers(text: string): string {
   if (!text) return ''
   return text
     .replace(DELIVERABLE_LINE_RE, '')
+    .replace(WIDGET_FILE_LINE_RE, '')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/^\s*\n/, '')

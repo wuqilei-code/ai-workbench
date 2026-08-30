@@ -1,0 +1,185 @@
+<style>
+:root {
+  color-scheme: light;
+  --surface: #F7F7F8;
+  --surface-muted: #EFEFF2;
+  --text: #171717;
+  --text-muted: #52525B;
+  --border: rgba(23, 23, 23, 0.12);
+  --brand: #4B3FE3;
+  --brand-soft: #F2F7FF;
+  --brand-soft-strong: #E5EAFF;
+  --brand-text: #1A1759;
+  --brand-on: #FFFFFF;
+  --chart-series-1: #3C2ECA;
+  --chart-series-2: #A9AEFF;
+  --chart-series-3: #6F6FFF;
+  --chart-series-4: #22A5F7;
+  --chart-other: #D3D4DA;
+  --accent: #27D2BF;
+  --accent-2: #F87454;
+  --accent-soft: #EAFBF8;
+  --accent-text: #0F766E;
+  --success: #1DC981;
+  --warning: #EFAA17;
+  --danger: #E8463A;
+  --radius: 8px;
+  --radius-card: 12px;
+  --radius-full: 999px;
+  --spacer-4: 4px;
+  --spacer-8: 8px;
+  --spacer-12: 12px;
+  --spacer-16: 16px;
+  --spacer-20: 20px;
+  --spacer-24: 24px;
+  --font-sans: "SF Pro Text", "PingFang SC", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-metric: "Inter", "SF Pro Text", "PingFang SC", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-strong: 600;
+  --text-caption: 12px/18px;
+  --text-body: 14px/20px;
+  --text-title: 16px/24px;
+  --text-code: 13px/20px;
+}
+
+:root[data-widget-theme="dark"] {
+  color-scheme: dark;
+  --surface: #171717;
+  --surface-muted: #262626;
+  --text: #E5E5E5;
+  --text-muted: #A1A1AA;
+  --border: rgba(229, 229, 229, 0.12);
+  --brand: #6054F1;
+  --brand-soft: #1A1759;
+  --brand-soft-strong: #3C2ECA;
+  --brand-text: #CFD8FF;
+  --chart-series-1: #4B3FE3;
+  --accent-2: #F87454;
+  --accent-soft: #123F3C;
+  --accent-text: #CCFBF1;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-widget-theme="light"]) {
+    color-scheme: dark;
+    --surface: #171717;
+    --surface-muted: #262626;
+    --text: #E5E5E5;
+    --text-muted: #A1A1AA;
+    --border: rgba(229, 229, 229, 0.12);
+    --brand: #6054F1;
+    --brand-soft: #1A1759;
+    --brand-soft-strong: #3C2ECA;
+    --brand-text: #CFD8FF;
+    --chart-series-1: #4B3FE3;
+    --accent-2: #F87454;
+    --accent-soft: #123F3C;
+    --accent-text: #CCFBF1;
+  }
+}
+
+.widget {
+  color: var(--text);
+  background: transparent;
+  font: var(--weight-regular) var(--text-body) var(--font-sans);
+  letter-spacing: 0;
+  width: 100%;
+}
+
+.tabPanel {
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--spacer-20);
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--border) 92%, transparent);
+  border-radius: var(--radius-card);
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacer-8);
+  padding: var(--spacer-4);
+  margin-bottom: var(--spacer-16);
+  background: var(--surface-muted);
+  border-radius: var(--radius);
+}
+
+.tab {
+  padding: var(--spacer-8) var(--spacer-16);
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius);
+  font: var(--weight-medium) var(--text-body) var(--font-sans);
+  cursor: pointer;
+}
+
+.tab[aria-selected="true"] {
+  color: var(--brand-text);
+  background: var(--brand-soft);
+}
+
+.tab:hover,
+.tab:focus-visible {
+  color: var(--text);
+  outline: none;
+}
+
+.tabBody {
+  margin: 0;
+  color: var(--text);
+}
+
+.tabBody[hidden] {
+  display: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .tabBody {
+    transition: opacity 140ms ease;
+  }
+}
+</style>
+<div class="widget" data-dynamic-ui-widget data-template="tab-switch">
+  <section class="tabPanel" aria-label="Tabbed views">
+    <div class="tabs" role="tablist" aria-label="Views">
+      <button type="button" class="tab" role="tab" id="tab-overview" aria-selected="true" aria-controls="panel-overview">Overview</button>
+      <button type="button" class="tab" role="tab" id="tab-detail" aria-selected="false" aria-controls="panel-detail">Detail</button>
+      <button type="button" class="tab" role="tab" id="tab-compare" aria-selected="false" aria-controls="panel-compare">Compare</button>
+    </div>
+    <p class="tabBody" role="tabpanel" id="panel-overview" aria-labelledby="tab-overview">Core summary of the subject and its main takeaway.</p>
+    <p class="tabBody" role="tabpanel" id="panel-detail" aria-labelledby="tab-detail" hidden>Itemized facts and numbers the reader can inspect.</p>
+    <p class="tabBody" role="tabpanel" id="panel-compare" aria-labelledby="tab-compare" hidden>Side-by-side trade-offs across the main options.</p>
+  </section>
+</div>
+<script>
+(function () {
+  var root = document.querySelector('[data-dynamic-ui-widget][data-template="tab-switch"]:not([data-mounted])');
+  if (!root) return;
+  var tabs = Array.prototype.slice.call(root.querySelectorAll('.tab'));
+  var panels = Array.prototype.slice.call(root.querySelectorAll('.tabBody'));
+  var active = tabs.findIndex(function (t) { return t.getAttribute('aria-selected') === 'true'; });
+  if (active < 0) active = 0;
+  function activate(next) {
+    tabs.forEach(function (t, i) { t.setAttribute('aria-selected', String(i === next)); });
+    panels.forEach(function (p, i) { p.hidden = i !== next; });
+    active = next;
+  }
+  tabs.forEach(function (tab, i) {
+    tab.addEventListener('click', function () { activate(i); });
+  });
+  root.addEventListener('keydown', function (e) {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    var current = tabs.indexOf(document.activeElement);
+    if (current < 0) return;
+    var next = e.key === 'ArrowRight' ? (current + 1) % tabs.length : (current - 1 + tabs.length) % tabs.length;
+    activate(next);
+    tabs[next].focus();
+  });
+  root.setAttribute('data-mounted', '');
+})();
+</script>

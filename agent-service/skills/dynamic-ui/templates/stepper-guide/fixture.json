@@ -1,0 +1,9 @@
+{
+  "title": "Release pipeline",
+  "positionLabel": "Step 1 of 3",
+  "steps": [
+    { "title": "Build", "body": "Compile and lint the source, run unit tests, produce an artifact." },
+    { "title": "Stage", "body": "Promote the artifact to a staging environment and run integration checks." },
+    { "title": "Deploy", "body": "Release to production with a rolling update and health validation." }
+  ]
+}

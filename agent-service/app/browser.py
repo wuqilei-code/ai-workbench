@@ -52,7 +52,15 @@ def _open_shared_page(user_id: str):
     get_docker_sandbox(user_id).ensure_browser()
     endpoint = _sandbox_cdp_endpoint(user_id)
     p = sync_playwright().start()
-    browser = p.chromium.connect_over_cdp(endpoint)
+    try:
+        browser = p.chromium.connect_over_cdp(endpoint)
+    except Exception:
+        # connect_over_cdp 失败时若不清 driver,会泄漏 Node 子进程
+        try:
+            p.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        raise
     ctx = browser.contexts[0] if browser.contexts else browser.new_context()
     page = ctx.pages[0] if ctx.pages else ctx.new_page()
     return p, browser, ctx, page

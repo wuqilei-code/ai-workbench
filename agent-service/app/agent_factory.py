@@ -68,28 +68,36 @@ class _PathNormalizingProxy:
 
     # --- 路径敏感操作:规范化后委托 ---
     def ls(self, path: str):
-        return self._inner.ls(_normalize_fs_path(path))
+        norm = _normalize_fs_path(path)
+        return self._inner.ls(norm)
 
     def als(self, path: str):
-        return self._inner.als(_normalize_fs_path(path))
+        norm = _normalize_fs_path(path)
+        return self._inner.als(norm)
 
     def read(self, file_path: str, **kw):
-        return self._inner.read(_normalize_fs_path(file_path), **kw)
+        norm = _normalize_fs_path(file_path)
+        return self._inner.read(norm, **kw)
 
     def aread(self, file_path: str, **kw):
-        return self._inner.aread(_normalize_fs_path(file_path), **kw)
+        norm = _normalize_fs_path(file_path)
+        return self._inner.aread(norm, **kw)
 
     def write(self, file_path: str, *a, **kw):
-        return self._inner.write(_normalize_fs_path(file_path), *a, **kw)
+        norm = _normalize_fs_path(file_path)
+        return self._inner.write(norm, *a, **kw)
 
     def awrite(self, file_path: str, *a, **kw):
-        return self._inner.awrite(_normalize_fs_path(file_path), *a, **kw)
+        norm = _normalize_fs_path(file_path)
+        return self._inner.awrite(norm, *a, **kw)
 
     def edit(self, file_path: str, *a, **kw):
-        return self._inner.edit(_normalize_fs_path(file_path), *a, **kw)
+        norm = _normalize_fs_path(file_path)
+        return self._inner.edit(norm, *a, **kw)
 
     def aedit(self, file_path: str, *a, **kw):
-        return self._inner.aedit(_normalize_fs_path(file_path), *a, **kw)
+        norm = _normalize_fs_path(file_path)
+        return self._inner.aedit(norm, *a, **kw)
 
     def glob(self, pattern: str, *a, **kw):
         return self._inner.glob(_normalize_fs_path(pattern), *a, **kw)
@@ -143,6 +151,7 @@ from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellB
 from deepagents.middleware.skills import SkillsMiddleware
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_openai import ChatOpenAI
+from langchain.agents.middleware import AgentMiddleware
 
 from app import config
 from app import workspace as ws
@@ -151,6 +160,38 @@ from app.memory_tool import build_memory_tools
 from app.question_tool import build_question_tools
 from app.skill_tool import ReadOnlyBackend, SelectedSkillsBackend, build_skill_tools
 from app.widget_tool import build_widget_tools
+
+
+class _DeepSeekFileScrub(AgentMiddleware):
+    """DeepSeek 不支持 file 内容块(base64 编码文件),deepagents 的 FilesystemMiddleware
+    误判 ChatOpenAI(DeepSeek 用的)支持非 PDF 文件导致 scrub 失效。此中间件在模型调用前
+    移除 ToolMessage 中的 file 块,避免 400 错误。"""
+
+    def wrap_model_call(self, request, handler):
+        from langchain_core.messages import ToolMessage
+        scrubbed = []
+        for msg in request.messages:
+            if isinstance(msg, ToolMessage) and isinstance(msg.content, list):
+                new_blocks = [b for b in msg.content if not (isinstance(b, dict) and b.get("type") == "file")]
+                if len(new_blocks) != len(msg.content):
+                    msg = msg.model_copy(update={"content": new_blocks})
+            scrubbed.append(msg)
+        if scrubbed != list(request.messages):
+            request = request.model_copy(update={"messages": scrubbed})
+        return handler(request)
+
+    async def awrap_model_call(self, request, handler):
+        from langchain_core.messages import ToolMessage
+        scrubbed = []
+        for msg in request.messages:
+            if isinstance(msg, ToolMessage) and isinstance(msg.content, list):
+                new_blocks = [b for b in msg.content if not (isinstance(b, dict) and b.get("type") == "file")]
+                if len(new_blocks) != len(msg.content):
+                    msg = msg.model_copy(update={"content": new_blocks})
+            scrubbed.append(msg)
+        if scrubbed != list(request.messages):
+            request = request.model_copy(update={"messages": scrubbed})
+        return await handler(request)
 
 # 平台内置技能(默认每个会话都加载;与镜像 agent-service/skills 下的目录名一致)
 BUILTIN_SKILLS = {
@@ -259,6 +300,27 @@ def _build_backend(user_id: str, visible_skills: set[str] | None = None) -> Comp
     else:
         raise ValueError(f"非法 AGENT_SANDBOX_BACKEND: {mode!r}(可选 docker|local)")
 
+    # 不要把 /workspace 注册成路由(docker 模式):CompositeBackend 会把命中的路由前缀
+    # 剥掉,而沙箱被实现成 deepagents BaseSandbox,把收到的路径当作容器内**绝对路径**直接用
+    # (os.scandir / 说服 python 脚本直接吃原路径)。剥掉 /workspace/ 后:
+    #   - ls("/workspace/")   → 变成列容器根 /(看到 /usr,/dev,media...)
+    #   - write_file("/workspace/scripts/x.py") → 变成裸 /scripts 去容器根建目录
+    #     → PermissionError(容器根只读)
+    #   - 只有碰巧写成 "/workspace/workspace/scripts"(多套一层)被剥成 "/workspace/scripts"
+    #     (真实挂载点)才碰巧可用 —— 这正是此前"真实工作区在 /workspace/workspace"的混乱来源。
+    # 而 /workspace 路由与 default 本就是同一后端,故 docker 下干脆不注册,让 /workspace/...
+    # 原样落到 default(不经剥前缀,路径保持容器内 /workspace/... 正确指向挂载)。
+    # 注意:local 模式(LocalShellBackend virtual_mode)路径是相对 root_dir 的虚拟路径,
+    # 需要靠 /workspace 路由剥前缀才能正确映射,因此 local 下仍保留该路由。
+    routes = {
+        # 技能目录只读:变更唯一入口是 create_skill 工具(经后端入库+落盘,防漂移)
+        "/skills/": SelectedSkillsBackend(
+            FilesystemBackend(root_dir=str(ws.skills_root(user_id)), virtual_mode=True),
+            visible=visible_skills,
+        ),
+    }
+    if mode == "local":
+        routes["/workspace/"] = workspace_backend
     backend = CompositeBackend(
         default=workspace_backend,
         # artifacts_root:summarization 中间件把被压缩的旧历史/媒体卸载到
@@ -267,14 +329,7 @@ def _build_backend(user_id: str, visible_skills: set[str] | None = None) -> Comp
         # 且卸载失败会让每轮都全量重总结(351+ 条消息,流式前长时间静默)。
         # 指到 per-user 沙箱工作区,可写且按用户隔离。
         artifacts_root="/workspace",
-        routes={
-            "/workspace/": workspace_backend,
-            # 技能目录只读:变更唯一入口是 create_skill 工具(经后端入库+落盘,防漂移)
-            "/skills/": SelectedSkillsBackend(
-                FilesystemBackend(root_dir=str(ws.skills_root(user_id)), virtual_mode=True),
-                visible=visible_skills,
-            ),
-        },
+        routes=routes,
     )
     return _PathNormalizingProxy(backend)
 
@@ -285,20 +340,47 @@ def _build_permissions() -> list[FilesystemPermission]:
     return []
 
 
+_DANGEROUS_LEAD_TOKENS = {
+    "rm", "rmdir", "mv", "chmod", "chown", "chgrp", "sudo", "su", "apt", "apt-get",
+    "pip", "pip3", "curl", "wget", "git", "mkfs", "dd", "shutdown", "reboot",
+    "kill", "pkill", "killall", "chattr", "useradd", "userdel", "passwd",
+}
+
+
 def _dangerous_command(req) -> bool:
-    """execute 是否危险命令(when 判定):命中高危前缀才要求确认,避免每次 execute 都打扰。"""
+    """execute 是否危险命令(when 判定):命中高危命令/复合命令才要求确认,避免每次 execute 都打扰。
+
+    用 token/词法判定而非前缀匹配,堵住 `ls; rm -rf /`、`bash -c 'sudo ...'` 等绕过。
+    命中以下任一情形即视为危险:
+      - 复合命令(`;` / `&&` / `||` / `|` / 反引号 / `$()` )——无法可靠判定整体语义,一律确认;
+      - 首命令词属于高危集合(rm/mv/sudo/pip/curl/git push 等);
+    """
     tool_call = getattr(req, "tool_call", None) or getattr(req, "request", None)
     args = (tool_call or {}).get("args", {}) or {}
-    cmd = str(args.get("command") or "").lstrip()
+    cmd = str(args.get("command") or "").strip()
     if not cmd:
         return False
-    return cmd.startswith((
-        "rm ", "rmdir ", "mv ", "chmod ", "chown ", "chgrp ", "touch -",
-        "sudo", "su ", "apt", "apt-get", "pip", "pip3", "python% -m pip%",
-        "curl", "wget", "git push", "git reset", "git clean", "git checkout",
-        "mkfs", "dd ", "shutdown", "reboot", "kill ", "pkill", "killall",
-        "chattr", "useradd", "userdel", "passwd",
-    ))
+    # 复合命令 / 命令替换 / 反引号:无法静态判定行为,一律要求确认
+    if any(ch in cmd for ch in (";", "&&", "||", "|")):
+        return True
+    if "`" in cmd or "$(" in cmd:
+        return True
+    try:
+        import shlex
+
+        tokens = shlex.split(cmd)
+    except Exception:  # noqa: BLE001
+        return True  # 解析失败(引号不闭合等)按危险处理
+    if not tokens:
+        return False
+    lead = tokens[0].lower()
+    if lead in _DANGEROUS_LEAD_TOKENS:
+        # git 仅特定子命令危险(push/reset/clean/checkout 会变更远端/历史)
+        if lead == "git":
+            sub = tokens[1].lower() if len(tokens) > 1 else ""
+            return sub in {"push", "reset", "clean", "checkout", "rebase", "commit", "tag"}
+        return True
+    return False
 
 
 def _build_interrupt_on() -> dict | None:
@@ -325,7 +407,7 @@ def _build_interrupt_on() -> dict | None:
         },
         # agent 向用户提问以获取补充信息
         "ask_user": {
-            "allowed_decisions": ["approve", "reject"],
+            "allowed_decisions": ["respond"],
             "description": "agent 需要向您提问以获取更多信息,请回答后继续。",
             "when": lambda req: True,
         },
@@ -388,7 +470,15 @@ _DEFAULT_SYSTEM_PROMPT = (
 
 
 def _fingerprint(user_id: str, skills: list[str], memory: list[str], system_prompt: str | None) -> str:
-    parts = [user_id, system_prompt or _DEFAULT_SYSTEM_PROMPT] + skills + memory + ["browser_open_url"]
+    # 记忆按文件内容哈希(而非仅路径):AGENTS.md 内容变化时缓存自动失效重建,
+    # 否则 agent 会一直沿用构建时的旧记忆。文件缺失/不可读则退化为路径本身。
+    mem_sig: list[str] = []
+    for p in memory:
+        try:
+            mem_sig.append(hashlib.sha256(Path(p).read_bytes()).hexdigest())
+        except Exception:  # noqa: BLE001
+            mem_sig.append(p)
+    parts = [user_id, system_prompt or _DEFAULT_SYSTEM_PROMPT] + skills + mem_sig + ["browser_open_url"]
     return hashlib.sha256("\x1f".join(parts).encode()).hexdigest()
 
 
@@ -431,7 +521,7 @@ class AgentManager:
             backend=backend,
             # 技能不走 deepagents 内置 skills 参数(它每线程只加载一次);改用强制重载中间件,
             # 会话中途改勾选/新建技能,下一条消息立即生效。
-            middleware=[ReloadSkillsMiddleware(backend=backend, sources=["/skills"])] if skills else [],
+            middleware=[_DeepSeekFileScrub()] + ([ReloadSkillsMiddleware(backend=backend, sources=["/skills"])] if skills else []),
             permissions=_build_permissions(),
             interrupt_on=_build_interrupt_on(),
             memory=memory,
@@ -462,9 +552,12 @@ def get_manager() -> AgentManager:
 
 def config_for(user_id: str, thread_id: str) -> dict:
     return {
+        # recursion_limit:硬性步数上限,防止单个请求无限跑模型调用(烧钱/死循环)。
+        # deepagents 内部默认 9999,这里用 AGENT_MAX_TURNS 收紧。
+        "recursion_limit": config.AGENT_MAX_TURNS,
         "configurable": {
             "user_id": user_id,
             "thread_id": thread_id,
             "checkpoint_id": None,
-        }
+        },
     }

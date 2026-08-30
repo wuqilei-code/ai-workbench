@@ -4,8 +4,9 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 /**
  * 流式打字效果:
  * - 已写完的行:整行柔和淡入
- * - 正在写的当前行:尾部 dimTail 个字符保持"隐藏光效",其余随输出立即显现;
- *   dimTail=0 时全部立即显现(适用于思考过程这类多行连续流)
+ * - 正在写的当前行:按 rAF 匀速逐字显现(滞后越多追得越快),替代旧的 120ms
+ *   定跳——SSE 成块到达时不再"整段蹦出",观感平滑;尾部 dimTail 个字符
+ *   保持"隐藏光效",dimTail=0 时全部显现但仍匀速
  * - 停顿 400ms 后尾部也全部显现
  */
 const props = defineProps<{ text: string; active?: boolean; dimTail?: number; maxChars?: number }>()
@@ -22,39 +23,50 @@ const lines = computed(() => viewText.value.split('\n'))
 const completed = computed(() => lines.value.slice(0, -1))
 const pending = computed(() => lines.value[lines.value.length - 1] ?? '')
 
-/** 当前行已显现的字符数(尾部 tail 个字符保持隐藏光效) */
+/** 当前行已显现的字符数(浮点,渲染时取整;尾部 tail 个字符保持隐藏光效) */
 const commitLen = ref(0)
+const commitInt = computed(() => Math.floor(commitLen.value))
 let lastChange = Date.now()
-let ticker: ReturnType<typeof setInterval> | null = null
+let rafId = 0
+let lastT = 0
 
 watch(pending, () => {
   lastChange = Date.now()
 })
 
-// 换行后进入新的一行:重新从隐藏光效开始(dimTail=0 时无影响,立即显现)
+// 换行后进入新的一行:重新从逐字显现开始
 watch(() => completed.value.length, () => {
   commitLen.value = 0
   lastChange = Date.now()
 })
 
-ticker = setInterval(() => {
+function tick(t: number) {
+  rafId = requestAnimationFrame(tick)
   if (!props.active) return
+  const dt = lastT ? Math.min(0.1, (t - lastT) / 1000) : 0
+  lastT = t
   const p = pending.value
-  const keep = tail.value
+  // 停顿 400ms:视为输出告一段落,尾部全部显现
   if (Date.now() - lastChange > 400) {
     if (commitLen.value !== p.length) commitLen.value = p.length
     return
   }
-  if (p.length > commitLen.value + keep) commitLen.value = p.length - keep
-}, 120)
+  const target = Math.max(0, p.length - tail.value)
+  if (commitLen.value < target && dt > 0) {
+    const lag = target - commitLen.value
+    // 基础 40 字/s 匀速,滞后越多追赶越快(上限 500 字/s),避免远落后于流
+    const speed = Math.min(500, 40 + lag * 6)
+    commitLen.value = Math.min(target, commitLen.value + Math.max(1, speed * dt))
+  }
+}
+rafId = requestAnimationFrame(tick)
 
 onBeforeUnmount(() => {
-  if (ticker) clearInterval(ticker)
+  if (rafId) cancelAnimationFrame(rafId)
 })
 
 watch(() => props.active, (a) => {
   if (!a) {
-    if (ticker) clearInterval(ticker)
     commitLen.value = pending.value.length
   }
 })
@@ -62,11 +74,11 @@ watch(() => props.active, (a) => {
 
 <template>
   <span class="ty-reveal" :class="{ 'ty-static': !active }">
-    <span v-if="hiddenCount > 0" class="ty-omitted">…前面 {{ hiddenCount }} 字已输出</span>
+    <span v-if="hiddenCount > 0 && !active" class="ty-omitted">…前面 {{ hiddenCount }} 字已折叠</span>
     <template v-for="(ln, i) in completed" :key="i">
       <span class="ty-line">{{ ln }}</span>
     </template>
-    <span v-if="active" class="ty-pending"><span class="ty-commit">{{ pending.slice(0, commitLen) }}</span><span v-if="commitLen < pending.length" class="ty-dim">{{ pending.slice(commitLen) }}</span></span>
+    <span v-if="active" class="ty-pending"><span class="ty-commit">{{ pending.slice(0, commitInt) }}</span><span v-if="commitInt < pending.length" class="ty-dim">{{ pending.slice(commitInt) }}</span></span>
     <span v-else class="ty-line">{{ pending }}</span>
     <span v-if="active" class="cursor"></span>
   </span>
