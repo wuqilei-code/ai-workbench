@@ -18,6 +18,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -40,6 +41,7 @@ public class UserService {
     private final java.util.concurrent.ConcurrentHashMap<String, LoginFailInfo> loginFails = new java.util.concurrent.ConcurrentHashMap<>();
     private record LoginFailInfo(int count, long lockUntil) {}
 
+    @Transactional
     public AuthResponse register(RegisterRequest req) {
         if (!registrationEnabled) {
             throw new BusinessException(ResultCode.REGISTRATION_DISABLED);
@@ -64,6 +66,9 @@ public class UserService {
         userMapper.insert(user);
 
         // Phase 1:分配 uid + 创建 0700 私有工作目录(per-user 隔离地基)
+        // 注册前必须先隔离陈旧工作区:userId 可能被复用(AUTO_INCREMENT 回收 / 调试脚本提前跑过
+        // provisioning),否则新用户会直接看到上一任的私有文件。
+        userProvisioningService.quarantineStaleWorkspace(user.getId());
         userProvisioningService.ensureProvisioned(user.getId());
 
         log.info("user registered: id={} username={} role={}", user.getId(), user.getUsername(), role);

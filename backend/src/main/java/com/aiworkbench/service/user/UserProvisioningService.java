@@ -10,9 +10,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 
 /**
  * Phase 1:per-user uid 隔离 provisioning。
@@ -38,6 +40,105 @@ public class UserProvisioningService {
     private static final String ACCT_PREFIX = "aiwb-";
     /** 禁止系统账户交互登录 */
     private static final String NOLOGIN_SHELL = "/usr/sbin/nologin";
+    /** 陈旧工作区归档根目录名(位于 workspace root 下、users/ 之外) */
+    private static final String QUARANTINE_DIR = "_quarantine";
+    private static final java.time.format.DateTimeFormatter STAMP =
+            java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
+
+    /**
+     * 注册专用防护:杜绝 userId 复用导致的跨用户数据可见。
+     * <p>
+     * 背景:工作区与 uid 均按 userId 确定性派生,而 userId 可能被复用 —— MySQL AUTO_INCREMENT
+     * 在行被删除后会回收 id,调试脚本也可能提前对未注册的 userId 跑过 provisioning。此时新注册
+     * 用户的工作区里会残留上一任(或测试)的 project 文件、skills 自建技能、.memory 记忆,
+     * 甚至 agent 会直接加载上一任的技能 —— 属数据隔离缺陷。
+     * <p>
+     * 策略:全新注册用户本不该有任何历史目录,因此 users/&lt;id&gt; 与 /data/users/&lt;uid&gt; 只要存在
+     * 即视为陈旧,整目录移动到同卷的 _quarantine/ 下归档(不删除,保留可追溯性;归档 0700 且位于
+     * users/ 之外,任何用户工作区都无法触达)。随后 {@link #ensureProvisioned} 重建干净目录。
+     * <p>
+     * 仅注册路径调用;登录路径绝不能调用(那里是用户真实数据)。
+     */
+    public void quarantineStaleWorkspace(Long userId) {
+        if (java.io.File.separatorChar == '\\') {
+            return; // Windows 本地开发无 uid 隔离,跳过
+        }
+        int uid = props.getUidBase() + userId.intValue();
+        Path staleUsers = Paths.get(props.getRoot(), "users", String.valueOf(userId));
+        Path staleHome = Paths.get(props.getPerUserDataRoot(), String.valueOf(uid));
+        if (!Files.exists(staleUsers) && !Files.exists(staleHome)) {
+            return;
+        }
+        // 安全阀:目录若有 git 提交历史,说明曾被真实会话使用过(每轮对话自动 commit)。
+        // 此时不自动归档(避免 DB 异常等场景下误丢用户数据),抛错交由管理员确认。
+        // 调试残留 / 已删用户的工作区通常无提交,可安全自动归档。
+        if (hasGitHistory(staleUsers.resolve("project"))) {
+            log.error("refusing to quarantine non-empty workspace with commits for registering user id={}", userId);
+            throw new BusinessException(ResultCode.INTERNAL_ERROR.getCode(),
+                    "工作区初始化失败:检测到该用户目录已有历史数据,已阻止自动清理,请联系管理员");
+        }
+        // /workspace 与 /data 是相互独立的卷:跨卷 rename 会失败(EXDEV / DirectoryNotEmpty),
+        // 因此归档目录必须与被归档内容同卷 —— 各卷下建 _quarantine/<键>-<时间戳>/。
+        String stamp = java.time.LocalDateTime.now().format(STAMP);
+        try {
+            if (Files.exists(staleUsers)) {
+                Path a = Paths.get(props.getRoot(), QUARANTINE_DIR, userId + "-" + stamp);
+                Files.createDirectories(a);
+                moveDir(staleUsers, a.resolve("users"));
+                lockDown(a);
+                log.warn("quarantined stale workspace for registering user id={} -> {}", userId, a);
+            }
+            if (Files.exists(staleHome)) {
+                Path a = Paths.get(props.getPerUserDataRoot(), QUARANTINE_DIR, uid + "-" + stamp);
+                Files.createDirectories(a);
+                moveDir(staleHome, a.resolve("uid"));
+                lockDown(a);
+                log.warn("quarantined stale per-user data for registering user id={} uid={} -> {}",
+                        userId, uid, a);
+            }
+        } catch (IOException e) {
+            // 归档失败时阻断注册:宁可拒绝复用脏目录,也不能让新用户看到别人的数据。
+            log.error("failed to quarantine stale dirs for user id={}: {}", userId, e.toString());
+            throw new BusinessException(ResultCode.INTERNAL_ERROR.getCode(),
+                    "工作区初始化失败:检测到历史残留数据且归档失败,请联系管理员");
+        }
+    }
+
+    /** 归档内容仅 root 可读,阻断任何用户进程(含 agent 沙箱)触达。 */
+    private void lockDown(Path archive) {
+        run("chmod", "-R", "go-rwx", archive.toString());
+    }
+
+    /**
+     * 工作区是否已有 git 提交历史。无 .git / 无 HEAD / 命令失败一律按"无历史"处理,
+     * 以便调试残留能被自动归档(保守方向:归档失败会抛错阻断注册,不会静默丢数据)。
+     */
+    private boolean hasGitHistory(Path ws) {
+        if (!Files.isDirectory(ws.resolve(".git"))) {
+            return false;
+        }
+        try {
+            Process p = new ProcessBuilder("git", "-C", ws.toString(), "rev-parse", "--verify", "HEAD")
+                    .redirectErrorStream(true).start();
+            p.getInputStream().readAllBytes();
+            return p.waitFor() == 0;
+        } catch (IOException e) {
+            log.warn("git rev-parse failed for {}: {}", ws, e.toString());
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    /** 目录移动:优先原子 rename,跨文件系统时退化为 copy+delete。 */
+    private void moveDir(Path from, Path to) throws IOException {
+        try {
+            Files.move(from, to, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(from, to);
+        }
+    }
 
     /**
      * 确保用户已完成 uid 隔离 provisioning。幂等:已 provisioned 则仅补齐目录权限,不重复 useradd。
