@@ -94,6 +94,10 @@ export interface StepParts {
   pendingPermission?: PendingPermission | null
   /** 本轮生成耗时(秒,后端自流开始计时落库),刷新后前端据此展示"已完成 Xs" */
   elapsedSec?: number
+  /** 本轮结束时上下文占用 token(deepagents 同口径统计),刷新后恢复进度圆环 */
+  contextTokens?: number
+  /** deepagents 压缩触发阈值(token),圆环分母 */
+  contextLimit?: number
 }
 
 /** 内置全局技能信息(只读展示) */
@@ -172,8 +176,8 @@ export interface Step {
   message: MessageVo
   narration: string
   toolCalls: ToolCall[]
-  /** 段落来源:reason=模型推理段(reasoning_content),text=正文解说;缺省视为 text */
-  kind?: 'text' | 'reason'
+  /** 段落来源:reason=模型推理段(reasoning_content),text=正文解说,system=系统提示(会话压缩等);缺省视为 text */
+  kind?: 'text' | 'reason' | 'system'
 }
 
 /** 一个用户任务 = 一条 user 消息 + 其后连续的 assistant 消息 */

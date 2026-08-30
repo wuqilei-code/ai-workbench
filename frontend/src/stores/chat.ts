@@ -61,6 +61,9 @@ export const useChatStore = defineStore('chat', () => {
   const liveReasoning = ref('')
   const streamingMessageId = ref<string | null>(null)
   const isStreaming = ref(false)
+  /** 上下文用量(deepagents 同口径,后端 usage 事件回传):tokens=占用,limit=压缩阈值。
+   *  切换会话/刷新后从最后一条 assistant 消息的 parts 恢复;无数据时为 null(前端回退字符估算)。 */
+  const contextUsage = ref<{ tokens: number; limit: number | null } | null>(null)
   /** 正在流式生成的 dynamic-ui 组件(pure_show_widget 参数逐块到达,实时累积) */
   const streamingWidgetCode = ref<{ id: string; code: string } | null>(null)
   /** agent 调用浏览器(browser_*)工具的信号:每次自增,供 UI 自动唤出浏览器面板 */
@@ -206,6 +209,7 @@ export const useChatStore = defineStore('chat', () => {
     liveReasoning.value = ''
     streamingMessageId.value = null
     isStreaming.value = false
+    contextUsage.value = null
     authExpired.value = false
     interruptedByDisconnect.value = false
     disconnectAborted.value = false
@@ -218,6 +222,7 @@ export const useChatStore = defineStore('chat', () => {
       const list = await chatApi.listMessages(id, { limit: MESSAGE_PAGE })
       if (seq !== _loadSeq) return
       messages.value = list
+      restoreContextUsage()
       const minId = list.length ? Math.min(...list.map((m) => m.id ?? 0)) : 0
       olderTopId.value = minId
       hasOlder.value = list.length >= MESSAGE_PAGE && minId > 0
@@ -234,6 +239,20 @@ export const useChatStore = defineStore('chat', () => {
     }
     subscribe()
     startWatchdog()
+  }
+
+  /** 从最后一条带用量数据的 assistant 消息恢复进度圆环(刷新/切会话后;旧消息无此键则保持估算) */
+  function restoreContextUsage() {
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      const m = messages.value[i]
+      if (m.role !== 'assistant') continue
+      const tokens = m.parts?.contextTokens
+      if (typeof tokens === 'number' && tokens > 0) {
+        const limit = m.parts?.contextLimit
+        contextUsage.value = { tokens, limit: typeof limit === 'number' && limit > 0 ? limit : null }
+        return
+      }
+    }
   }
 
   async function loadOlderMessages() {
@@ -693,6 +712,26 @@ export const useChatStore = defineStore('chat', () => {
         break
       }
 
+      // deepagents 会话压缩触发:在时间线上插入一条系统提示,前台即时可见
+      case 'summary': {
+        isStreaming.value = true
+        touchStreamActivity()
+        flushLiveSteps()
+        appendLiveTimeline('system', data.message || '会话历史已压缩')
+        break
+      }
+
+      // 上下文用量(后端用 deepagents 同款口径统计):驱动输入框进度圆环
+      case 'usage': {
+        if (typeof data.tokens === 'number') {
+          contextUsage.value = {
+            tokens: data.tokens,
+            limit: typeof data.limit === 'number' ? data.limit : null,
+          }
+        }
+        break
+      }
+
       case 'message.end': {
         const id: string = data.id
         const status: string = data.status
@@ -861,8 +900,8 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  /** 追加实时时间线条目(reason/text 合并同类尾段,tool 记 id),与网关落库结构一致 */
-  function appendLiveTimeline(k: 'reason' | 'text' | 'tool', v?: string, toolId?: string) {
+  /** 追加实时时间线条目(reason/text 合并同类尾段,tool 记 id,system 独立成条),与网关落库结构一致 */
+  function appendLiveTimeline(k: 'reason' | 'text' | 'tool' | 'system', v?: string, toolId?: string) {
     const targetId = streamingMessageId.value
     let idx = targetId ? messages.value.findIndex((m) => m.agentMessageId === targetId) : -1
     if (idx < 0 && messages.value.length && messages.value[messages.value.length - 1].role === 'assistant') {
@@ -1179,7 +1218,7 @@ export const useChatStore = defineStore('chat', () => {
   return {
     sessions, archivedSessions, currentSessionId, currentSession, messages, turns, flow, summaries,
     streamingText, liveReasoning, streamingMessageId, isStreaming, streamingStuckSeconds, streamingElapsedSeconds, runningActivity,
-    streamingWidgetCode, turnElapsed,
+    streamingWidgetCode, turnElapsed, contextUsage,
     browserToolSignal, lastBrowserToolAt,
     hasPendingInteraction, connected, reconnecting, forceReconnect,
     authExpired, switching, changedFilePaths,

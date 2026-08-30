@@ -248,6 +248,10 @@ public class AgentStreamBridge {
         /** HITL 暂停:true=正等待用户确认(消息保持 streaming,不落定稿) */
         volatile boolean pausedOnPermission;
         volatile String pendingPermissionRequestId;
+        /** 最近一次模型调用前的上下文占用 token 数(deepagents 同口径,custom 通道回传) */
+        volatile Integer contextTokens;
+        /** deepagents 压缩触发阈值(token);圆环分母,刷新后据此恢复 */
+        volatile Integer contextLimit;
 
         TurnStream(String sessionId) {
             this.sessionId = sessionId;
@@ -423,6 +427,25 @@ public class AgentStreamBridge {
                     hub.dispatch(ts.sessionId, "tool_result", out);
                     persistTurn(ts, "streaming");
                 }
+                case "summary" -> {
+                    // deepagents 会话压缩触发:转发前台提示,并落时间线(k=system)供刷新后回看
+                    String sysMsg = payload.path("message").asText("会话历史已压缩");
+                    ObjectNode se = objectMapper.createObjectNode();
+                    se.put("message", sysMsg);
+                    hub.dispatch(ts.sessionId, "summary", se);
+                    appendTimelineSystem(ts, sysMsg);
+                    persistTurn(ts, "streaming");
+                }
+                case "usage" -> {
+                    // 上下文用量(deepagents 同口径):转发前台驱动进度圆环;记在流上供落库恢复
+                    if (payload.has("tokens")) {
+                        ts.contextTokens = payload.get("tokens").asInt();
+                    }
+                    if (payload.has("limit") && !payload.get("limit").isNull()) {
+                        ts.contextLimit = payload.get("limit").asInt();
+                    }
+                    hub.dispatch(ts.sessionId, "usage", payload);
+                }
                 case "error" -> {
                     hub.dispatch(ts.sessionId, "error", payload);
                     finalize(ts, "error");
@@ -534,6 +557,14 @@ public class AgentStreamBridge {
         ts.timeline.add(te);
     }
 
+    /** 追加系统提示(会话压缩等)到时间线:独立条目,不与相邻文本段合并。kind=system */
+    private void appendTimelineSystem(TurnStream ts, String message) {
+        ObjectNode te = objectMapper.createObjectNode();
+        te.put("k", "system");
+        te.put("v", message);
+        ts.timeline.add(te);
+    }
+
     private void onStreamError(TurnStream ts, Throwable err) {
         if (ts.cancelled.get() || ts.finalized.get()) {
             return;
@@ -579,7 +610,8 @@ public class AgentStreamBridge {
             long elapsedSec = Math.max(1, (System.currentTimeMillis() - ts.startedAt) / 1000);
             chatMessageService.upsertAssistantTurn(
                     ts.sessionId, ts.assistantMessageId,
-                    ts.fullText.toString(), ts.toolCalls, ts.timeline, status, elapsedSec);
+                    ts.fullText.toString(), ts.toolCalls, ts.timeline, status, elapsedSec,
+                    ts.contextTokens, ts.contextLimit);
         } catch (Exception e) {
             log.warn("persist turn failed (session={}): {}", ts.sessionId, e.toString());
         }

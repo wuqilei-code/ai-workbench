@@ -151,6 +151,11 @@ class _PathNormalizingProxy:
 from deepagents import FilesystemPermission, create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellBackend
 from deepagents.middleware.skills import SkillsMiddleware
+from deepagents.middleware.summarization import (
+    SummarizationToolMiddleware,
+    create_summarization_middleware,
+    create_summarization_tool_middleware,
+)
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 from langchain.agents.middleware import AgentMiddleware
@@ -194,6 +199,64 @@ class _DeepSeekFileScrub(AgentMiddleware):
         if scrubbed != list(request.messages):
             request = request.model_copy(update={"messages": scrubbed})
         return await handler(request)
+
+
+class ContextUsageMiddleware(AgentMiddleware):
+    """用 deepagents 压缩中间件同款口径统计上下文占用,经 custom 流通道实时回传前端。
+
+    前端圆环此前按"字符数/4"估算,漏掉 system prompt、工具 schema、tool_calls repr、
+    每消息 +3 等隐藏开销,与压缩触发判断用的数字差距可达数万 token。这里复用
+    SummarizationMiddleware 自己的 _get_effective_messages(应用历史压缩事件重建
+    有效消息列表)与 _count_tokens(count_tokens_approximately + tools schema),
+    保证圆环显示的就是 deepagents 判断"是否触发压缩"所用的同一个数。
+
+    阈值取自实际挂载的默认压缩中间件配置(无 profile 模型=170K;有 profile=
+    max_input_tokens×fraction),不写死。经 runtime.stream_writer 走 stream_mode
+    "custom" 通道发出,不落 state、不查库;非流式调用(writer 不可用)时静默跳过。
+    """
+
+    def __init__(self, summarization, threshold: int | None) -> None:
+        super().__init__()
+        self._sm = summarization
+        self._threshold = threshold
+
+    def _emit(self, request) -> None:
+        try:
+            writer = getattr(request.runtime, "stream_writer", None)
+            if writer is None:
+                return
+            msgs = list(request.messages)
+            # 若本请求已被(外层)压缩中间件改写为首条总结消息,直接采用,防止二次应用事件
+            first_ak = getattr(msgs[0], "additional_kwargs", None) or {} if msgs else {}
+            if first_ak.get("lc_source") == "summarization":
+                effective = msgs
+            else:
+                effective = self._sm._get_effective_messages(request)
+            tokens = self._sm._count_tokens(effective, request.system_message, request.tools)
+            writer({"usage": {"tokens": tokens, "limit": self._threshold}})
+        except Exception:  # noqa: BLE001
+            # 统计失败不能影响主链路
+            logger.debug("context usage emit failed", exc_info=True)
+
+    def wrap_model_call(self, request, handler):
+        self._emit(request)
+        return handler(request)
+
+    async def awrap_model_call(self, request, handler):
+        self._emit(request)
+        return await handler(request)
+
+
+def _compression_threshold(sm) -> int | None:
+    """从压缩中间件的 trigger 子句解析出 token 阈值(与 _should_summarize 同口径)。"""
+    for clause in sm._lc_helper._trigger_clauses or []:
+        if "tokens" in clause:
+            return int(clause["tokens"])
+        if "fraction" in clause:
+            limits = sm._lc_helper._get_profile_limits()
+            if limits:
+                return max(1, int(limits * float(clause["fraction"])))
+    return None
 
 # 平台内置技能(默认每个会话都加载;与镜像 agent-service/skills 下的目录名一致)
 BUILTIN_SKILLS = {
@@ -519,8 +582,14 @@ class AgentManager:
         backend = _build_backend(user_id, {_skill_name(p) for p in selected_paths})
         # 逐个加载用户配置的远程 MCP server 工具;任一失败只跳过该 server,不影响主链路。
         mcp_tools = mcp_client.build_mcp_tools(mcp_servers or [])
+        model = _build_model()
+        # 上下文用量计数器:独立构造一个压缩中间件实例(不挂执行链,零副作用),
+        # 借它的 _get_effective_messages/_count_tokens 与 trigger 配置,得到与自动压缩
+        # 判断完全一致的 token 数与阈值。create_summarization_middleware 与
+        # create_deep_agent 默认挂载的自动压缩走同一构造路径,配置随模型 profile 变。
+        usage_counter = create_summarization_middleware(model, backend)
         agent = create_deep_agent(
-            model=_build_model(),
+            model=model,
             tools=list(extra_tools or []) + build_browser_tools(user_id) + build_skill_tools(user_id)
             + build_widget_tools(user_id) + build_memory_tools(user_id) + build_question_tools()
             + mcp_tools,
@@ -528,7 +597,15 @@ class AgentManager:
             backend=backend,
             # 技能不走 deepagents 内置 skills 参数(它每线程只加载一次);改用强制重载中间件,
             # 会话中途改勾选/新建技能,下一条消息立即生效。
-            middleware=[_DeepSeekFileScrub()] + ([ReloadSkillsMiddleware(backend=backend, sources=["/skills"])] if skills else []),
+            # compact_conversation:官方按需压缩工具,让模型在上下文变长/切换任务时
+            # 主动压缩历史(阈值 50% 以下会拒绝,防过早丢历史);与 create_deep_agent
+            # 默认的自动压缩中间件共享 _summarization_event,前台 summary 提示同样生效。
+            # ContextUsageMiddleware 置于 scrub 之后、压缩之前(外层):每次模型调用前
+            # 用同款口径统计占用并经 custom 流回传,供前端圆环与压缩阈值对齐。
+            middleware=[_DeepSeekFileScrub(),
+                        ContextUsageMiddleware(usage_counter, _compression_threshold(usage_counter)),
+                        create_summarization_tool_middleware(model, backend)]
+            + ([ReloadSkillsMiddleware(backend=backend, sources=["/skills"])] if skills else []),
             permissions=_build_permissions(),
             interrupt_on=_build_interrupt_on(),
             memory=memory,

@@ -298,7 +298,7 @@ const modelValue = computed({
   },
 })
 
-/** ---- 会话 token 进度环:字符估算(deepagents 无真实 token 回传,保留近似显示供参考) ---- */
+/** ---- 会话 token 进度环:优先用后端 deepagents 同口径用量,回退字符估算 ---- */
 const statsOpen = ref(false)
 const stats = computed(() => {
   const msgs = chat.messages
@@ -317,13 +317,10 @@ const stats = computed(() => {
     }
   }
   const estTokens = Math.ceil(chars / 4)
-  return {
-    total: user + assistant + tool, user, assistant, tool, toolCalls, chars,
-    estTokens, real: false as const, contextTokens: estTokens,
-  }
+  return { total: user + assistant + tool, user, assistant, tool, toolCalls, chars, estTokens }
 })
 
-/** 模型上下文窗口上限:取当前会话模型配置的 context_limit,缺省 300K(仅估算兜底用,真实 tokens 不需要它) */
+/** 模型上下文窗口上限:仅在后端用量未就绪时作估算兜底分母用 */
 const TOKEN_LIMIT = 300_000
 const modelLimit = computed(() => {
   const s = chat.currentSession
@@ -337,18 +334,21 @@ const modelLimit = computed(() => {
   return TOKEN_LIMIT
 })
 
-/** 进度 0~1;>=模型窗口满环 */
-const tokenRatio = computed(() => {
-  // 真实模式与估算统一用模型上下文窗口上限,避免流式(估算)与结束(真实)之间圆环跳变
-  const limit = modelLimit.value
-  if (stats.value.real) {
-    // 真实模式:上下文占用 = 压缩点之后最后一条真实消息的 input(输入含缓存读);
-    // 压缩后无新消息时为压缩总结的 output(压缩结果长度)。
-    return Math.min(1, (stats.value.contextTokens ?? 0) / limit)
+/** 圆环数据源:后端 usage 事件(=deepagents 判断压缩所用的同一 token 数,分母=压缩阈值)优先;
+ *  尚未经过模型调用/旧会话无持久化时回退到字符估算(分母=模型窗口)。 */
+const ring = computed(() => {
+  const u = chat.contextUsage
+  if (u) {
+    const limit = u.limit ?? modelLimit.value
+    return { tokens: u.tokens, limit, ratio: Math.min(1, u.tokens / limit), real: true }
   }
-  return Math.min(1, stats.value.estTokens / limit)
+  const limit = modelLimit.value
+  return { tokens: stats.value.estTokens, limit, ratio: Math.min(1, stats.value.estTokens / limit), real: false }
 })
-/** 环色:低占用柔和蓝,>60% 变琥珀,>85% 变红(提示该开新会话了) */
+
+/** 进度 0~1;>=压缩阈值满环 */
+const tokenRatio = computed(() => ring.value.ratio)
+/** 环色:低占用柔和蓝,>60% 变琥珀,>85% 变红(接近自动压缩阈值,提示可新开会话) */
 const ringColor = computed(() => {
   const r = tokenRatio.value
   if (r >= 0.85) return 'var(--err)'
@@ -466,7 +466,7 @@ async function startNewChat() {
         <button
           class="token-ring-btn"
           :class="{ full: ringNearFull }"
-          :title="`${stats.real ? '会话上下文' : '会话约'} ${stats.estTokens.toLocaleString()} token / ${(stats.real ? modelLimit : TOKEN_LIMIT).toLocaleString()},点击查看详情${ringNearFull ? ';建议新开会话' : ''}`"
+          :title="`${ring.real ? '会话上下文' : '会话约'} ${ring.tokens.toLocaleString()} token / ${ring.limit.toLocaleString()},点击查看详情${ringNearFull ? ';建议新开会话' : ''}`"
           @click="statsOpen = true"
         >
           <svg class="token-ring" width="30" height="30" viewBox="0 0 36 36">
@@ -501,10 +501,15 @@ async function startNewChat() {
         <div class="stat"><span class="k">工具消息</span><span class="v">{{ stats.tool }}</span></div>
         <div class="stat"><span class="k">工具调用次数</span><span class="v">{{ stats.toolCalls }}</span></div>
         <div class="stat"><span class="k">总字符数</span><span class="v">{{ stats.chars }}</span></div>
-        <div class="stat"><span class="k">约计 token</span><span class="v">{{ stats.estTokens }}</span></div>
+        <div class="stat"><span class="k">上下文 token</span><span class="v">{{ ring.tokens }}</span></div>
+        <div class="stat"><span class="k">压缩阈值</span><span class="v">{{ ring.limit }}</span></div>
         <div class="stat"><span class="k">token 进度</span><span class="v">{{ Math.round(tokenRatio * 100) }}%</span></div>
       </div>
-      <p class="stats-note">token 数为粗略估算(字符数 / 4),仅供参考。</p>
+      <p class="stats-note">
+        {{ ring.real
+          ? '上下文 token 与压缩阈值由后端按 deepagents 压缩判断同口径统计。'
+          : '本轮尚未经过模型调用,数值为粗略估算(字符数 / 4),发送消息后自动校准。' }}
+      </p>
       <div class="stats-warn" :class="{ alert: ringNearFull }">
         <span>{{ ringNearFull ? '会话上下文已接近上限，可新开会话。' : '上下文占用过高时，可新开会话。' }}</span>
         <div class="stats-actions">

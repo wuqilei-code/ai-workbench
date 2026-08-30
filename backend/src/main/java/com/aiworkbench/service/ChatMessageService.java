@@ -191,6 +191,18 @@ public class ChatMessageService {
                                     String text, Map<String, ObjectNode> toolCalls,
                                     java.util.List<ObjectNode> timeline, String status,
                                     Long elapsedSec) {
+        upsertAssistantTurn(agentSessionId, agentMessageId, text, toolCalls, timeline,
+                status, elapsedSec, null, null);
+    }
+
+    /**
+     * 同上,额外落库本轮结束时的上下文用量(deepagents 同口径 token 数与其压缩阈值),
+     * 前端刷新后据此恢复进度圆环(否则只剩字符估算,与压缩判断不一致)。
+     */
+    public void upsertAssistantTurn(String agentSessionId, String agentMessageId,
+                                    String text, Map<String, ObjectNode> toolCalls,
+                                    java.util.List<ObjectNode> timeline, String status,
+                                    Long elapsedSec, Integer contextTokens, Integer contextLimit) {
         ChatSession session = chatSessionService.findByAgentSessionId(agentSessionId);
         if (session == null) {
             log.debug("upsertAssistantTurn: unknown agent session {}", agentSessionId);
@@ -222,6 +234,13 @@ public class ChatMessageService {
                 // 本轮生成耗时(秒):前端刷新后据此展示"已完成 Xs"(内存态计时刷新即丢)
                 if (elapsedSec != null && elapsedSec > 0) {
                     partsNode.put("elapsedSec", elapsedSec);
+                }
+                // 上下文用量(deepagents 同口径):刷新后恢复进度圆环
+                if (contextTokens != null && contextTokens > 0) {
+                    partsNode.put("contextTokens", contextTokens);
+                }
+                if (contextLimit != null && contextLimit > 0) {
+                    partsNode.put("contextLimit", contextLimit);
                 }
                 m.setParts(objectMapper.writeValueAsString(partsNode));
                 m.setToolCallCount(toolCalls.size());

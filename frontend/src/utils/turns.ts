@@ -113,7 +113,8 @@ function finalizeTurn(turn: Turn) {
   if (idx < 0) idx = turn.steps.length - 1
   // 推理不是"答案":当最后可提升的步骤是纯推理段时不提升,让它保留在思考区,
   // 避免"思考"在流式期被当成正文渲染、结束后才跳进思考块。
-  if (turn.steps[idx].kind === 'reason') return
+  // 系统提示(会话压缩)同理:它是过程性提示,绝不能成为最终答案。
+  if (turn.steps[idx].kind === 'reason' || turn.steps[idx].kind === 'system') return
   // 空步骤(发送时预建的占位壳)不提升:保留在 steps 里,使 turn 走多步模式
   // 立即渲染"AI Workbench + 思考中"头部,而非一个空白气泡。
   if (!(turn.steps[idx].narration || '').trim() && !turn.steps[idx].toolCalls?.length) return
@@ -163,7 +164,11 @@ function stepsFromParts(msg: MessageVo): Step[] {
     cur = null
   }
   for (const e of tl) {
-    if (e.k === 'text' || e.k === 'reason') {
+    if (e.k === 'system') {
+      // 系统提示(会话压缩等):独立成步,永不并入相邻文本段、也不参与 finalAnswer 提升
+      flush()
+      steps.push({ message: msg, narration: e.v || '', toolCalls: [], kind: 'system' })
+    } else if (e.k === 'text' || e.k === 'reason') {
       const kind: 'text' | 'reason' = e.k === 'reason' ? 'reason' : 'text'
       if (cur && cur.kind === kind && !cur.toolCalls.length) {
         cur.narration += e.v || ''

@@ -254,14 +254,14 @@ def stream(request: Request, user_id: str, body: InvokeRequest) -> StreamingResp
                 it = agent.stream(
                     Command(resume=_align_decisions(agent, cfg, body.resume_decision)),
                     config=cfg,
-                    stream_mode=["messages", "updates"],
+                    stream_mode=["messages", "updates", "custom"],
                     version="v1",
                 )
             else:
                 it = agent.stream(
                     {"messages": [m.model_dump() for m in body.messages]},
                     config=cfg,
-                    stream_mode=["messages", "updates"],
+                    stream_mode=["messages", "updates", "custom"],
                     version="v1",
                 )
             # 同步 langgraph 迭代器经线程拉取,避免阻塞事件循环;每步间检查客户端断连。
@@ -282,6 +282,10 @@ def stream(request: Request, user_id: str, body: InvokeRequest) -> StreamingResp
                     for item in _iter_stream_messages(value):
                         for out in _emit_stream_message(item, wc_decoders):
                             yield out
+                elif mode == "custom":
+                    # ContextUsageMiddleware 回传的上下文用量(与 deepagents 压缩判断同口径)
+                    if isinstance(value, dict) and isinstance(value.get("usage"), dict):
+                        yield _sse("usage", value["usage"])
                 elif mode == "updates":
                     # Human-in-the-loop 中断:吐出待审批请求后终止本流(线程已 checkpoint),
                     # 不再发 done;由网关收到用户确认后以 resume_decision 重新起流续跑。
@@ -512,8 +516,21 @@ def _emit_update(update, user_id: str | None = None, emitted_tools: set | None =
         return outs
     msgs = []
     for node, upd in update.items():
-        if isinstance(upd, dict):
-            msgs += upd.get("messages", []) or []
+        if not isinstance(upd, dict):
+            continue
+        # 会话压缩(deepagents _DeepAgentsSummarizationMiddleware):
+        # 它不改 state["messages"],而是在节点更新的 _summarization_event 字段里
+        # 记录本次压缩(cutoff_index / summary_message / file_path)。
+        # 检测到即发 summary 事件,供前台提示"历史已压缩"。每个压缩事件仅出现一次。
+        if "_summarization_event" in upd:
+            ev = upd.get("_summarization_event") or {}
+            file_path = ev.get("file_path") if isinstance(ev, dict) else None
+            message = "会话历史已压缩以节省上下文空间"
+            if file_path:
+                # file_path 是 backend 虚拟路径(相对 artifacts_root=/workspace)
+                message += f",旧对话已存档至 /workspace{file_path}"
+            outs.append(_sse("summary", {"message": message}))
+        msgs += upd.get("messages", []) or []
     # 本轮 update 内的配对:tool_call_id -> (name, args)。
     # deepagents 可能把"AI 发起调用"与"工具结果"拆成两次 update,故用本流最近调用表兜底。
     calls = dict(tool_calls)

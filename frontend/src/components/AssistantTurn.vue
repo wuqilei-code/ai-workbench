@@ -618,6 +618,7 @@ async function downloadAllFiles() {
 const thinkingStepCount = computed(() => {
   let n = 0
   for (const s of props.turn.steps) {
+    if (s.kind === 'system') continue // 系统提示(会话压缩)不计入步数
     n += s.toolCalls?.length ?? 0
     if ((s.narration || '').trim()) n += 1
   }
@@ -691,8 +692,13 @@ function stepHtml(step: Step): string {
           <div v-if="b.type === 'step'" class="tstep">
             <span class="tstep-dot" :class="{ active: isStepActive(b.step) }" />
             <div class="tstep-body">
+              <!-- 系统提示(会话压缩等):独立样式行,与思考/正文区分 -->
+              <div v-if="b.step.kind === 'system'" class="system-note">
+                <span class="system-tag">系统</span>
+                <span class="system-text">{{ stepDisplayText(b.step) }}</span>
+              </div>
               <!-- 推理段:可折叠"思考"行,流式时限高滚动吸底,结束自动折叠,可点开回看 -->
-              <div v-if="b.step.kind === 'reason' && displayContent(b.step)" class="reason-box">
+              <div v-else-if="b.step.kind === 'reason' && displayContent(b.step)" class="reason-box">
                 <div class="reason-head" @click.stop="toggleReason(b.index)">
                   <span class="rc-tag">思考</span>
                   <svg
@@ -1258,6 +1264,22 @@ function stepHtml(step: Step): string {
 }
 .step-narration :deep(pre.hljs) { background: var(--code-bg); border-radius: var(--radius-sm); padding: 8px; overflow-x: auto; }
 .step-narration :deep(code) { font-family: ui-monospace, monospace; font-size: 12px; }
+/* 系统提示(会话压缩等):浅底提示条,与思考/正文区分 */
+.system-note {
+  display: inline-flex; align-items: center; gap: 8px;
+  margin: 2px 0; padding: 4px 10px;
+  font-size: 12px; color: var(--text-2);
+  background: var(--accent-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+.system-tag {
+  font-size: 11px; font-weight: 600;
+  color: var(--accent-text);
+  padding: 0 6px; border-radius: 4px;
+  background: var(--surface);
+}
+.system-text { white-space: pre-wrap; word-break: break-word; }
 
 .tool-calls { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 
