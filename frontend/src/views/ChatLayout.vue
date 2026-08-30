@@ -23,6 +23,7 @@ const initLoading = ref(true)
 const sidebarEvents = ref({
   openPluginMarket: false,
   openTemplateLib: false,
+  openMcp: false,
   openMyFiles: false,
   openAutomation: false,
   openFind: false,
@@ -117,6 +118,7 @@ onBeforeUnmount(() => {
         @update:collapsed="mobileSidebarOpen = false"
         @open-plugin-market="mobileSidebarOpen = false; triggerSidebarEvent('openPluginMarket')"
         @open-template-lib="mobileSidebarOpen = false; triggerSidebarEvent('openTemplateLib')"
+        @open-mcp="mobileSidebarOpen = false; triggerSidebarEvent('openMcp')"
         @open-my-files="mobileSidebarOpen = false; triggerSidebarEvent('openMyFiles')"
         @open-automation="mobileSidebarOpen = false; triggerSidebarEvent('openAutomation')"
         @open-find="mobileSidebarOpen = false; triggerSidebarEvent('openFind')"
@@ -133,6 +135,7 @@ onBeforeUnmount(() => {
         @update:collapsed="sidebarCollapsed = $event"
         @open-plugin-market="triggerSidebarEvent('openPluginMarket')"
         @open-template-lib="triggerSidebarEvent('openTemplateLib')"
+        @open-mcp="triggerSidebarEvent('openMcp')"
         @open-my-files="triggerSidebarEvent('openMyFiles')"
         @open-automation="triggerSidebarEvent('openAutomation')"
         @open-find="triggerSidebarEvent('openFind')"

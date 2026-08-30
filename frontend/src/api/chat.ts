@@ -15,12 +15,12 @@ export const chatApi = {
   updateSkill: (id: number, data: { name?: string; description?: string; content?: string; visibility?: number; files?: { path: string; content: string }[] }) =>
     http.put<any>(`/chat/skills/mine/${id}`, data).then(unwrap),
   deleteSkill: (id: number) => http.delete(`/chat/skills/mine/${id}`),
-  createSession: (data: { title?: string; providerId?: string; modelId?: string; agent?: string; skills?: string[] }) =>
+  createSession: (data: { title?: string; providerId?: string; modelId?: string; agent?: string; skills?: string[]; mcpServers?: string[] }) =>
     http.post<SessionVo>('/chat/sessions', data).then(unwrap),
   /** 导入会话:上传导出的 JSON,返回新建会话 */
   importSession: (json: string) => http.post<SessionVo>('/chat/sessions/import', { json }).then(unwrap),
   getSession: (id: number) => http.get<SessionVo>(`/chat/sessions/${id}`).then(unwrap),
-  updateSession: (id: number, data: Partial<{ title: string; providerId: string; modelId: string; archived: number; pinned: number; agent: string; skills: string[] }>) =>
+  updateSession: (id: number, data: Partial<{ title: string; providerId: string; modelId: string; archived: number; pinned: number; agent: string; skills: string[]; mcpServers: string[]; resetMcpServers: boolean }>) =>
     http.patch<SessionVo>(`/chat/sessions/${id}`, data).then(unwrap),
   deleteSession: (id: number) => http.delete(`/chat/sessions/${id}`),
   /** 消息历史(游标分页):beforeId 向上翻页取更早,afterId 增量追平,都不传取最新 limit 条 */

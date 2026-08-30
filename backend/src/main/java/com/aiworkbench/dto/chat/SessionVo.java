@@ -15,6 +15,8 @@ public class SessionVo {
     private String agent;
     /** 会话勾选启用的自定义技能名(空=仅内置技能) */
     private java.util.List<String> skills;
+    /** 会话级临时启用的 MCP server 名(NULL=未设置,默认全部已启用;空数组=本会话不加载) */
+    private java.util.List<String> mcpServers;
     private String providerId;
     private String modelId;
     private Integer archived;

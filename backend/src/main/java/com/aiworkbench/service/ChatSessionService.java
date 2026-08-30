@@ -53,6 +53,7 @@ public class ChatSessionService {
         s.setProviderId(isModelRef(req.getProviderId(), req.getModelId()) ? req.getProviderId() : null);
         s.setModelId(isModelRef(req.getProviderId(), req.getModelId()) ? req.getModelId() : null);
         s.setSkills(encodeSkills(req.getSkills()));
+        if (req.getMcpServers() != null) s.setMcpServers(encodeMcp(req.getMcpServers()));
         s.setArchived(0);
         s.setPinned(0);
         chatSessionMapper.insert(s);
@@ -175,6 +176,8 @@ public class ChatSessionService {
         if (req.getArchived() != null) s.setArchived(req.getArchived());
         if (req.getPinned() != null) s.setPinned(req.getPinned());
         if (req.getSkills() != null) s.setSkills(encodeSkills(req.getSkills()));
+        if (req.getMcpServers() != null) s.setMcpServers(encodeMcp(req.getMcpServers()));
+        if (Boolean.TRUE.equals(req.getResetMcpServers())) s.setMcpServers(null);
         // 可清空字段:IGNORED 策略保证 null 写入(项目记忆教训)
         if (req.getProviderId() != null || req.getModelId() != null) {
             s.setProviderId(req.getProviderId());
@@ -225,6 +228,7 @@ public class ChatSessionService {
                 .title(s.getTitle())
                 .agent(s.getAgent())
                 .skills(decodeSkills(s.getSkills()))
+                .mcpServers(decodeMcp(s.getMcpServers()))
                 .providerId(s.getProviderId())
                 .modelId(s.getModelId())
                 .archived(s.getArchived())
@@ -245,6 +249,25 @@ public class ChatSessionService {
 
     private List<String> decodeSkills(String json) {
         if (json == null || json.isBlank()) return List.of();
+        try {
+            return objectMapper.readValue(json, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    /** MCP:null → null(未设置,默认全部);空列表 → "[]"(本会话不加载)。 */
+    private String encodeMcp(List<String> mcpServers) {
+        if (mcpServers == null) return null;
+        try {
+            return objectMapper.writeValueAsString(mcpServers);
+        } catch (Exception e) {
+            return "[]";
+        }
+    }
+
+    private List<String> decodeMcp(String json) {
+        if (json == null || json.isBlank()) return null;
         try {
             return objectMapper.readValue(json, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
         } catch (Exception e) {

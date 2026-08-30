@@ -11,6 +11,8 @@ import logging
 import threading
 from pathlib import Path
 
+from app import mcp_client
+
 logger = logging.getLogger(__name__)
 
 
@@ -469,7 +471,7 @@ _DEFAULT_SYSTEM_PROMPT = (
 )
 
 
-def _fingerprint(user_id: str, skills: list[str], memory: list[str], system_prompt: str | None) -> str:
+def _fingerprint(user_id: str, skills: list[str], memory: list[str], system_prompt: str | None, mcp_servers=None) -> str:
     # 记忆按文件内容哈希(而非仅路径):AGENTS.md 内容变化时缓存自动失效重建,
     # 否则 agent 会一直沿用构建时的旧记忆。文件缺失/不可读则退化为路径本身。
     mem_sig: list[str] = []
@@ -478,7 +480,8 @@ def _fingerprint(user_id: str, skills: list[str], memory: list[str], system_prom
             mem_sig.append(hashlib.sha256(Path(p).read_bytes()).hexdigest())
         except Exception:  # noqa: BLE001
             mem_sig.append(p)
-    parts = [user_id, system_prompt or _DEFAULT_SYSTEM_PROMPT] + skills + mem_sig + ["browser_open_url"]
+    mcp_sig = mcp_client.mcp_signature(mcp_servers or [])
+    parts = [user_id, system_prompt or _DEFAULT_SYSTEM_PROMPT] + skills + mem_sig + ["browser_open_url", mcp_sig]
     return hashlib.sha256("\x1f".join(parts).encode()).hexdigest()
 
 
@@ -496,6 +499,7 @@ class AgentManager:
         system_prompt: str | None = None,
         extra_tools: list | None = None,
         skills_override: list[str] | None = None,
+        mcp_servers: list | None = None,
     ):
         ws.ensure_user_dirs(user_id)
         # SkillsMiddleware 只接受 backend 虚拟路径:source 固定 /skills(根),勾选过滤由
@@ -504,7 +508,7 @@ class AgentManager:
         skills = ["/skills"] if selected_paths else []
         memory = ws.memory_files(user_id)
         effective_prompt = system_prompt or _DEFAULT_SYSTEM_PROMPT
-        key = _fingerprint(user_id, selected_paths, memory, effective_prompt)
+        key = _fingerprint(user_id, selected_paths, memory, effective_prompt, mcp_servers)
 
         with self._lock:
             cached = self._cache.get(key)
@@ -513,10 +517,13 @@ class AgentManager:
 
         logger.info("[%s] agent build: skills=%s", user_id, [p.rsplit("/", 2)[-2] for p in selected_paths])
         backend = _build_backend(user_id, {_skill_name(p) for p in selected_paths})
+        # 逐个加载用户配置的远程 MCP server 工具;任一失败只跳过该 server,不影响主链路。
+        mcp_tools = mcp_client.build_mcp_tools(mcp_servers or [])
         agent = create_deep_agent(
             model=_build_model(),
             tools=list(extra_tools or []) + build_browser_tools(user_id) + build_skill_tools(user_id)
-            + build_widget_tools(user_id) + build_memory_tools(user_id) + build_question_tools(),
+            + build_widget_tools(user_id) + build_memory_tools(user_id) + build_question_tools()
+            + mcp_tools,
             system_prompt=effective_prompt,
             backend=backend,
             # 技能不走 deepagents 内置 skills 参数(它每线程只加载一次);改用强制重载中间件,

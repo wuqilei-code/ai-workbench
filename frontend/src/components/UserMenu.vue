@@ -36,7 +36,7 @@ const userMenuOptions = computed(() => {
 function onUserMenuSelect(key: string) {
   if (key === 'logout') { auth.logout(); return }
   if (key === 'import') { importFileRef.value?.click(); return }
-  if (key.startsWith('/admin/')) router.push(key)
+  if (key.startsWith('/')) router.push(key)
 }
 
 /** 导入会话的 file input */
