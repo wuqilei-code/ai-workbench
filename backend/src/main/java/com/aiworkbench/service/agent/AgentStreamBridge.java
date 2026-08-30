@@ -1,7 +1,9 @@
 package com.aiworkbench.service.agent;
 
 import com.aiworkbench.entity.ChatSession;
+import com.aiworkbench.entity.McpConfig;
 import com.aiworkbench.service.ChatMessageService;
+import com.aiworkbench.service.McpConfigService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -49,6 +51,7 @@ public class AgentStreamBridge {
     private final ObjectMapper objectMapper;
     private final WebClient webClient;
     private final java.util.concurrent.Executor executor;
+    private final McpConfigService mcpConfigService;
 
     /** 在途生成状态,key = 会话外部 id("da-" 前缀)。 */
     private final Map<String, TurnStream> streams = new ConcurrentHashMap<>();
@@ -59,6 +62,7 @@ public class AgentStreamBridge {
             @org.springframework.context.annotation.Lazy ChatMessageService chatMessageService,
             SessionEventHub hub,
             ObjectMapper objectMapper,
+            McpConfigService mcpConfigService,
             @org.springframework.beans.factory.annotation.Qualifier("taskExecutor")
                     java.util.concurrent.Executor taskExecutor) {
         String base = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
@@ -69,6 +73,7 @@ public class AgentStreamBridge {
                 .defaultHeader("X-Internal-Token", internalToken)
                 .build();
         this.executor = taskExecutor;
+        this.mcpConfigService = mcpConfigService;
     }
 
     /**
@@ -83,6 +88,7 @@ public class AgentStreamBridge {
         TurnStream ts = new TurnStream(sessionId);
         ts.userId = userId;
         ts.skills = parseSkillIds(session.getSkills());
+        ts.mcpServers = enabledMcpServers(userId, session.getMcpServers());
         streams.put(sessionId, ts);
         hub.dispatchJson(sessionId, "start", "{\"threadId\":\"" + sessionId + "\"}");
         executor.execute(() -> stream(ts, userId, text));
@@ -103,6 +109,53 @@ public class AgentStreamBridge {
                     new com.fasterxml.jackson.core.type.TypeReference<java.util.List<String>>() {});
         } catch (Exception e) {
             return List.of();
+        }
+    }
+
+    /**
+     * 该用户本次会话生效的 MCP server 配置(管理员公共 + 用户私有,按 name 与会话级勾选取交集)。
+     * sessionMcp: NULL(未设置)=全部已启用;空列表([])=本会话不加载任何 MCP;非空=只加载勾选项。
+     */
+    private java.util.List<McpConfig> enabledMcpServers(Long userId, String sessionMcpJson) {
+        java.util.List<McpConfig> enabled;
+        try {
+            enabled = (userId == null) ? List.of() : mcpConfigService.enabledForUser(userId);
+        } catch (Exception e) {
+            log.warn("enabledMcpServers failed for user {}: {}", userId, e.toString());
+            return List.of();
+        }
+        if (sessionMcpJson == null || sessionMcpJson.isBlank()) {
+            return enabled;
+        }
+        java.util.List<String> picked;
+        try {
+            picked = objectMapper.readValue(sessionMcpJson,
+                    new com.fasterxml.jackson.core.type.TypeReference<java.util.List<String>>() {});
+        } catch (Exception e) {
+            return enabled;
+        }
+        if (picked.isEmpty()) {
+            return List.of();
+        }
+        java.util.Set<String> wanted = new java.util.HashSet<>(picked);
+        return enabled.stream().filter(c -> wanted.contains(c.getName())).collect(java.util.stream.Collectors.toList());
+    }
+
+    /** 解析 MCP headers(JSON 对象文本)为 JsonNode;非法/空时返回 null。 */
+    private JsonNode parseHeaders(String headersJson) {
+        try {
+            return objectMapper.readTree(headersJson);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 解析 manual 接口清单(JSON 数组文本)为 JsonNode;非法/空时返回 null。 */
+    private JsonNode parseConfig(String configJson) {
+        try {
+            return objectMapper.readTree(configJson);
+        } catch (Exception e) {
+            return null;
         }
     }
 
@@ -190,6 +243,8 @@ public class AgentStreamBridge {
         final long startedAt = System.currentTimeMillis();
         volatile Long userId;
         volatile java.util.List<String> skills;
+        /** 本用户启用中的 MCP server 配置(管理员公共 + 用户私有) */
+        volatile java.util.List<McpConfig> mcpServers;
         /** HITL 暂停:true=正等待用户确认(消息保持 streaming,不落定稿) */
         volatile boolean pausedOnPermission;
         volatile String pendingPermissionRequestId;
@@ -210,6 +265,21 @@ public class AgentStreamBridge {
             if (ts.skills != null && !ts.skills.isEmpty()) {
                 ArrayNode skills = body.putArray("skills");
                 for (String s : ts.skills) skills.add(s);
+            }
+            if (ts.mcpServers != null && !ts.mcpServers.isEmpty()) {
+                ArrayNode mcpArr = body.putArray("mcp_servers");
+                for (McpConfig mc : ts.mcpServers) {
+                    ObjectNode mo = mcpArr.addObject();
+                    mo.put("name", mc.getName());
+                    mo.put("url", mc.getUrl());
+                    mo.put("type", mc.getType() == null ? "remote" : mc.getType());
+                    if (mc.getHeaders() != null && !mc.getHeaders().isBlank()) {
+                        mo.set("headers", parseHeaders(mc.getHeaders()));
+                    }
+                    if (mc.getConfig() != null && !mc.getConfig().isBlank()) {
+                        mo.set("config", parseConfig(mc.getConfig()));
+                    }
+                }
             }
             subscribeStream(ts, userId, body);
         } catch (Exception e) {

@@ -25,6 +25,9 @@ public class McpRequest {
     /** remote 鉴权头(JSON:{key:value}) */
     private String headers;
 
+    /** manual 类型:手动接口清单(JSON 数组文本),每个元素一个接口定义 */
+    private String config;
+
     private Integer enabled;
     private Integer sortOrder;
 }

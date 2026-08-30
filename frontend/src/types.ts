@@ -32,6 +32,8 @@ export interface SessionVo {
   agent: string
   /** 会话勾选启用的自定义技能名(空=仅内置技能) */
   skills?: string[]
+  /** 会话级临时启用的 MCP server 名(不传/undefined=默认全部已启用;空数组=本会话不加载) */
+  mcpServers?: string[]
   providerId: string | null
   modelId: string | null
   archived: number
@@ -304,4 +306,20 @@ export interface JobTaskRunInfo {
   error?: string | null
   runLogPath?: string | null
   runningSeconds?: number | null
+}
+
+export interface McpVo {
+  id: number
+  userId: number
+  name: string
+  type: string
+  command?: string | null
+  url?: string | null
+  headers?: string | null
+  config?: string | null
+  environment?: string | null
+  enabled: number
+  sortOrder: number
+  createdAt?: string | null
+  updatedAt?: string | null
 }

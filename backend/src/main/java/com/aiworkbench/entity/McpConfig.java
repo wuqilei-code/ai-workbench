@@ -32,6 +32,8 @@ public class McpConfig {
     private String url;
     /** remote 鉴权头(JSON:{key:value}) */
     private String headers;
+    /** manual 类型:手动接口清单(JSON 数组文本),每个元素一个接口定义 */
+    private String config;
     /** 已废弃(local 用),仅保留兼容 */
     private String environment;
     private Integer enabled;

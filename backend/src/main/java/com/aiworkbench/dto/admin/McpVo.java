@@ -15,6 +15,7 @@ public class McpVo {
     private String command;
     private String url;
     private String headers;
+    private String config;
     private String environment;
     private Integer enabled;
     private Integer sortOrder;

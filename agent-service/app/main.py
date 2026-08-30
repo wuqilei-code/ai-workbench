@@ -60,6 +60,30 @@ class ChatMessage(BaseModel):
     content: str
 
 
+class McpServerConfig(BaseModel):
+    """用户接入的 MCP server(远程 http/streamable-http/SSE)或 OpenAPI 接口组或手动接口组。
+    type: remote(默认,远程 MCP)、openapi(OpenAPI/Swagger 文档地址,批量转工具)或
+    manual(手动接口组,base_url + config 内联接口清单)。
+    """
+    name: str = Field(..., min_length=1, max_length=64)
+    url: str = Field(..., min_length=1, max_length=512)
+    headers: Optional[dict] = None
+    type: str = Field(default="remote")
+    # manual: 接口清单(后端已 JSON 解析为 list[dict] 数组)
+    config: Optional[list] = None
+
+
+class ManualAssistRequest(BaseModel):
+    description: str = Field(..., min_length=1, max_length=4000)
+    server_name: str = Field(default="", max_length=64)
+
+
+class ManualAssistResponse(BaseModel):
+    ok: bool
+    interface: Optional[dict] = None
+    error: Optional[str] = None
+
+
 class InvokeRequest(BaseModel):
     thread_id: str = Field(..., min_length=1, max_length=128)
     messages: list[ChatMessage] = Field(default_factory=list)
@@ -69,6 +93,8 @@ class InvokeRequest(BaseModel):
     resume_decision: Optional[dict] = None
     # 该会话勾选启用的自定义技能名(内置技能默认加载,无需列出)
     skills: list[str] = Field(default_factory=list)
+    # 该用户启用中的 MCP server(管理员公共 + 用户私有合并)
+    mcp_servers: list[McpServerConfig] = Field(default_factory=list)
 
 
 class InvokeResponse(BaseModel):
@@ -102,7 +128,12 @@ def _deepagents_version() -> str:
 @app.post("/api/users/{user_id}/invoke", dependencies=[Depends(verify_internal_token)])
 def invoke(user_id: str, body: InvokeRequest) -> InvokeResponse:
     logger.info("[%s][%s] invoke: %d msgs", user_id, body.thread_id, len(body.messages))
-    agent = get_manager().get_or_create(user_id, system_prompt=body.system_prompt, skills_override=body.skills)
+    agent = get_manager().get_or_create(
+        user_id,
+        system_prompt=body.system_prompt,
+        skills_override=body.skills,
+        mcp_servers=[s.model_dump() for s in body.mcp_servers],
+    )
     result = agent.invoke(
         {"messages": [m.model_dump() for m in body.messages]},
         config=config_for(user_id, body.thread_id),
@@ -110,6 +141,50 @@ def invoke(user_id: str, body: InvokeRequest) -> InvokeResponse:
     last = result["messages"][-1]
     content = last.content if hasattr(last, "content") else str(last)
     return InvokeResponse(thread_id=body.thread_id, content=content or "")
+
+
+@app.post("/api/mcp/manual/assist", dependencies=[Depends(verify_internal_token)])
+def manual_assist(body: ManualAssistRequest) -> ManualAssistResponse:
+    """手动接口编辑器的 AI 辅助:把自然语言描述转成一条接口定义 JSON。"""
+    from app.tool_assist import generate_interface
+
+    result = generate_interface(description=body.description, server_name=body.server_name)
+    return ManualAssistResponse(
+        ok=bool(result.get("ok")),
+        interface=result.get("interface"),
+        error=result.get("error"),
+    )
+
+
+class ParamsAssistRequest(BaseModel):
+    method: str = Field(default="GET", max_length=10)
+    path: str = Field(..., min_length=1, max_length=512)
+    name: str = Field(default="", max_length=64)
+    description: str = Field(default="", max_length=4000)
+
+
+class ParamsAssistResponse(BaseModel):
+    ok: bool
+    params: Optional[list] = None
+    body_fields: Optional[list] = None
+    error: Optional[str] = None
+
+
+@app.post("/api/mcp/manual/assist/params", dependencies=[Depends(verify_internal_token)])
+def manual_assist_params(body: ParamsAssistRequest) -> ParamsAssistResponse:
+    """根据用户已填的 method/path/name/description,推断 params 和 body_fields。"""
+    from app.tool_assist import generate_params_only
+
+    result = generate_params_only(
+        method=body.method, path=body.path,
+        name=body.name, description=body.description,
+    )
+    return ParamsAssistResponse(
+        ok=bool(result.get("ok")),
+        params=result.get("params"),
+        body_fields=result.get("body_fields"),
+        error=result.get("error"),
+    )
 
 
 @app.post("/api/users/{user_id}/skills/seed", dependencies=[Depends(verify_internal_token)])
@@ -160,7 +235,12 @@ def sandbox_stop(user_id: str) -> dict:
 def stream(request: Request, user_id: str, body: InvokeRequest) -> StreamingResponse:
     logger.info("[%s][%s] stream: resume=%s msgs=%d",
                 user_id, body.thread_id, body.resume_decision is not None, len(body.messages))
-    agent = get_manager().get_or_create(user_id, system_prompt=body.system_prompt, skills_override=body.skills)
+    agent = get_manager().get_or_create(
+        user_id,
+        system_prompt=body.system_prompt,
+        skills_override=body.skills,
+        mcp_servers=[s.model_dump() for s in body.mcp_servers],
+    )
     cfg = config_for(user_id, body.thread_id)
 
     async def gen():

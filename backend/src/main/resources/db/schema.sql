@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS chat_session (
     archived            TINYINT      NOT NULL DEFAULT 0,
     pinned              TINYINT      NOT NULL DEFAULT 0,
     skills              JSON         NULL COMMENT '会话勾选启用的自定义技能名数组(deepagents;空=仅内置技能)',
+    mcp_servers         JSON         NULL COMMENT '会话级临时启用的 MCP server 名数组(NULL=默认全部已启用;空=本会话不加载)',
     created_at          DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at          DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (id),
@@ -45,6 +46,9 @@ CREATE TABLE IF NOT EXISTS chat_session (
 
 -- 会话置顶:为已存在的 chat_session 表补 pinned 列(幂等,重复列 1060 错误被 continue-on-error 忽略)
 ALTER TABLE chat_session ADD COLUMN pinned TINYINT NOT NULL DEFAULT 0;
+
+-- 会话级 MCP 启用:为已存在的 chat_session 表补 mcp_servers 列(幂等,重复列 1060 错误被 continue-on-error 忽略)
+ALTER TABLE chat_session ADD COLUMN mcp_servers JSON NULL;
 
 CREATE TABLE IF NOT EXISTS chat_message (
     id                  BIGINT       NOT NULL AUTO_INCREMENT,
@@ -293,6 +297,7 @@ CREATE TABLE IF NOT EXISTS mcp_config (
     command     VARCHAR(1024) NULL COMMENT '已废弃(local 用),仅保留兼容',
     url         VARCHAR(512) NULL COMMENT 'remote:server 端点 URL',
     headers     TEXT         NULL COMMENT 'remote:HTTP 请求头(JSON:{key:value}),如 Authorization',
+    config      JSON         NULL COMMENT 'manual:手动接口清单(JSON 数组),每个元素一个接口定义',
     environment TEXT         NULL COMMENT '已废弃(local 用),仅保留兼容',
     enabled     TINYINT      NOT NULL DEFAULT 1,
     sort_order  INT          NOT NULL DEFAULT 0,
@@ -306,6 +311,7 @@ CREATE TABLE IF NOT EXISTS mcp_config (
 -- 迁移:老库补齐 user_id 列(默认 0=公共)并改唯一键为主键 user_id+name。
 -- 幂等性:依赖 spring.sql.init.continue-on-error=true(1060 重复列 / 1091 删除不存在索引 报错被忽略)。
 ALTER TABLE mcp_config ADD COLUMN user_id BIGINT NOT NULL DEFAULT 0 COMMENT '0=管理员公共配置,>0=用户私有配置';
+ALTER TABLE mcp_config ADD COLUMN config JSON NULL COMMENT 'manual:手动接口清单(JSON 数组)';
 ALTER TABLE mcp_config DROP INDEX uk_mcp_name;
 ALTER TABLE mcp_config ADD UNIQUE INDEX uk_mcp_user_name (user_id, name);
 ALTER TABLE mcp_config ADD INDEX idx_mcp_user (user_id);
