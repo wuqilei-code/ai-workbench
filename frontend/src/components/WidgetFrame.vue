@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useMessage } from 'naive-ui'
 import { fileApi } from '@/api/files'
 import { useThemeStore } from '@/stores/theme'
@@ -253,6 +253,9 @@ watch(() => props.liveCode, (v) => {
   if (v == null) return
   scheduleLive(v)
 })
+
+/** 失败占位展示用的文件名(末段,避免长路径) */
+const failName = computed(() => (props.path || '').split(/[\\/]/).pop() || 'widget')
 
 async function load() {
   failed.value = false
@@ -532,7 +535,12 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div v-if="failed" class="widget-failed">组件加载失败</div>
+    <div v-if="failed" class="widget-failed">
+      <div class="wf-fail-t">组件已不可用</div>
+      <div class="wf-fail-s">
+        文件 <code>{{ failName }}</code> 不存在,可能已在文件树中被删除或移动;让 AI 重新生成一次即可恢复。
+      </div>
+    </div>
     <template v-else-if="expanded">
       <!-- 代码视图与 UI 视图互斥:查看代码时直接在同一区域显示源码 -->
       <pre v-if="showCode && rawCode" class="wd-code"><code>{{ rawCode }}</code></pre>
@@ -681,5 +689,14 @@ onBeforeUnmount(() => {
 .widget-frame:not(.bare) .widget-loading { border: none; }
 .widget-failed {
   color: var(--warn, #e6a23c);
+}
+.widget-failed .wf-fail-t { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.widget-failed .wf-fail-s { color: var(--text-2, #bbb); line-height: 1.6; }
+.widget-failed code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  background: var(--surface-hover, rgba(255, 255, 255, 0.06));
+  padding: 1px 5px;
+  border-radius: 4px;
 }
 </style>

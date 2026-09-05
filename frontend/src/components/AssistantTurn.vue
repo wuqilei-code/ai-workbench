@@ -433,8 +433,14 @@ const questionOptions = computed<string[]>(() => {
   if (rawOptions.value.some(o => o.startsWith('其他'))) return rawOptions.value
   return [...rawOptions.value, OTHER_LABEL]
 })
-const questionMultiple = computed(() => turnPending.value?.tool?.args?.multiple || false)
-const isOtherSelected = computed(() => selectedOptions.value.includes(OTHER_LABEL))
+const questionMultiple = computed(() => {
+  const v = turnPending.value?.tool?.args?.multiple
+  if (v == null || v === '' || v === false || v === 'false' || v === 0 || v === '0') return false
+  return v === true || v === 1 || v === 'true' || v === '1' || Boolean(v)
+})
+// 是否命中"其他"自由输入:AI 可能直接传"其他 xx"原样选项(此时 questionOptions 不再追加标签),
+// 也可能用前端追加的"其他(自由输入)"标签,统一按「以'其他'开头」判定
+const isOtherSelected = computed(() => selectedOptions.value.some(o => o.startsWith('其他')))
 
 function toggleOption(opt: string) {
   if (questionMultiple.value) {
@@ -448,7 +454,7 @@ function toggleOption(opt: string) {
 
 function buildAnswer(): string {
   if (questionOptions.value.length) {
-    const opts = selectedOptions.value.filter(o => o !== OTHER_LABEL)
+    const opts = selectedOptions.value.filter(o => !o.startsWith('其他'))
     if (isOtherSelected.value && questionAnswer.value.trim()) opts.push(questionAnswer.value.trim())
     return opts.join(',')
   }
