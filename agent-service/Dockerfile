@@ -14,7 +14,8 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # python playwright 固定与旧镜像 chromium 修订号(1234)匹配的版本;install-deps 只装系统库,不下载浏览器
-RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
+# 镜像源优先清华 debian 镜像(tuna 的 trixie 同步稳定;aliyun 曾出现 trixie 404)。
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
   && apt-get update \
   && pip install --no-cache-dir "playwright==1.62.0" \
   && python3 -m playwright install-deps chromium \

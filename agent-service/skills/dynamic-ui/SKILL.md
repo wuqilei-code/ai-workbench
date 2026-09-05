@@ -42,6 +42,8 @@ Do NOT use for standalone websites, apps, long reports, dashboards, slides, shor
 
 You MUST call `PureShowWidget` to render the visual. Do not pass `mode` unless the runtime requires it; never choose `panel`.
 
+Every `PureShowWidget` call MUST provide a business `name` describing what the widget shows (e.g. "2024年销售趋势分析", "竞品参数对比", "订单处理流程"). The name becomes the widget's file name under `widgets/`, so it must be specific enough to tell widgets apart - never use generic labels like "widget", "chart", or "图表1", especially when emitting multiple widgets in one reply.
+
 When you decide to render a widget, do the layout/code reasoning silently and call `PureShowWidget` with the final `widget_code` directly. Prefer calling the tool as the next user-visible action. Do not stream planning notes, draft code, partial snippets, final-check lists, or transition phrases about assembling or finalizing the code. Any text around the tool call must be concise and must not describe implementation steps. The widget code itself must appear only inside the tool call.
 
 ## Granularity (hard rule)

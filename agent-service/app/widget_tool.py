@@ -16,11 +16,20 @@ from app import workspace as ws
 # 合法性粗检:技能契约要求根元素带 data-dynamic-ui-widget 标记
 _ROOT_MARKER = re.compile(r"data-dynamic-ui-widget")
 _FORBIDDEN = ("<!doctype", "<html", "<head>", "</html>")
+# 文件名单个字符非法集(含空格,避免文件名被 [WIDGET_FILE] 的正则 \S+ 截断)
+_FILE_SAFE = re.compile(r'[\\/:*?"<>|\s]+')
+
+
+def _widget_slug(name: str) -> str:
+    """把业务名转成安全的文件名片段(小写、短横线分隔、最长 60 字符)。"""
+    s = _FILE_SAFE.sub("-", (name or "").strip()).strip("-._")
+    s = re.sub(r"-{2,}", "-", s)
+    return s[:60]
 
 
 def build_widget_tools(user_id: str):
     @tool("pure_show_widget")
-    def pure_show_widget(widget_code: str) -> str:
+    def pure_show_widget(name: str, widget_code: str) -> str:
         """渲染一个内联可视化组件(图表/架构图/交互 demo),穿插展示在回答文字之间。
 
         粒度硬规则:一次调用只表达一个重点(一张图 / 一个对比 / 一个流程 / 一组关键数字)。
@@ -33,6 +42,9 @@ def build_widget_tools(user_id: str):
         仅当交互确实必需时才允许 Canvas/Chart.js(canvas 内容要到生成结束才可见)。
 
         Args:
+            name: 组件对应的业务名称,用简短描述表达图表/组件表达的内容
+                (如 "2024年销售趋势分析"、"竞品参数对比"、"订单处理流程"),
+                会用作落盘文件名以便在文件树中区分,不要用泛化的 "widget/chart/图表1"。
             widget_code: 完整的组件代码,按 dynamic-ui 技能契约生成:
                 <style> → 内容 HTML/SVG → <script>(仅交互时需要),
                 根元素必须带 data-dynamic-ui-widget 属性。
@@ -55,8 +67,13 @@ def build_widget_tools(user_id: str):
                 '例如 <div data-dynamic-ui-widget data-template="chart-card">…</div>。'
             )
 
+        slug = _widget_slug(name)
         digest = hashlib.sha1(code.encode("utf-8")).hexdigest()[:8]
-        rel = f"widgets/widget-{int(time.time())}-{digest}.html"
+        if slug:
+            rel = f"widgets/{slug}-{digest}.html"
+        else:
+            # name 未提供/无法 sanitize:回退为时间去重命名,保证不与业务命名混淆
+            rel = f"widgets/widget-{int(time.time())}-{digest}.html"
         path = ws.workspace_root(user_id) / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(code, encoding="utf-8")
