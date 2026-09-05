@@ -4,8 +4,13 @@ import hljs from 'highlight.js'
 
 const props = defineProps<{ content: string; lang?: string }>()
 
+/** 超过该长度不再走 highlight.js(大型文件 tokenize 会卡死页面),直接纯文本展示 */
+const HIGHLIGHT_MAX = 200_000
+
+const plain = computed(() => props.content.length > HIGHLIGHT_MAX)
+
 const highlighted = computed(() => {
-  if (!props.content) return ''
+  if (plain.value || !props.content) return ''
   const lang = props.lang && hljs.getLanguage(props.lang) ? props.lang : null
   if (lang) {
     try { return hljs.highlight(props.content, { language: lang }).value } catch {}
@@ -15,7 +20,7 @@ const highlighted = computed(() => {
 </script>
 
 <template>
-  <pre class="hljs preview-code"><code v-html="highlighted" /></pre>
+  <pre class="hljs preview-code"><code v-if="plain">{{ content }}</code><code v-else v-html="highlighted" /></pre>
 </template>
 
 <style scoped>

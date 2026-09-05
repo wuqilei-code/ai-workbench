@@ -137,12 +137,10 @@ async function load(path = '', silent = false) {
   if (!silent) loading.value = true
   try {
     const all = await fileApi.list(abs(path))
-    // 隐藏 git/opencode 系统内部文件:技能有专用「技能」标签访问,
-    // .git/.gitignore 是 git plumbing,用户不应在文件树手动触碰,避免与用户文件交叉。
-    // tasks/ 是后台任务运行目录,由右侧抽屉「任务」标签专门管理,同样从文件树隐藏。
-    // jobs/ 保留展示:里面是定时任务执行报告(report.md)与日志,供用户直接查看。
+    // 隐藏系统/内部文件:点开头的隐藏目录(.git/.opencode/.config/.local 等)、
+    // tasks/ 是后台任务运行目录(由右侧抽屉专门管理)。jobs/ 保留(定时任务报告)。
     nodes.value = all.filter(
-      (n) => n.name !== '.git' && n.name !== '.opencode' && n.name !== '.gitignore' && n.name !== 'tasks' && n.name !== '.sandbox-probe',
+      (n) => !n.name.startsWith('.') && n.name !== 'tasks',
     )
     currentPath.value = path
     // 技能模式:读取技能目录的 SKILL.md 元信息(图标/友好名称),仅在根目录执行
@@ -387,6 +385,62 @@ const displayNodes = computed<FileNode[]>(() => {
 })
 const isSearchMode = computed(() => searchResults.value !== null)
 
+/** 当前目录内可预览文件(非目录),供 ←/→ 翻页;当前选中文件在首或尾时禁用对应方向 */
+const previewList = computed(() => displayNodes.value.filter((n) => !n.directory))
+function previewIndex(): number {
+  return previewList.value.findIndex((n) => n.path === previewPath.value)
+}
+function stepPreview(dir: -1 | 1) {
+  const list = previewList.value
+  if (list.length < 2) return
+  const i = previewIndex()
+  const j = i + dir
+  if (j < 0 || j >= list.length) return
+  const n = list[j]
+  selectedFile.value = n.path
+  previewPath.value = n.path
+  previewSize.value = n.size
+}
+
+/** 按文件扩展名返回预览类型图标 */
+function getFileIcon(path: string): string {
+  const ext = path.split('.').pop()?.toLowerCase() || ''
+  const map: Record<string, string> = {
+    png: '🖼', jpg: '🖼', jpeg: '🖼', gif: '🖼', webp: '🖼', svg: '🖼', bmp: '🖼',
+    pdf: '📄', html: '🌐', htm: '🌐',
+    md: '📝', markdown: '📝',
+    docx: '📘', doc: '📘', xlsx: '📊', xls: '📊', csv: '📊',
+    pptx: '📙', ppt: '📙',
+    js: '💻', ts: '💻', vue: '💻', py: '💻', java: '💻', go: '💻', rs: '💻',
+    json: '📋', yml: '📋', yaml: '📋', toml: '📋',
+    mp3: '🎵', wav: '🎵', ogg: '🎵', mp4: '🎬', webm: '🎬', mov: '🎬',
+    txt: '📃', log: '📃', env: '📃', conf: '📃',
+  }
+  return map[ext] || '📄'
+}
+
+/** 预览弹窗快捷键:Esc 关闭、←/→ 切换同目录上下一个文件 */
+/** 预览弹窗快捷键:Esc 关闭、←/→ 切换同目录上下一个文件 */
+function onPreviewKeydown(e: KeyboardEvent) {
+  if (!previewVisible.value) return
+  const t = e.target as HTMLElement
+  const inInput = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+  if (inInput && e.key === 'Escape') {
+    ;(t as HTMLElement).blur()
+    return
+  }
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    previewVisible.value = false
+  } else if (e.key === 'ArrowLeft') {
+    e.preventDefault()
+    stepPreview(-1)
+  } else if (e.key === 'ArrowRight') {
+    e.preventDefault()
+    stepPreview(1)
+  }
+}
+
 /** 该节点是否属于本会话 AI 改动文件(高亮标记)。深度优先判完整路径是否命中。 */
 function isAiChanged(node: FileNode): boolean {
   const paths = props.changedPaths
@@ -398,6 +452,8 @@ onMounted(() => {
   load('')
   // 点击其它区域时关闭右键菜单(菜单右键自身已在节点上 preventDefault,不在此监听)
   window.addEventListener('click', closeContextMenu)
+  // 预览弹窗快捷键(Esc / ←→ 翻页)
+  window.addEventListener('keydown', onPreviewKeydown)
   // 自动刷新:文件变化后工作区自动更新。轮询静默刷新当前目录,保留用户导航位置与选中态;
   // 搜索/上传/预览进行中跳过,避免干扰交互。
   if (props.pollMs > 0) {
@@ -413,6 +469,7 @@ onBeforeUnmount(() => {
     pollTimer = null
   }
   window.removeEventListener('click', closeContextMenu)
+  window.removeEventListener('keydown', onPreviewKeydown)
 })
 </script>
 
@@ -508,17 +565,40 @@ onBeforeUnmount(() => {
     <n-modal
       v-model:show="previewVisible"
       preset="card"
-      :title="previewPath ? previewPath.split(/[\\/]/).pop() : '预览'"
       :style="{ width: '86vw', maxWidth: '1280px' }"
       :mask-closable="true"
       :bordered="false"
       class="fp-modal"
     >
+      <template #header>
+        <div class="fp-modal-title">
+          <span class="fp-modal-icon">{{ previewPath ? getFileIcon(previewPath) : '📄' }}</span>
+          <span>{{ previewPath ? previewPath.split(/[\\/]/).pop() : '预览' }}</span>
+        </div>
+      </template>
       <FilePreview
         v-if="previewPath"
         :path="previewPath"
         :size="previewSize"
+        hide-file-info
       />
+      <button
+        v-if="previewList.length > 1 && previewIndex() > 0"
+        class="fp-nav fp-nav--left"
+        title="上一个文件"
+        @click="stepPreview(-1)"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <button
+        v-if="previewList.length > 1 && previewIndex() < previewList.length - 1"
+        class="fp-nav fp-nav--right"
+        title="下一个文件"
+        @click="stepPreview(1)"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+      <div class="fp-hint">Esc 关闭 · ←/→ 切换同目录文件</div>
     </n-modal>
   </div>
 </template>
@@ -586,9 +666,86 @@ onBeforeUnmount(() => {
 .ctx-item svg { flex-shrink: 0; }
 
 /* n-modal teleport 到 body,需用全局样式(非 scoped)控制内容区高度 */
+.fp-modal .n-card {
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--border-soft, rgba(255,255,255,0.06));
+}
+.fp-modal .n-card__header {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border-soft, rgba(255,255,255,0.06));
+}
+.fp-modal .n-card__title {
+  font-size: 15px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fp-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fp-modal-icon {
+  font-size: 18px;
+  width: 30px; height: 30px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 8px;
+  background: var(--accent-soft, rgba(139,92,246,0.12));
+  flex-shrink: 0;
+}
 .fp-modal .n-card__content {
   height: calc(86vh - 56px);
   overflow: hidden;
   padding: 0;
+  position: relative;
 }
+/* 毛玻璃遮罩 */
+.fp-modal .n-modal-mask {
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+/* 全屏模式 */
+
+.fp-hint {
+  position: absolute;
+  bottom: 10px;
+  right: 14px;
+  font-size: 11px;
+  color: var(--text-3, #888);
+  background: var(--surface, rgba(32,36,43,0.85));
+  backdrop-filter: blur(6px);
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-soft, rgba(255,255,255,0.06));
+  pointer-events: none;
+  z-index: 10;
+}
+.fp-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 10;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: var(--surface, rgba(32,36,43,0.8));
+  backdrop-filter: blur(6px);
+  color: var(--text-2, #aeb3bb);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, transform 0.15s;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+.fp-nav:hover {
+  background: var(--accent, #8B5CF6);
+  color: #fff;
+  transform: translateY(-50%) scale(1.1);
+}
+.fp-nav--left { left: 10px; }
+.fp-nav--right { right: 10px; }
 </style>

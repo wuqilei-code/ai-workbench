@@ -20,6 +20,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+import jakarta.servlet.http.HttpServletRequest;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URLEncoder;
@@ -50,6 +52,36 @@ public class FileController {
     @GetMapping("/content")
     public R<String> content(@RequestParam String path) {
         return R.ok(workspaceService.readFile(SecurityUtil.currentUserId(), path));
+    }
+
+    /** 内联返回文件内容(Content-Disposition: inline + 正确 MIME),
+     *  供 HTML 预览 iframe 及其相对子资源(图表/样式/脚本)直接引用:
+     *  iframe src=/api/files/raw/reports/x.html 时,内嵌的相对路径
+     *  charts/a.png 会天然解析到 /api/files/raw/reports/charts/a.png,
+     *  同源 HttpOnly cookie 自动完成鉴权。
+     *  未命中(路径被 HTML 引用触发而非页面主体)同样返回 inline 内容。 */
+    @GetMapping("/raw/**")
+    public ResponseEntity<InputStreamResource> raw(HttpServletRequest request) {
+        String raw = request.getRequestURI();
+        String prefix = "/api/files/raw/";
+        String path = (raw.startsWith(prefix)) ? raw.substring(prefix.length()) : raw;
+        path = java.net.URLDecoder.decode(path, StandardCharsets.UTF_8);
+        Path file = workspaceService.getFilePath(SecurityUtil.currentUserId(), path);
+        String filename = file.getFileName().toString();
+        InputStream in;
+        try {
+            in = java.nio.file.Files.newInputStream(file);
+        } catch (IOException e) {
+            throw new com.aiworkbench.common.BusinessException(
+                    com.aiworkbench.common.ResultCode.INTERNAL_ERROR.getCode(), "read file failed");
+        }
+        // inline + 正确 MIME:浏览器直接渲染,不触发下载
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "inline; filename=\"" + java.net.URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20") + "\"")
+                .contentType(mediaTypeFor(filename))
+                .contentLength(file.toFile().length())
+                .body(new InputStreamResource(in));
     }
 
     /** 下载文件(二进制安全,作为附件下载) */
@@ -161,7 +193,7 @@ public class FileController {
             case "mp4" -> "video/mp4";
             case "webm" -> "video/webm";
             case "mov" -> "video/quicktime";
-            case "html", "htm" -> "text/html";
+            case "html", "htm" -> "text/html; charset=utf-8";
             case "css" -> "text/css";
             case "js", "mjs" -> "application/javascript";
             case "json" -> "application/json";

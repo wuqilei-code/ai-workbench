@@ -16,6 +16,12 @@ export const fileApi = {
     return res.data as Blob
   },
 
+  /** 内联渲染 URL(HTML 预览 iframe 及其相对子资源用):
+   *  路径按段编码后走 /api/files/raw/<path>,页面内相对引用
+   *  (charts/a.png 等)可自然解析到同前缀;同源 HttpOnly cookie 自动鉴权。 */
+  rawUrl: (path: string) =>
+    `/api/files/raw/${path.split('/').filter(Boolean).map(encodeURIComponent).join('/')}`,
+
   /** 下载文件(带 JWT),经 Blob URL 触发浏览器下载 */
   download: async (path: string) => {
     const blob = await fileApi.fetchBlob(path)
