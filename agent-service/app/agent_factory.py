@@ -330,11 +330,19 @@ def _build_model() -> BaseChatModel:
     if config.AGENT_MODEL_BASE_URL:
         # 支持 deepseek/ollama/自建网关等 OpenAI 兼容接口:AGENT_MODEL 里剥掉 provider: 前缀
         model = config.AGENT_MODEL.split(":", 1)[-1]
+        # DeepSeek V4 思维链控制:关闭时可减少输出长度与延迟/成本
+        extra_body: dict = {}
+        if config.AGENT_MODEL_THINKING:
+            extra_body["thinking"] = {"type": "enabled"}
+        else:
+            extra_body["thinking"] = {"type": "disabled"}
+        extra_body["reasoning_effort"] = config.AGENT_MODEL_REASONING_EFFORT
         return ReasoningChatOpenAI(
             model=model,
             base_url=config.AGENT_MODEL_BASE_URL,
             api_key=config.AGENT_MODEL_API_KEY or "not-needed",
             temperature=config.AGENT_MODEL_TEMPERATURE,
+            extra_body=extra_body,
         )
     from langchain.chat_models import init_chat_model
 
@@ -495,7 +503,7 @@ _DEFAULT_SYSTEM_PROMPT = (
     "预装了 python3 及常用文档/数据处理库(python-docx/pptx/openpyxl/"
     "reportlab/pandas/matplotlib 等),不要尝试 pip install。"
     "\n\n文件分类规范(生成文件时必须遵守):"
-    "\n  widgets/        — 内联可视化组件(pure_show_widget 自动存入,无需手动指定)"
+    "\n  widgets/        — 内联可视化组件(pure_show_widget 自动存入,文件名用业务名)"
     "\n  reports/        — HTML 报告、文档交付物(html-report/docx/pdf/xlsx/pptx)"
     "\n  charts/         — 图表 PNG/SVG 导出(matplotlib/seaborn 生成的图片)"
     "\n  scripts/        — 数据处理/生成脚本(.py)"
@@ -503,7 +511,9 @@ _DEFAULT_SYSTEM_PROMPT = (
     "\n  uploads/        — 用户上传的文件(保持原位)"
     "\n  tpl/            — 模板文件"
     "\n规则:生成文件前先创建目标目录(如 mkdir -p reports),不要把报告/脚本/数据/图表"
-    "散放在根目录。pure_show_widget 的组件由工具自动存入 widgets/,不需要手动指定路径。"
+    "散放在根目录。pure_show_widget 的组件由工具自动存入 widgets/,组件名(name 参数)"
+    "必须用业务描述命名(如 widgets/2024年销售趋势分析-xxxx.html),"
+    "同一轮会出多张图时更要用不同业务名区分,禁止用 \"widget/chart/图表1\" 这类泛化名;"
     "\n\n生成或修改文件后,必须在回复末尾以 `[结果文件] <相对路径>` 单独列出"
     "交付的文件(每个文件一行,路径相对 /workspace,如 `[结果文件] reports/report.html`、"
     "`[结果文件] scripts/process_data.py`)。不要带 /workspace 前缀,不要放在代码块里。"

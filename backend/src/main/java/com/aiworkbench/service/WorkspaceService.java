@@ -346,7 +346,7 @@ public class WorkspaceService {
         return resolved;
     }
 
-    /** 供快照/回滚等写入场景使用:同 safeResolve 校验,返回已校验的工作区路径。 */
+    /** 写入场景使用:同 safeResolve 校验,返回已校验的工作区路径。 */
     public Path resolveWritePath(Long userId, String relativePath) {
         assertSkillSyncAllowed(relativePath);
         return safeResolve(userId, relativePath);

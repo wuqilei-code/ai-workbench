@@ -34,7 +34,7 @@ const features = [
   { icon: '🧩', title: '技能市场', desc: '一键安装/发布技能，SKILL.md 驱动的工作流扩展' },
   { icon: '📚', title: '模板库', desc: '周报、会议纪要、数据分析等常用提示词模板' },
   { icon: '⏰', title: '定时自动化', desc: '可视化 cron 定时任务，结果自动生成执行报告' },
-  { icon: '📁', title: '文件工作区', desc: '内置代码编辑器、预览、版本历史与 AI 联动' },
+  { icon: '📁', title: '文件工作区', desc: '内置代码编辑器、预览与 AI 联动' },
   { icon: '🔌', title: 'MCP 集成', desc: '连接外部数据源与工具，扩展 AI 能力边界' },
 ]
 </script>

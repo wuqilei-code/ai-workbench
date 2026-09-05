@@ -69,11 +69,11 @@ public class UserProvisioningService {
         if (!Files.exists(staleUsers) && !Files.exists(staleHome)) {
             return;
         }
-        // 安全阀:目录若有 git 提交历史,说明曾被真实会话使用过(每轮对话自动 commit)。
+        // 安全阀:目录含任何用户文件,说明曾被真实会话使用过。
         // 此时不自动归档(避免 DB 异常等场景下误丢用户数据),抛错交由管理员确认。
-        // 调试残留 / 已删用户的工作区通常无提交,可安全自动归档。
-        if (hasGitHistory(staleUsers.resolve("project"))) {
-            log.error("refusing to quarantine non-empty workspace with commits for registering user id={}", userId);
+        // 调试残留 / 已删用户的工作区通常为空,可安全自动归档。
+        if (hasUserFiles(staleUsers.resolve("project"))) {
+            log.error("refusing to quarantine non-empty workspace for registering user id={}", userId);
             throw new BusinessException(ResultCode.INTERNAL_ERROR.getCode(),
                     "工作区初始化失败:检测到该用户目录已有历史数据,已阻止自动清理,请联系管理员");
         }
@@ -110,23 +110,17 @@ public class UserProvisioningService {
     }
 
     /**
-     * 工作区是否已有 git 提交历史。无 .git / 无 HEAD / 命令失败一律按"无历史"处理,
-     * 以便调试残留能被自动归档(保守方向:归档失败会抛错阻断注册,不会静默丢数据)。
+     * 工作区是否已有任何用户文件(非空即视为有历史数据)。隐藏配置项忽略;
+     * 空目录/仅隐藏文件按"无数据"处理,以便调试残留能被自动归档(保守方向:归档失败会抛错阻断注册,不会静默丢数据)。
      */
-    private boolean hasGitHistory(Path ws) {
-        if (!Files.isDirectory(ws.resolve(".git"))) {
+    private boolean hasUserFiles(Path ws) {
+        if (!Files.isDirectory(ws)) {
             return false;
         }
-        try {
-            Process p = new ProcessBuilder("git", "-C", ws.toString(), "rev-parse", "--verify", "HEAD")
-                    .redirectErrorStream(true).start();
-            p.getInputStream().readAllBytes();
-            return p.waitFor() == 0;
+        try (var stream = Files.walk(ws)) {
+            return stream.anyMatch(p -> Files.isRegularFile(p) && !p.getFileName().toString().startsWith("."));
         } catch (IOException e) {
-            log.warn("git rev-parse failed for {}: {}", ws, e.toString());
-            return false;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+            log.warn("scan workspace failed for {}: {}", ws, e.toString());
             return false;
         }
     }
@@ -202,9 +196,9 @@ public class UserProvisioningService {
      * 创建并权限化目录:
      * <ul>
      *   <li>父目录 /workspace/users/&lt;userId&gt; —— 隔离容器,0700</li>
-     *   <li>工作区 /workspace/users/&lt;userId&gt;/project —— 实际工作区(=userDir),git init
-     *       (deepagents 架构,技能已移至 users/&lt;id&gt;/skills,不再创建 .opencode);
-     *       配置类文件(.git/.gitignore)与用户文件同处此层,前端文件树隐藏配置项,页面只显示用户文件</li>
+     *   <li>工作区 /workspace/users/&lt;userId&gt;/project —— 实际工作区(=userDir)。
+     *       (deepagents 架构,技能已移至 users/&lt;id&gt;/skills,不再创建 .opencode;
+     *       也不再 git init — 省去 .git 的磁盘占用与维护成本)</li>
      *   <li>私有配置 home /data/users/&lt;uid&gt;/home/.config/opencode/agents —— Phase 2 PerUserConfigWriter 将 seed 配置</li>
      * </ul>
      * 均 chmod 0700 + chown -R uid:gid。
@@ -213,10 +207,6 @@ public class UserProvisioningService {
         Path parent = Paths.get(props.getRoot(), "users", String.valueOf(userId));
         Path ws = parent.resolve("project");
         createDirs(ws); // 同时创建 parent
-        // 把工作区初始化为 git 仓库:赋予 AI git 工具能力。
-        // 此处以 root 幂等 init,随后 chown -R 修正 .git/.opencode 属主(已不再创建 .opencode,
-        // 仅修正 .git),opencode 以 uid 运行时属主匹配,无 git "dubious ownership" 问题。
-        initGitWorkspace(ws);
         // 父目录与工作区均 0700 + chown:父目录隔离用户,工作区隔离配置与用户文件
         run("chmod", "0700", parent.toString());
         run("chmod", "0700", ws.toString());
@@ -226,24 +216,6 @@ public class UserProvisioningService {
         createDirs(home);
         run("chmod", "0700", home.toString());
         run("chown", "-R", uid + ":" + gid, home.toString());
-    }
-
-    /**
-     * 幂等初始化工作区为 git 仓库 + 预置提交身份与 .gitignore(排除 uploads/ 二进制)。
-     * 使 AI 具备 git 工具能力;身份预置避免 AI 提交时报 "Please tell me who you are"。
-     */
-    private void initGitWorkspace(Path ws) {
-        run("git", "-c", "init.defaultBranch=main", "init", ws.toString());
-        run("git", "-C", ws.toString(), "config", "user.email", "aiwb@local");
-        run("git", "-C", ws.toString(), "config", "user.name", "aiwb");
-        Path gitignore = ws.resolve(".gitignore");
-        if (!Files.isRegularFile(gitignore)) {
-            try {
-                Files.writeString(gitignore, "uploads/\n");
-            } catch (IOException e) {
-                log.warn("write .gitignore failed for {}: {}", ws, e.toString());
-            }
-        }
     }
 
     private void createDirs(Path p) {

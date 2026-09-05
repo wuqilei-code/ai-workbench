@@ -27,6 +27,11 @@ AGENT_MODEL: str = os.environ.get("AGENT_MODEL", "openai:gpt-4o-mini")
 AGENT_MODEL_BASE_URL: str | None = os.environ.get("AGENT_MODEL_BASE_URL") or None
 AGENT_MODEL_API_KEY: str | None = os.environ.get("AGENT_MODEL_API_KEY") or None
 AGENT_MODEL_TEMPERATURE: float = float(os.environ.get("AGENT_MODEL_TEMPERATURE", "0.0"))
+# DeepSeek V4 思维链开关:false 时请求体带 thinking.type=disabled,减少输出长度与延迟/成本
+#(部分场景关闭思考可能影响工具选择质量,可先观察再开关)。
+AGENT_MODEL_THINKING: bool = _bool("AGENT_MODEL_THINKING", False)
+# 推理强度(low/medium/high/max);仅 thinking 开启时生效。
+AGENT_MODEL_REASONING_EFFORT: str = os.environ.get("AGENT_MODEL_REASONING_EFFORT", "high")
 
 # --- 工作区 ---
 # 所有用户工作区/技能目录的根。多租户主机上按 <root>/<user_id>/ 隔离。

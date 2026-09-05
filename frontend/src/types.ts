@@ -230,26 +230,6 @@ export interface FileNode {
   created: number
 }
 
-/** 文件历史条目(对应后端 WorkspaceSnapshotService.FileHistoryEntry) */
-export interface FileHistoryEntry {
-  sha: string
-  timestamp: number
-  message: string
-}
-
-/** diff 单行 */
-export interface DiffLine {
-  kind: 'meta' | 'hunk' | 'add' | 'del' | 'ctx'
-  content: string
-}
-
-/** 文件 diff 结果 */
-export interface FileDiffResult {
-  textDiff: boolean
-  raw: string
-  lines: DiffLine[]
-}
-
 /** 用量统计看板(admin) */
 export interface UsageStats {
   overview: {
