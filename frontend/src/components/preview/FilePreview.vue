@@ -12,6 +12,7 @@ import PreviewHtml from './PreviewHtml.vue'
 import PreviewDocx from './PreviewDocx.vue'
 import PreviewXlsx from './PreviewXlsx.vue'
 import PreviewPptx from './PreviewPptx.vue'
+import PreviewExcalidraw from './PreviewExcalidraw.vue'
 import PreviewUnsupported from './PreviewUnsupported.vue'
 
 const props = withDefaults(defineProps<{ path: string; textContent?: string; size?: number; /** 隐藏工具栏左侧文件信息(由外层 modal 标题提供) */ hideFileInfo?: boolean }>(), {
@@ -53,7 +54,8 @@ const safeBlob = computed(() => blob.value ?? new Blob())
 const kindIcon = computed(() => {
   const map: Record<string, string> = {
     image: '🖼', pdf: '📄', html: '🌐', markdown: '📝', code: '💻',
-    text: '📃', docx: '📘', xlsx: '📊', pptx: '📙', audio: '🎵', video: '🎬', unsupported: '📦',
+    text: '📃', docx: '📘', xlsx: '📊', pptx: '📙', audio: '🎵', video: '🎬',
+    excalidraw: '✏️', unsupported: '📦',
   }
   return map[kind.value] || '📄'
 })
@@ -196,6 +198,7 @@ onBeforeUnmount(() => {
         <PreviewDocx         v-else-if="kind === 'docx'"     :blob="safeBlob" />
         <PreviewXlsx         v-else-if="kind === 'xlsx'"     :blob="safeBlob" :path="path" />
         <PreviewPptx         v-else-if="kind === 'pptx'"     :blob="safeBlob" />
+        <PreviewExcalidraw   v-else-if="kind === 'excalidraw'" :content="viewText" />
         <div v-else-if="kind === 'audio'" class="media-wrap">
           <audio :src="safeBlobUrl" controls class="fp-audio" />
         </div>

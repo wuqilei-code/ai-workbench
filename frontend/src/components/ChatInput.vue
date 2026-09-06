@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, nextTick, computed, watch } from 'vue'
+import { ref, nextTick, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { fileApi } from '@/api/files'
+import { chatApi } from '@/api/chat'
 import { useMessage, useDialog } from 'naive-ui'
 
 const chat = useChatStore()
@@ -10,8 +11,168 @@ const msg = useMessage()
 const dialog = useDialog()
 const router = useRouter()
 const text = ref('')
-const inputRef = ref<HTMLTextAreaElement | null>(null)
+const inputRef = ref<HTMLDivElement | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
+
+/** ---- slash 命令菜单 ---- */
+interface SkillInfo { name: string; description: string }
+const slashMenuOpen = ref(false)
+const slashFilter = ref('')
+const slashSelectedIdx = ref(0)
+const allSkills = ref<SkillInfo[]>([])
+const slashMenuRef = ref<HTMLDivElement | null>(null)
+const slashItemEl = ref<HTMLElement | null>(null)
+/** 已选择的技能标签(用于去重和同步显示) */
+const selectedSkills = ref<SkillInfo[]>([])
+
+/** 加载内置技能列表(只加载一次) */
+async function loadSlashSkills() {
+  if (allSkills.value.length) return
+  try {
+    allSkills.value = await chatApi.builtinSkills()
+  } catch { /* ignore */ }
+}
+
+/** 过滤后的技能列表 */
+const filteredSkills = computed(() => {
+  const q = slashFilter.value.toLowerCase()
+  if (!q) return allSkills.value
+  return allSkills.value.filter(
+    (s) => s.name.includes(q) || s.description.toLowerCase().includes(q)
+  )
+})
+
+/** 打开斜杠菜单 */
+function openSlashMenu() {
+  slashMenuOpen.value = true
+  slashFilter.value = ''
+  slashSelectedIdx.value = 0
+  loadSlashSkills()
+}
+
+/** 关闭斜杠菜单 */
+function closeSlashMenu() {
+  slashMenuOpen.value = false
+  slashFilter.value = ''
+  slashSelectedIdx.value = 0
+}
+
+/** 获取 contenteditable 的纯文本内容(去掉标签的 innerText) */
+function getPlainText(): string {
+  return inputRef.value?.innerText || ''
+}
+
+/** 从 contenteditable 提取纯文本:遍历 DOM,跳过可见技能标签,
+ *  隐藏占位符 {skill:name} 转为内联标记 [skill:name],保持原始位置。 */
+function extractContent(): { skills: string[]; text: string } {
+  const el = inputRef.value
+  if (!el) return { skills: [], text: text.value }
+  const skills: string[] = []
+  let out = ''
+  const walk = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      out += node.textContent || ''
+      return
+    }
+    const elm = node as HTMLElement
+    if (elm.classList?.contains('skill-tag-marker')) return
+    if (elm.tagName === 'BR') { out += '\n'; return }
+    for (const child of elm.childNodes) walk(child)
+  }
+  el.querySelectorAll('span[style*="display: none"], span[style*="display:none"]').forEach((span) => {
+    const m = (span.textContent || '').match(/^\{skill:(.+)\}$/)
+    if (m && !skills.includes(m[1])) skills.push(m[1])
+  })
+  walk(el)
+  out = out.replace(/\{skill:([^}]+)\}/g, '[skill:$1]')
+  return { skills, text: out }
+}
+
+/** 选择技能:在 contenteditable 中插入隐藏占位符 + 可见标签 */
+function selectSkill(skill: SkillInfo) {
+  if (selectedSkills.value.some((s) => s.name === skill.name)) {
+    closeSlashMenu()
+    nextTick(() => inputRef.value?.focus())
+    return
+  }
+  const el = inputRef.value
+  if (!el) return
+  const sel = window.getSelection()
+  if (!sel || !sel.rangeCount) return
+  const range = sel.getRangeAt(0)
+  // 光标在文本节点中,且前面有 /filter(斜杠命令):把 range 起点扩到斜杠处,清除斜杠命令文本
+  if (range.startContainer.nodeType === Node.TEXT_NODE) {
+    const t = range.startContainer.textContent || ''
+    const before = t.slice(0, range.startOffset)
+    const lastSlash = before.lastIndexOf('/')
+    if (lastSlash >= 0 && !/\s/.test(before.slice(lastSlash + 1))) {
+      range.setStart(range.startContainer, lastSlash)
+    }
+  }
+  range.deleteContents()
+  // 用 DocumentFragment 一次性插入,避免多次 insertNode 导致顺序错乱
+  const frag = document.createDocumentFragment()
+  const hideSpan = document.createElement('span')
+  hideSpan.style.display = 'none'
+  hideSpan.textContent = `{skill:${skill.name}}`
+  const tag = document.createElement('span')
+  tag.className = 'skill-tag-marker'
+  tag.contentEditable = 'false'
+  tag.setAttribute('data-skill', skill.name)
+  tag.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg><span>${skill.name}</span><span class="skill-tag-x">×</span>`
+  tag.querySelector('.skill-tag-x')?.addEventListener('click', (ev) => {
+    ev.stopPropagation()
+    hideSpan.remove()
+    tag.remove()
+    selectedSkills.value = selectedSkills.value.filter((s) => s.name !== skill.name)
+  })
+  frag.appendChild(hideSpan)
+  frag.appendChild(tag)
+  range.insertNode(frag)
+  // 光标移到标签后
+  const newRange = document.createRange()
+  newRange.setStartAfter(tag)
+  newRange.collapse(true)
+  sel.removeAllRanges()
+  sel.addRange(newRange)
+  selectedSkills.value.push(skill)
+  closeSlashMenu()
+  nextTick(() => inputRef.value?.focus())
+}
+
+/** 移除已选技能标签 */
+function removeSkill(name: string) {
+  const el = inputRef.value
+  if (el) {
+    el.querySelectorAll('.skill-tag-marker').forEach((span) => {
+      if (span.getAttribute('data-skill') === name) {
+        span.remove()
+      }
+    })
+  }
+  selectedSkills.value = selectedSkills.value.filter((s) => s.name !== name)
+}
+
+/** 检测输入中是否处于斜杠菜单状态 */
+function checkSlashState() {
+  const sel = window.getSelection()
+  if (!sel || !sel.rangeCount) { closeSlashMenu(); return }
+  const range = sel.getRangeAt(0)
+  const textNode = range.startContainer
+  if (textNode.nodeType !== Node.TEXT_NODE) { closeSlashMenu(); return }
+  const t = textNode.textContent || ''
+  const cursorPos = range.startOffset
+  const before = t.slice(0, cursorPos)
+  // 找最后一个 /，提取过滤词
+  const lastSlash = before.lastIndexOf('/')
+  if (lastSlash < 0) { closeSlashMenu(); return }
+  const filter = before.slice(lastSlash + 1)
+  // 过滤词不能含空格（说明已经不是斜杠命令了）
+  if (/\s/.test(filter)) { closeSlashMenu(); return }
+  slashFilter.value = filter
+  slashSelectedIdx.value = 0
+  if (!slashMenuOpen.value) openSlashMenu()
+}
 
 /** 交由父级打开「生成文档」「解读报错」弹窗 / 触发测试分析 */
 const emit = defineEmits<{
@@ -23,11 +184,23 @@ const emit = defineEmits<{
 /** 供欢迎页/模板库等外部注入:把提示词填入输入框并聚焦(不自动发送,便于用户补充)。 */
 function fill(prompt: string) {
   if (!prompt) return
-  text.value = prompt
+  const el = inputRef.value
+  if (el) {
+    el.innerText = prompt
+    text.value = prompt
+  }
   nextTick(() => {
     onInput()
     inputRef.value?.focus()
-    inputRef.value?.setSelectionRange(text.value.length, text.value.length)
+    // 将光标移到末尾
+    const sel = window.getSelection()
+    if (sel && el) {
+      const range = document.createRange()
+      range.selectNodeContents(el)
+      range.collapse(false)
+      sel.removeAllRanges()
+      sel.addRange(range)
+    }
   })
 }
 
@@ -63,6 +236,85 @@ watch(() => chat.pendingAttachPath, (v) => {
 /** ---- slash 命令菜单(deepagents 无命令,已移除) ---- */
 
 function onKeydown(e: KeyboardEvent) {
+  // 退格键:删除光标前的技能标签(含隐藏占位符)
+  if (e.key === 'Backspace' && !slashMenuOpen.value) {
+    const sel = window.getSelection()
+    if (sel && sel.rangeCount) {
+      const range = sel.getRangeAt(0)
+      if (!range.collapsed) return
+      const node = range.startContainer
+      // 辅助:删除标签及其关联的隐藏占位符
+      function removeTagWithPlaceholder(tagEl: Element) {
+        const name = tagEl.getAttribute('data-skill') || ''
+        // 找同级前一个隐藏 span
+        let prev = tagEl.previousSibling
+        while (prev && prev.nodeType === Node.ELEMENT_NODE && (prev as HTMLElement).style?.display === 'none') {
+          const p = prev
+          prev = prev.previousSibling
+          p.remove()
+        }
+        tagEl.remove()
+        selectedSkills.value = selectedSkills.value.filter((s) => s.name !== name)
+      }
+      // 光标在空文本节点中,前一个是标签
+      if (node.nodeType === Node.TEXT_NODE && (node.textContent || '') === '') {
+        const prev = node.previousSibling
+        if (prev?.nodeType === Node.ELEMENT_NODE && (prev as Element).classList?.contains('skill-tag-marker')) {
+          e.preventDefault()
+          removeTagWithPlaceholder(prev as Element)
+          return
+        }
+      }
+      // 光标在文本节点开头,前一个是标签
+      if (node.nodeType === Node.TEXT_NODE && range.startOffset === 0) {
+        const prev = node.previousSibling
+        if (prev?.nodeType === Node.ELEMENT_NODE && (prev as Element).classList?.contains('skill-tag-marker')) {
+          e.preventDefault()
+          removeTagWithPlaceholder(prev as Element)
+          return
+        }
+      }
+      // 光标直接在 contenteditable 根节点
+      if (node === inputRef.value) {
+        const child = inputRef.value.childNodes[range.startOffset - 1]
+        if (child?.nodeType === Node.ELEMENT_NODE && (child as Element).classList?.contains('skill-tag-marker')) {
+          e.preventDefault()
+          removeTagWithPlaceholder(child as Element)
+          return
+        }
+      }
+    }
+  }
+  // 斜杠菜单打开时:上下选择、Enter 确认、Escape 关闭
+  if (slashMenuOpen.value) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      slashSelectedIdx.value = (slashSelectedIdx.value + 1) % filteredSkills.value.length
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      slashSelectedIdx.value = (slashSelectedIdx.value - 1 + filteredSkills.value.length) % filteredSkills.value.length
+      return
+    }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      const skill = filteredSkills.value[slashSelectedIdx.value]
+      if (skill) selectSkill(skill)
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      closeSlashMenu()
+      return
+    }
+    if (e.key === 'Tab') {
+      e.preventDefault()
+      const skill = filteredSkills.value[slashSelectedIdx.value]
+      if (skill) selectSkill(skill)
+      return
+    }
+  }
   if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
     e.preventDefault()
     onSend()
@@ -107,18 +359,33 @@ const dataSamples = computed(() => {
 })
 /** 点击示例:把示例问题填入输入框(附件仍在,发送时会带文件路径) */
 function applySample(sample: string) {
-  text.value = sample
+  const el = inputRef.value
+  if (el) {
+    el.innerText = sample
+    text.value = sample
+  }
   nextTick(() => {
     onInput()
     inputRef.value?.focus()
-    inputRef.value?.setSelectionRange(text.value.length, text.value.length)
+    // 将光标移到末尾
+    const sel = window.getSelection()
+    if (sel && el) {
+      const range = document.createRange()
+      range.selectNodeContents(el)
+      range.collapse(false)
+      sel.removeAllRanges()
+      sel.addRange(range)
+    }
   })
 }
 
 /** hasPending:AI 真的在等用户输入(question/permission),用于占位文案与发送拦截 */
 const hasPending = computed(() => chat.hasPendingInteraction)
 
-const canSend = computed(() => !!(text.value.trim() || attachments.value.length))
+const canSend = computed(() => {
+  const t = getPlainText().trim()
+  return !!(t || attachments.value.length || selectedSkills.value.length)
+})
 
 function pickFile() {
   fileInputRef.value?.click()
@@ -181,9 +448,54 @@ async function onPaste(e: ClipboardEvent) {
       if (f) files.push(f)
     }
   }
-  if (!files.length) return
-  e.preventDefault() // 阻止浏览器默认把图片/文件文本插入输入框
-  await uploadFiles(files)
+  if (files.length) {
+    e.preventDefault()
+    await uploadFiles(files)
+    nextTick(() => inputRef.value?.focus())
+    return
+  }
+  // 文本粘贴:检测 [skill:name] 标记,转为技能标签
+  const text = e.clipboardData?.getData('text') || ''
+  if (!text.includes('[skill:')) return
+  e.preventDefault()
+  const sel = window.getSelection()
+  if (!sel || !sel.rangeCount) return
+  const range = sel.getRangeAt(0)
+  range.deleteContents()
+  const skillRe = /\[skill:([^\]]+)\]/g
+  const frag = document.createDocumentFragment()
+  let lastIdx = 0
+  let m: RegExpExecArray | null
+  while ((m = skillRe.exec(text)) !== null) {
+    if (m.index > lastIdx) frag.appendChild(document.createTextNode(text.slice(lastIdx, m.index)))
+    const skillName = m[1]
+    // 无论技能是否在内置列表中,都创建标签(粘贴回显场景不依赖列表已加载)
+    if (!selectedSkills.value.some((s) => s.name === skillName)) {
+      const hideSpan = document.createElement('span')
+      hideSpan.style.display = 'none'
+      hideSpan.textContent = `{skill:${skillName}}`
+      const tag = document.createElement('span')
+      tag.className = 'skill-tag-marker'
+      tag.contentEditable = 'false'
+      tag.setAttribute('data-skill', skillName)
+      tag.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg><span>${skillName}</span><span class="skill-tag-x">×</span>`
+      tag.querySelector('.skill-tag-x')?.addEventListener('click', (ev) => {
+        ev.stopPropagation()
+        hideSpan.remove()
+        tag.remove()
+        selectedSkills.value = selectedSkills.value.filter((s) => s.name !== skillName)
+      })
+      frag.appendChild(hideSpan)
+      frag.appendChild(tag)
+      selectedSkills.value.push({ name: skillName, description: '' })
+    } else {
+      frag.appendChild(document.createTextNode(m[0]))
+    }
+    lastIdx = skillRe.lastIndex
+  }
+  if (lastIdx < text.length) frag.appendChild(document.createTextNode(text.slice(lastIdx)))
+  range.insertNode(frag)
+  range.collapse(false)
   nextTick(() => inputRef.value?.focus())
 }
 
@@ -201,11 +513,15 @@ function removeAttachment(i: number) {
 /** 把附件信息拼接到用户消息文本,作为智能体可读的上下文。
  *  使用 [附件] path 标记,前端 ChatMessage 会把它渲染成可下载的 chip。 */
 function buildPayload(): string {
-  const t = text.value.trim()
-  if (attachments.value.length === 0) return t
-  const fileList = attachments.value.map((a) => `[附件] ${a.path}`).join('\n')
-  const note = ` 已上传以下文件到工作区,可使用相对路径读取:\n${fileList}`
-  return t ? `${t}\n\n${note}` : note
+  const { text: plainText } = extractContent()
+  const t = plainText.trim()
+  const parts: string[] = []
+  if (t) parts.push(t)
+  if (attachments.value.length) {
+    const fileList = attachments.value.map((a) => `[附件] ${a.path}`).join('\n')
+    parts.push(`已上传以下文件到工作区,可使用相对路径读取:\n${fileList}`)
+  }
+  return parts.join('\n\n')
 }
 
 async function onSend() {
@@ -222,13 +538,17 @@ async function onSend() {
   const lastText = text.value
   const lastAttachments = [...attachments.value]
   text.value = ''
+  selectedSkills.value = []
   attachments.value = []
+  // 清空 contenteditable
+  if (inputRef.value) inputRef.value.innerText = ''
   try {
     await chat.sendMessage(payload)
   } catch (e: any) {
     // 发送失败:回填输入原文与附件,便于用户修正后重试,而不是丢失输入
     text.value = lastText
     attachments.value = lastAttachments
+    if (inputRef.value) inputRef.value.innerText = lastText
     msg.error(e?.message || '发送失败,已为你保留输入内容')
     await nextTick()
     resizeInput()
@@ -236,11 +556,35 @@ async function onSend() {
     return
   }
   await nextTick()
+  resizeInput()
   inputRef.value?.focus()
 }
 
 function onInput() {
   resizeInput()
+  // 同步 text ref
+  text.value = getPlainText()
+  checkSlashState()
+}
+
+/** 处理 contenteditable 内的点击(×关闭技能标签) */
+function onEditorClick(e: MouseEvent) {
+  const target = e.target as HTMLElement
+  if (target.classList.contains('skill-tag-x')) {
+    const tag = target.closest('.skill-tag-marker') as HTMLElement | null
+    if (tag) {
+      const name = tag.getAttribute('data-skill') || ''
+      // 删除关联的隐藏占位符
+      let prev = tag.previousSibling
+      while (prev && prev.nodeType === Node.ELEMENT_NODE && (prev as HTMLElement).style?.display === 'none') {
+        const p = prev
+        prev = prev.previousSibling
+        p.remove()
+      }
+      tag.remove()
+      selectedSkills.value = selectedSkills.value.filter((s) => s.name !== name)
+    }
+  }
 }
 
 /** 文本框自适应高度:内容变化(含 programmatic 清空)后重算,保证清空/发送后恢复默认一行高度 */
@@ -254,6 +598,13 @@ function resizeInput() {
 /** 兜底:任何方式改变 text(模板填充/粘贴/发送清空/命令清空)都触发高度重算 */
 watch(text, () => {
   nextTick().then(resizeInput)
+})
+
+/** 上下键切换时,让选中项滚动到可视区 */
+watch(slashSelectedIdx, () => {
+  nextTick(() => {
+    slashItemEl.value?.scrollIntoView({ block: 'nearest' })
+  })
 })
 
 async function onAbort() {
@@ -405,19 +756,20 @@ async function startNewChat() {
 
     <input ref="fileInputRef" type="file" multiple class="hidden-input" @change="onFileChange" />
 
-    <!-- 输入卡片:textarea + 发送按钮 -->
+    <!-- 输入卡片:contenteditable + 发送按钮 -->
     <div class="input-card">
-      <textarea
+      <div
         ref="inputRef"
-        v-model="text"
-        class="textarea"
-        rows="1"
-        :placeholder="chat.isStreaming
+        class="textarea contenteditable"
+        contenteditable="true"
+        :data-placeholder="chat.isStreaming
           ? (hasPending ? '上方有待答问题,作答后发送;或直接输入以继续…' : 'AI 正在处理中,可点「停止」中断…')
           : '随便问点什么…'"
         @keydown="onKeydown"
         @input="onInput"
         @paste="onPaste"
+        @focus="onInput"
+        @click="onEditorClick"
       />
       <div class="card-side">
         <template v-if="chat.isStreaming">
@@ -428,6 +780,36 @@ async function startNewChat() {
         <button v-else class="send-btn" :class="{ disabled: !canSend }" :disabled="!canSend" title="发送 (Enter)" @click="onSend">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
         </button>
+      </div>
+    </div>
+
+    <!-- slash 命令菜单 -->
+    <div v-if="slashMenuOpen && filteredSkills.length" ref="slashMenuRef" class="slash-menu">
+      <div class="slash-menu-header">
+        <span class="slash-menu-icon">/</span>
+        <span>选择技能</span>
+        <span class="slash-menu-count">{{ filteredSkills.length }}</span>
+      </div>
+      <div class="slash-menu-list">
+        <div
+          v-for="(skill, idx) in filteredSkills"
+          :key="skill.name"
+          :ref="(el) => { if (el && idx === slashSelectedIdx) slashItemEl = el as HTMLElement }"
+          class="slash-menu-item"
+          :class="{ active: idx === slashSelectedIdx }"
+          @mouseenter="slashSelectedIdx = idx"
+          @mousedown.prevent
+          @click.stop="selectSkill(skill)"
+        >
+          <svg class="slash-menu-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          <span class="slash-menu-name">{{ skill.name }}</span>
+          <span class="slash-menu-desc">{{ skill.description }}</span>
+        </div>
+      </div>
+      <div class="slash-menu-footer">
+        <span>↑↓ 导航</span>
+        <span>Enter 选择</span>
+        <span>Esc 关闭</span>
       </div>
     </div>
 
@@ -602,8 +984,44 @@ async function startNewChat() {
   max-height: 200px;
   overflow-y: auto;
   box-sizing: border-box;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.textarea.contenteditable { min-height: 1.6em; }
+.textarea.contenteditable:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-3);
+  opacity: 0.7;
+  pointer-events: none;
 }
 .textarea::placeholder { color: var(--text-3); opacity: 0.7; }
+/* 技能标签标记(动态插入,需 :deep) */
+:deep(.skill-tag-marker) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(139, 92, 246, 0.15));
+  color: var(--accent, #6366f1);
+  border: 1px solid rgba(139, 92, 246, 0.4);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 6px;
+  margin: 0 2px;
+  vertical-align: middle;
+  line-height: 1.4;
+  cursor: default;
+  user-select: none;
+}
+:deep(.skill-tag-marker svg) { opacity: 0.7; flex-shrink: 0; }
+:deep(.skill-tag-x) {
+  margin-left: 2px;
+  cursor: pointer;
+  opacity: 0.6;
+  font-size: 14px;
+  line-height: 1;
+}
+:deep(.skill-tag-x:hover) { opacity: 1; color: var(--err, #ef4444); }
 .card-side {
   display: flex;
   align-items: flex-end;
@@ -732,5 +1150,95 @@ async function startNewChat() {
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
   /* iOS 聚焦 <16px 输入框会自动放大页面,移动端提到 16px 避免 */
   .textarea { font-size: 16px; }
+}
+
+/* slash 命令菜单 */
+.slash-menu {
+  position: absolute;
+  bottom: 100%;
+  left: 20px;
+  right: 20px;
+  max-height: 360px;
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.12);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+.slash-menu-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  border-bottom: 1px solid var(--border-soft);
+}
+.slash-menu-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.slash-menu-count {
+  margin-left: auto;
+  font-weight: 400;
+  color: var(--text-3);
+}
+.slash-menu-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px;
+}
+.slash-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background .1s;
+}
+.slash-menu-item:hover,
+.slash-menu-item.active {
+  background: var(--accent-soft);
+}
+.slash-menu-icon {
+  flex-shrink: 0;
+  opacity: .5;
+}
+.slash-menu-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+  flex-shrink: 0;
+}
+.slash-menu-desc {
+  font-size: 12px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.slash-menu-footer {
+  display: flex;
+  gap: 12px;
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--text-3);
+  border-top: 1px solid var(--border-soft);
+  background: var(--surface-hover);
 }
 </style>

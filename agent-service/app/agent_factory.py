@@ -261,7 +261,7 @@ def _compression_threshold(sm) -> int | None:
 # 平台内置技能(默认每个会话都加载;与镜像 agent-service/skills 下的目录名一致)
 BUILTIN_SKILLS = {
     "browser-operate", "create-skill", "docx", "html-report", "pdf", "pptx", "xlsx",
-    "dynamic-ui",
+    "dynamic-ui", "excalidraw", "mermaid",
 }
 
 
@@ -524,7 +524,7 @@ _DEFAULT_SYSTEM_PROMPT = (
     "只有内容需要程序动态生成(如运行脚本产出报告)时才用 execute。"
     "\n\n技能目录 /skills 对普通写文件工具只读:当用户要求创建新技能、完善/修改已有技能时,"
     "使用 create_skill 工具保存(会弹出确认框,并自动进入用户的技能管理列表)。"
-    "平台内置技能(docx/pptx/xlsx/pdf/html-report/browser-operate/create-skill)不可修改。"
+    "平台内置技能(docx/pptx/xlsx/pdf/html-report/browser-operate/create-skill/excalidraw/mermaid)不可修改。"
     "\n\n浏览器操作(与用户实时面板同一浏览器):需要时直接调用工具执行,不要先询问用户——"
     "打开网页(browser_navigate)系统会自动弹出确认框请用户允许,允许后继续;"
     "按需使用 browser_get_text(读页面文字)、browser_click/browser_click_text(点击)、"
@@ -545,16 +545,10 @@ _DEFAULT_SYSTEM_PROMPT = (
 
 
 def _fingerprint(user_id: str, skills: list[str], memory: list[str], system_prompt: str | None, mcp_servers=None) -> str:
-    # 记忆按文件内容哈希(而非仅路径):AGENTS.md 内容变化时缓存自动失效重建,
-    # 否则 agent 会一直沿用构建时的旧记忆。文件缺失/不可读则退化为路径本身。
-    mem_sig: list[str] = []
-    for p in memory:
-        try:
-            mem_sig.append(hashlib.sha256(Path(p).read_bytes()).hexdigest())
-        except Exception:  # noqa: BLE001
-            mem_sig.append(p)
+    # memory 已迁移至 PostgresStore(运行时读取),不再参与 agent 编译指纹;
+    # 保留参数签名兼容,但忽略 memory 文件列表。
     mcp_sig = mcp_client.mcp_signature(mcp_servers or [])
-    parts = [user_id, system_prompt or _DEFAULT_SYSTEM_PROMPT] + skills + mem_sig + ["browser_open_url", mcp_sig]
+    parts = [user_id, system_prompt or _DEFAULT_SYSTEM_PROMPT] + skills + ["browser_open_url", mcp_sig]
     return hashlib.sha256("\x1f".join(parts).encode()).hexdigest()
 
 
@@ -601,7 +595,7 @@ class AgentManager:
         agent = create_deep_agent(
             model=model,
             tools=list(extra_tools or []) + build_browser_tools(user_id) + build_skill_tools(user_id)
-            + build_widget_tools(user_id) + build_memory_tools(user_id) + build_question_tools()
+            + build_widget_tools(user_id) + build_memory_tools(user_id, _get_runtime().store) + build_question_tools()
             + mcp_tools,
             system_prompt=effective_prompt,
             backend=backend,

@@ -39,7 +39,7 @@ public class SkillService {
     /** 平台内置技能名(与 agent-service 镜像 skills/ 目录一致;默认每会话加载,不出现在自定义勾选) */
     public static final java.util.Set<String> BUILTIN_NAMES = java.util.Set.of(
             "browser-operate", "create-skill", "docx", "html-report", "pdf", "pptx", "xlsx",
-            "dynamic-ui");
+            "dynamic-ui", "excalidraw", "mermaid");
 
     /** 用户自定义技能(可勾选按会话加载):skills 根下除内置外的技能名。 */
     public java.util.List<String> customSkillNames(Long userId) {

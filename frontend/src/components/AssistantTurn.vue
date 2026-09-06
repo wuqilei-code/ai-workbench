@@ -718,12 +718,13 @@ function stepHtml(step: Step): string {
                 <div
                   v-show="isReasonOpen(b.step, b.index)"
                   class="reason-body"
-                ><TypeReveal v-if="isStepActive(b.step)" :text="displayContent(b.step)" :dim-tail="0" :max-chars="1200" active /><template v-else>{{ displayContent(b.step) }}</template></div>
+                ><TypeReveal v-if="isStepActive(b.step)" :text="displayContent(b.step)" :dim-tail="0" :max-chars="1200" thinking active /><template v-else>{{ displayContent(b.step) }}</template></div>
               </div>
               <div
                 v-else-if="stepDisplayText(b.step)"
                 class="step-narration"
-              ><TypeReveal v-if="isStepActive(b.step)" :text="stepDisplayText(b.step)" :dim-tail="0" active /><span v-else class="narration-md" v-html="stepHtml(b.step)" /></div>
+                :class="{ 'step-narration--active': isStepActive(b.step) }"
+              ><TypeReveal v-if="isStepActive(b.step)" :text="stepDisplayText(b.step)" :dim-tail="0" thinking active /><span v-else class="narration-md" v-html="stepHtml(b.step)" /></div>
               <div v-if="displayToolCalls(b.step).length" class="tool-calls">
                 <ToolCallItem
                   v-for="tc in displayToolCalls(b.step)"
@@ -1238,6 +1239,7 @@ function stepHtml(step: Step): string {
 .step-narration {
   font-size: 13px; color: var(--text-2); opacity: .85;
 }
+.step-narration--active { font-style: italic; opacity: 1; }
 .step-narration :deep(p) { margin: 4px 0; }
 /* 推理段:朴素"思考 ⌄"行,展开内容为圆角浅底卡片 */
 .reason-box {

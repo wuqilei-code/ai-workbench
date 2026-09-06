@@ -46,27 +46,38 @@ function toggleStar() {
   msg.success(added ? '已收藏' : '已取消收藏')
 }
 
-/** 用户消息中可能含 [附件] path 标记(ChatInput 上传文件时拼接)。
- *  把这些行抽出来渲染成可下载的 chip,其余文本照常 markdown 渲染。 */
+/** 用户消息中可能含 [附件] path 标记、[技能: name] 行标记 和 [skill:name] 内联标记。
+ *  行标记抽出来渲染成 chip;内联标记在 markdown 渲染后替换为标签。 */
 const parsed = computed(() => {
   const content = props.message.content || ''
-  if (!isUser.value) return { text: content, attachments: [] as { path: string; name: string }[] }
+  if (!isUser.value) return { text: content, attachments: [] as { path: string; name: string }[], skills: [] as string[] }
   const lines = content.split('\n')
   const textLines: string[] = []
   const attachments: { path: string; name: string }[] = []
+  const skills: string[] = []
   for (const line of lines) {
-    const m = line.match(/^\[附件\]\s*(.+)$/)
-    if (m) {
-      const path = m[1].trim()
+    const mAtt = line.match(/^\[附件\]\s*(.+)$/)
+    const mSkill = line.match(/^\[技能:\s*(.+)\]$/)
+    if (mAtt) {
+      const path = mAtt[1].trim()
       attachments.push({ path, name: path.split(/[\\/]/).pop() || path })
+    } else if (mSkill) {
+      skills.push(...mSkill[1].split(',').map((s) => s.trim()).filter(Boolean))
     } else {
       textLines.push(line)
     }
   }
-  return { text: textLines.join('\n').trim(), attachments }
+  return { text: textLines.join('\n').trim(), attachments, skills }
 })
 
-const html = computed(() => renderMarkdown(parsed.value.text))
+/** 将文本中的 [skill:name] 内联标记替换为带样式的 HTML 标签 */
+function renderSkillMarkers(text: string): string {
+  return text.replace(/\[skill:([^\]]+)\]/g, (_, name) => {
+    return `<span class="skill-tag-inline"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>${name}</span>`
+  })
+}
+
+const html = computed(() => renderSkillMarkers(renderMarkdown(parsed.value.text)))
 
 /** 附件下载中(以 path 为 key),行内 loading 并防重复点。 */
 const downloading = ref<string | null>(null)
@@ -356,6 +367,19 @@ async function submitEdit() {
 }
 .att-link:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
 .att-link.busy { opacity: .55; pointer-events: none; }
+
+/* 消息中的技能标签(内联) */
+:deep(.skill-tag-inline) {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.12), rgba(139, 92, 246, 0.12));
+  color: var(--accent);
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  font-size: 12px; font-weight: 600;
+  padding: 2px 8px; border-radius: 6px;
+  vertical-align: middle; margin: 0 2px;
+  letter-spacing: .02em;
+}
+:deep(.skill-tag-inline svg) { opacity: .7; flex-shrink: 0; }
 
 /* 触屏:工具按钮常显(hover 不生效) */
 @media (hover: none) {

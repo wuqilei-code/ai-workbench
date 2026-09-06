@@ -23,6 +23,7 @@ interface StreamHandle { close: () => void }
 function deriveTitle(text: string): string {
   let t = text.replace(/📎[\s\S]*$/, '').trim()
   t = t.replace(/^\[附件\]\s*\S+$/gm, '').trim()
+  t = t.replace(/^\[技能:.*\]$/gm, '').trim()
   t = t.replace(/\s+/g, ' ').trim()
   if (t) return t.length > 30 ? t.slice(0, 30) + '…' : t
   const m = text.match(/\[附件\]\s*(\S+)/)
@@ -80,6 +81,9 @@ export const useChatStore = defineStore('chat', () => {
   let _interruptedText = ''
   const switching = ref(false)
   const reconnectCount = ref(0)
+  /** SSE 会话代际计数器:每次切换会话时递增,用于过滤旧会话的残留事件,
+   *  防止 A 会话的 SSE delta/tool 事件污染 B 会话的消息列表。 */
+  let _sseGeneration = 0
   const lastEventAt = ref(Date.now())
   let _heartbeatTimer: ReturnType<typeof setInterval> | null = null
 
@@ -201,6 +205,8 @@ export const useChatStore = defineStore('chat', () => {
   async function selectSession(id: number) {
     if (currentSessionId.value === id && stream) return
     const seq = ++_loadSeq
+    // 递增代际计数器:后续到达的旧会话 SSE 事件会被 handleEvent 过滤掉
+    _sseGeneration++
     closeStream()
     currentSessionId.value = id
     messages.value = []
@@ -216,6 +222,7 @@ export const useChatStore = defineStore('chat', () => {
     if (_disconnectAbortTimer) { clearTimeout(_disconnectAbortTimer); _disconnectAbortTimer = null }
     _interruptedMsgId = null
     _interruptedText = ''
+    reconnectCount.value = 0
     switching.value = true
     manualCollapseOverride.value = {}
     try {
@@ -435,6 +442,8 @@ export const useChatStore = defineStore('chat', () => {
       },
       onMessage: (type, data) => {
         lastEventAt.value = Date.now()
+        // 标记事件所属的会话代际:handleEvent 据此过滤旧会话残留事件
+        if (data && typeof data === 'object') data._sseGen = _sseGeneration
         handleEvent(type, data)
       },
       onError: () => {
@@ -586,6 +595,10 @@ export const useChatStore = defineStore('chat', () => {
    *   - done           {} 一轮结束
    */
   function handleEvent(type: string, data: any) {
+    // 过滤旧会话残留事件:切换会话后旧 SSE 连接可能仍有 delta/tool 等事件在途,
+    // 不检查会污染新会话的消息列表(步骤重复、文本重叠)。
+    const evGen = data?._sseGen
+    if (evGen != null && evGen !== _sseGeneration) return
     console.debug('[chat] SSE event:', type, 'isStreaming=', isStreaming.value,
       'streamingMsgId=', streamingMessageId.value, 'data=', data)
     switch (type) {

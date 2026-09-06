@@ -9,7 +9,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
  *   保持"隐藏光效",dimTail=0 时全部显现但仍匀速
  * - 停顿 400ms 后尾部也全部显现
  */
-const props = defineProps<{ text: string; active?: boolean; dimTail?: number; maxChars?: number }>()
+const props = defineProps<{ text: string; active?: boolean; dimTail?: number; maxChars?: number; thinking?: boolean }>()
 
 const tail = computed(() => (props.dimTail === undefined ? 12 : props.dimTail))
 
@@ -73,7 +73,7 @@ watch(() => props.active, (a) => {
 </script>
 
 <template>
-  <span class="ty-reveal" :class="{ 'ty-static': !active }">
+  <span class="ty-reveal" :class="{ 'ty-static': !active, 'ty-thinking': thinking }">
     <span v-if="hiddenCount > 0 && !active" class="ty-omitted">…前面 {{ hiddenCount }} 字已折叠</span>
     <template v-for="(ln, i) in completed" :key="i">
       <span class="ty-line">{{ ln }}</span>
@@ -112,6 +112,8 @@ watch(() => props.active, (a) => {
   opacity: 0.18;
   text-shadow: 0 0 8px color-mix(in srgb, var(--accent) 35%, transparent);
 }
+/* 思考内容:继承 reason-body 的斜体样式 */
+.ty-thinking { font-style: italic; }
 @keyframes ty-in {
   from { opacity: 0.18; }
   to { opacity: 1; }

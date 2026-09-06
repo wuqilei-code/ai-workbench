@@ -2,7 +2,7 @@
 
 export type PreviewKind =
   | 'image' | 'pdf' | 'html' | 'markdown' | 'code' | 'text'
-  | 'docx' | 'xlsx' | 'pptx' | 'audio' | 'video' | 'unsupported'
+  | 'docx' | 'xlsx' | 'pptx' | 'audio' | 'video' | 'excalidraw' | 'unsupported'
 
 const EXT_MAP: Record<string, PreviewKind> = {
   // 图片
@@ -29,6 +29,7 @@ const EXT_MAP: Record<string, PreviewKind> = {
   json: 'code', json5: 'code', yml: 'code', yaml: 'code', toml: 'code', ini: 'code',
   sh: 'code', bash: 'code', zsh: 'code', ps1: 'code', bat: 'code',
   sql: 'code', xml: 'code', graphql: 'code', dockerfile: 'code',
+  excalidraw: 'excalidraw',
   // 文本
   txt: 'text', log: 'text', env: 'text', conf: 'text', properties: 'text', md5: 'text',
 }
@@ -52,12 +53,13 @@ export function extToLang(path: string): string | undefined {
     json: 'json', yml: 'yaml', yaml: 'yaml', toml: 'ini', ini: 'ini',
     sh: 'bash', bash: 'bash', zsh: 'bash', ps1: 'powershell', bat: 'dos',
     sql: 'sql', xml: 'xml', graphql: 'graphql',
+    excalidraw: 'json',
   }
   return map[ext]
 }
 
 /** 可编辑的预览类型(提供预览/编辑切换) */
-export const EDITABLE_KINDS: Set<PreviewKind> = new Set(['markdown', 'code', 'text'])
+export const EDITABLE_KINDS: Set<PreviewKind> = new Set(['markdown', 'code', 'text', 'excalidraw'])
 
 /** 二进制类型(需通过 fetchBlob 获取,不能用 content API) */
 export const BINARY_KINDS: Set<PreviewKind> = new Set([
