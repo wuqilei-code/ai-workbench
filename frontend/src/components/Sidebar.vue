@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useDialog, useMessage } from 'naive-ui'
@@ -125,31 +125,7 @@ async function newChat() {
   }
 }
 
-/** 源码测试分析入口:新建会话并预填提示词,引导用户上传项目 zip */
-async function startTestAnalysis() {
-  activeMode.value = 'test'
-  if (chat.isStreaming) {
-    const go = await confirmSwitch('测试分析')
-    if (!go) {
-      activeMode.value = 'work'
-      return
-    }
-  }
-  try {
-    const s = await withBusy('正在新建会话…', () => chat.createSession('源码测试分析'))
-    router.push(`/session/${s.id}`)
-    await nextTick()
-    msg.info('已进入测试分析会话,请在下方上传项目源码 ZIP 包后发送')
-    window.dispatchEvent(new CustomEvent('aiwb:test-analysis'))
-  } catch (e: any) {
-    activeMode.value = 'work'
-    msg.error(e?.message || '新建会话失败')
-  }
-}
-
-/** 顶部模式切换:work=主工作区,test=源码测试分析 */
-const activeMode = ref<'work' | 'test'>('work')
-
+/** 顶部模式切换:work=主工作区 */
 async function openSession(id: number) {
   if (id === chat.currentSessionId) {
     router.push(`/session/${id}`)
@@ -332,13 +308,9 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
       <span class="mode-toggle" title="收起侧边栏" @click="toggleCollapsed">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/></svg>
       </span>
-      <span class="mode-tab" :class="{ active: activeMode === 'work' }" @click="activeMode = 'work'">
+      <span class="mode-tab active">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
         Work
-      </span>
-      <span class="mode-tab" :class="{ active: activeMode === 'test' }" title="源码测试分析" @click="startTestAnalysis">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 2v6"/><path d="M15 2v6"/><path d="M3 8h18"/><path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/><path d="M12 12v4"/><path d="M10 14h4"/></svg>
-        Test
       </span>
     </div>
 

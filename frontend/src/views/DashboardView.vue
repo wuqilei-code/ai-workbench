@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { myApi, type MyStats } from '@/api/my'
 import { useMessage } from 'naive-ui'
 
@@ -9,6 +9,16 @@ const msg = useMessage()
 const days = ref(14)
 const loading = ref(false)
 const data = ref<MyStats | null>(null)
+
+/** Esc 关闭驾驶舱 */
+function onKey(e: KeyboardEvent) {
+  if (e.key === 'Escape') emit('close')
+}
+onMounted(() => {
+  load()
+  window.addEventListener('keydown', onKey)
+})
+onUnmounted(() => window.removeEventListener('keydown', onKey))
 
 async function load() {
   loading.value = true
@@ -72,13 +82,12 @@ const jobSuccessRate = computed(() => {
 })
 
 const maxAgent = computed(() => Math.max(1, ...(data.value?.agents.map((a) => a.count) || [])))
-
-onMounted(load)
 </script>
 
 <template>
-  <div class="dash">
-    <div class="dash-head">
+  <div class="dash-mask" @click.self="emit('close')">
+    <div class="dash">
+      <div class="dash-head">
       <div>
         <h2>驾驶舱</h2>
         <p class="sub">你的个人使用统计</p>
@@ -246,16 +255,31 @@ onMounted(load)
       </template>
       <n-empty v-else-if="!loading" description="暂无统计数据" style="margin-top: 60px" />
     </n-spin>
+      </div>
   </div>
 </template>
 
 <style scoped>
-.dash {
-  position: absolute;
+/* 模态遮罩:点击背景关闭;内容居中,不再遮挡会话区 */
+.dash-mask {
+  position: fixed;
   inset: 0;
   z-index: 30;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+}
+.dash {
+  width: min(1100px, 100%);
+  max-height: 100%;
   overflow-y: auto;
   background: var(--chat-bg, var(--bg));
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
   padding: 16px 24px 40px;
   box-sizing: border-box;
 }

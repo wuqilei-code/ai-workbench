@@ -814,15 +814,15 @@ const virtualItems = computed<VirtualListItem[]>(() => {
         </span>
         <n-button class="find-btn" size="small" quaternary title="会话内置/自定义技能(自定义按会话勾选加载)" @click="openSkillPicker">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 12 2c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg>
-          技能
+          <span class="btn-label">技能</span>
         </n-button>
         <n-button class="find-btn" size="small" quaternary title="会话级启用 MCP Server(按会话勾选加载,默认全部已启用)" @click="openMcpPicker">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
-          MCP
+          <span class="btn-label">MCP</span>
         </n-button>
         <n-button class="find-btn" size="small" quaternary title="会话内查找 (Ctrl+F)" @click="openFind">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          查找
+          <span class="btn-label">查找</span>
         </n-button>
       </div>
       <div class="head-right">
@@ -1423,6 +1423,7 @@ const virtualItems = computed<VirtualListItem[]>(() => {
 /* 中窄屏顶栏拥挤:隐藏面板入口按钮的文字,只保留图标(悬停有 title 提示) */
 @media (max-width: 1200px) {
   .ws-launcher-label { display: none; }
+  .btn-label { display: none; }
 }
 
 /* 左右两栏:左=对话区(自适应),右=工作区(拖动左缘调整宽度) */
@@ -1653,7 +1654,14 @@ const virtualItems = computed<VirtualListItem[]>(() => {
 .find-count { color: var(--text-3); font-size: 12px; padding: 0 4px; }
 
 /* 查找跳转目标:命中轮次短暂高亮 */
-.flow-item { border-radius: 8px; }
+.flow-item {
+  border-radius: 8px;
+  animation: msg-in .22s ease both;
+}
+@keyframes msg-in {
+  from { opacity: .5; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
 .flow-item.find-flash {
   outline: 2px solid var(--warn);
   outline-offset: 4px;

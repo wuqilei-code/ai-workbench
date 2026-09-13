@@ -42,7 +42,9 @@ watch([() => props.text, expanded], async () => {
       <span v-if="lineCount > 0" class="meta">{{ lineCount }} 行</span>
       <span v-if="isStreaming" class="run-tag">生成中…</span>
     </button>
-    <div v-if="expanded" ref="boxEl" class="reasoning-body">{{ text }}</div>
+    <transition name="reasoning">
+      <div v-if="expanded" ref="boxEl" class="reasoning-body">{{ text }}</div>
+    </transition>
   </div>
 </template>
 
@@ -69,4 +71,8 @@ watch([() => props.text, expanded], async () => {
   white-space: pre-wrap; word-break: break-word;
   max-height: 180px; overflow-y: auto;
 }
+
+/* 思考链展开/折叠过渡 */
+.reasoning-enter-active, .reasoning-leave-active { transition: opacity .15s ease; }
+.reasoning-enter-from, .reasoning-leave-to { opacity: 0; }
 </style>
