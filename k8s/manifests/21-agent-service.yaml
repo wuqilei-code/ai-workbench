@@ -1,0 +1,50 @@
+# agent-service:K8s 沙箱管理权限(混合架构,兼容两套部署)。
+#
+# 混合架构(docker-compose 跑 app/mysql/postgres/agent-service,k8s 只承载沙箱):
+#   - agent-service 在 compose 内,凭本文件定义的 SA/RBAC 经 kubeconfig 访问集群,
+#     创建/删除每用户沙箱 Pod/NodePort Service,并通过 exec 执行命令。
+#   - 集群内不放 agent-service Deployment/Service。
+#
+# 全量 K8s 备选部署时,同一账号也覆盖 agent-service Pod 自身(incluster 直连)。
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-service
+  namespace: ai-workbench
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sandbox-manager
+  namespace: ai-workbench
+rules:
+  # 每用户沙箱 Pod 生命周期
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # 沙箱镜像拉取与执行(exec 用于 execute/文件工具)
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create", "get"]
+  # 每用户 NodePort/headless Service(把 CDP/MCP 暴露给 compose 侧直连)
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # 事件(可选,日志/排障)
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-service-sandbox
+  namespace: ai-workbench
+subjects:
+  - kind: ServiceAccount
+    name: agent-service
+    namespace: ai-workbench
+roleRef:
+  kind: Role
+  name: sandbox-manager
+  apiGroup: rbac.authorization.k8s.io

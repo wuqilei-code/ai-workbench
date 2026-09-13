@@ -673,6 +673,10 @@ public class BrowserCdpClient {
      * 非 localhost/IP 的容器名(如 aiwb-agent-36)会被 500 拒绝。每次连接现解析,容器重建换 IP 也跟随。
      */
     private String cdpBaseUrl() {
+        // k8s NodePort 模式:compose 侧无沙箱 DNS,直接走 <node>:<nodePort>。
+        if (agentContainerManager.nodePortMode()) {
+            return agentContainerManager.browserCdpBaseUrl(userId);
+        }
         try {
             String host = agentContainerManager.containerName(userId);
             if (java.net.InetAddress.getByName(host).isLoopbackAddress()) {

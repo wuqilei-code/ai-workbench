@@ -1,0 +1,169 @@
+# app:Spring 网关 + nginx(80)。K8s 下不再挂 docker.sock:
+# 沙箱生命周期/就绪探测全部代理到 agent-service(见 BrowserContainerManager 改造)。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  namespace: ai-workbench
+  labels:
+    app: ai-workbench
+    tier: web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ai-workbench
+      tier: web
+  template:
+    metadata:
+      labels:
+        app: ai-workbench
+        tier: web
+    spec:
+      securityContext:
+        runAsUser: 0
+        # 容器入口 entrypoint.sh 需创建目录 + chmod;root 必须保留
+      containers:
+        - name: app
+          image: ai-workbench-app:latest # 按实际 registry 替换
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+          env:
+            - name: DEEPAGENTS_BASE_URL
+              value: "http://agent-service:8000"
+            - name: WORKSPACE_ROOT
+              valueFrom:
+                configMapKeyRef:
+                  name: common-config
+                  key: WORKSPACE_ROOT
+            - name: WORKSPACE_PER_USER_DATA_ROOT
+              valueFrom:
+                configMapKeyRef:
+                  name: common-config
+                  key: WORKSPACE_PER_USER_DATA_ROOT
+            - name: WORKSPACE_UID_BASE
+              valueFrom:
+                configMapKeyRef:
+                  name: common-config
+                  key: WORKSPACE_UID_BASE
+            - name: AGENT_JOBS_MAX_CONCURRENT
+              valueFrom:
+                configMapKeyRef:
+                  name: common-config
+                  key: AGENT_JOBS_MAX_CONCURRENT
+            - name: AGENT_JOBS_TIMEOUT_MINUTES
+              valueFrom:
+                configMapKeyRef:
+                  name: common-config
+                  key: AGENT_JOBS_TIMEOUT_MINUTES
+            - name: AGENT_JOBS_SWEEP_MS
+              valueFrom:
+                configMapKeyRef:
+                  name: common-config
+                  key: AGENT_JOBS_SWEEP_MS
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: jwt-secret
+            - name: APP_AES_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: aes-key
+            - name: INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: internal-token
+            - name: SPRING_DATASOURCE_URL
+              value: "jdbc:mysql://mysql:3306/ai_workbench?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8&useUnicode=true"
+            - name: SPRING_DATASOURCE_USERNAME
+              value: aiworkbench
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-secrets
+                  key: mysql-password
+            - name: APP_REGISTRATION_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: common-config
+                  key: APP_REGISTRATION_ENABLED
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: app-data
+              mountPath: /data
+            - name: user-data
+              mountPath: /data/users
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 5
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: workspace
+        - name: app-data
+          persistentVolumeClaim:
+            claimName: app-data
+        - name: user-data
+          persistentVolumeClaim:
+            claimName: user-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app
+  namespace: ai-workbench
+  labels:
+    app: ai-workbench
+    tier: web
+spec:
+  selector:
+    app: ai-workbench
+    tier: web
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+# Ingress:按需启用。TLS 生产用 cert-manager(kubernetes.io/tls-acme)。
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: app
+#   namespace: ai-workbench
+# spec:
+#   ingressClassName: nginx
+#   rules:
+#     - host: workbench.example.com
+#       http:
+#         paths:
+#           - path: /
+#             pathType: Prefix
+#             backend:
+#               service:
+#                 name: app
+#                 port:
+#                   number: 8080

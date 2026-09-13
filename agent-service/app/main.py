@@ -202,13 +202,13 @@ def sandbox_ensure(user_id: str) -> dict:
 
     网关浏览器面板 warmup 调用;AI 浏览器工具走 browser.py 内部 ensure_browser。
     """
-    from app.sandbox import get_docker_sandbox
+    from app.sandbox import get_sandbox
 
-    sb = get_docker_sandbox(user_id)
+    sb = get_sandbox(user_id)
     try:
         container = sb.ensure()
         sb.ensure_browser()
-        return {"status": "ok", "container": container.name}
+        return {"status": "ok", "container": getattr(container, "name", None) or sb.name}
     except Exception as exc:  # noqa: BLE001
         logger.warning("[%s] sandbox ensure failed: %s", user_id, exc)
         return {"status": "error", "error": str(exc)}
@@ -220,9 +220,9 @@ def sandbox_stop(user_id: str) -> dict:
 
     容器保留(不删除),下次 ensure / AI 浏览器工具按需重新创建并拉起浏览器栈。
     """
-    from app.sandbox import get_docker_sandbox
+    from app.sandbox import get_sandbox
 
-    sb = get_docker_sandbox(user_id)
+    sb = get_sandbox(user_id)
     try:
         sb.stop()
         return {"status": "ok"}
@@ -561,9 +561,10 @@ def _emit_update(update, user_id: str | None = None, emitted_tools: set | None =
                         exec_outputs = sandbox.pop_recent_changes()
                         if exec_outputs:
                             outputs = [{"path": p} for p in exec_outputs]
+            content_full = getattr(msg, "content", "") or ""
             payload = {
                 "name": getattr(msg, "name", ""),
-                "content": (getattr(msg, "content", "") or "")[:2000],
+                "content": content_full[:2000],
                 "id": tc_id,
             }
             if outputs:
@@ -604,11 +605,11 @@ def _emit_update(update, user_id: str | None = None, emitted_tools: set | None =
 
 
 def _current_sandbox(user_id: str):
-    """取该用户当前沙箱后端(可能是 CompositeBackend 包装);无或非 docker 返回 None。"""
+    """取该用户当前沙箱后端(可能是 CompositeBackend 包装);无或非法后端返回 None。"""
     try:
-        from app.sandbox import get_docker_sandbox
+        from app.sandbox import get_sandbox
 
-        return get_docker_sandbox(user_id)
+        return get_sandbox(user_id)
     except Exception:  # noqa: BLE001
         return None
 

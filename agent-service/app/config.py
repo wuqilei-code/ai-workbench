@@ -95,6 +95,7 @@ def _resolve_volume_root() -> str:
 AGENT_SANDBOX_VOLUME_ROOT: str = _resolve_volume_root()
 # 沙箱内运行 uid(非 root);agent-service 会先把该用户 project 目录 chown 成此 uid。
 AGENT_SANDBOX_UID: int = _int("AGENT_SANDBOX_UID", 10001)
+AGENT_K8S_SANDBOX_UID_BASE: int = _int("AGENT_K8S_SANDBOX_UID_BASE", 100000)
 # 是否允许沙箱访问网络(合并浏览器后需开网,execute 也随之可联网)
 AGENT_SANDBOX_NETWORK: bool = _bool("AGENT_SANDBOX_NETWORK", True)
 AGENT_SANDBOX_MEM_MB: int = _int("AGENT_SANDBOX_MEM_MB", 1024)
@@ -104,6 +105,52 @@ AGENT_SANDBOX_PIDS: int = _int("AGENT_SANDBOX_PIDS", 256)
 AGENT_SANDBOX_IDLE_TTL: int = _int("AGENT_SANDBOX_IDLE_TTL", 1800)
 # 单条命令超时上限(秒),deepagents 传入的 timeout 会被 clamp 到该值
 AGENT_SANDBOX_MAX_TIMEOUT: int = _int("AGENT_SANDBOX_MAX_TIMEOUT", 120)
+
+# --- K8s 调度策略 ---
+# CPU/内存 requests(调度器据此判断节点余量,应接近实际常用值)
+AGENT_K8S_SANDBOX_CPU_REQUESTS: str = os.environ.get("AGENT_K8S_SANDBOX_CPU_REQUESTS", "500m")
+AGENT_K8S_SANDBOX_MEM_REQUESTS: str = os.environ.get("AGENT_K8S_SANDBOX_MEM_REQUESTS", "512Mi")
+# 拓扑分布:Pod 均匀散布到各节点(防止单节点过载)
+AGENT_K8S_SCHEDULING_SPREAD: bool = _bool("AGENT_K8S_SCHEDULING_SPREAD", True)
+# 反亲和:同一用户的多个 Pod 不落同一节点
+AGENT_K8S_SCHEDULING_AFFINITY: bool = _bool("AGENT_K8S_SCHEDULING_AFFINITY", True)
+
+# --- K8s 部署模式(AGENT_SANDBOX_BACKEND=k8s) ---
+# 集群内加载 kubeconfig;走 incluster 时从 POD 内 ServiceAccount 自动发现
+AGENT_K8S_NAMESPACE: str = os.environ.get("AGENT_K8S_NAMESPACE", "ai-workbench")
+# workspace RWX PVC 名:沙箱 Pod 用 subPath users/<uid>/project 挂到 /workspace,
+# 与 agent-service 自身 /shared-ws 与网关 app /workspace 指向同一份数据。
+# (仅 AGENT_K8S_SANDBOX_VOLUME_TYPE=pvc 时使用;hostpath 模式忽略)
+AGENT_K8S_WORKSPACE_PVC: str = os.environ.get("AGENT_K8S_WORKSPACE_PVC", "workspace")
+# 沙箱 Pod 用 ServiceAccount(可选;缺省复用 agent-service 自身 SA)
+AGENT_K8S_SANDBOX_SERVICE_ACCOUNT: str = os.environ.get("AGENT_K8S_SANDBOX_SERVICE_ACCOUNT", "")
+# 沙箱 Pod 镜像拉取策略(本地导入镜像用 IfNotPresent)
+AGENT_K8S_PULL_POLICY: str = os.environ.get("AGENT_K8S_PULL_POLICY", "IfNotPresent")
+# 沙箱工作区挂载模式:
+#   hostpath = kind/docker-desktop 节点经 extraMounts 直挂 compose workspace 卷(本机混合架构默认)
+#   pvc      = 集群内 PVC + subPath users/<uid>/project(集群自持存储时使用)
+AGENT_K8S_SANDBOX_VOLUME_TYPE: str = os.environ.get(
+    "AGENT_K8S_SANDBOX_VOLUME_TYPE", "hostpath"
+).strip().lower()
+# hostpath 模式的卷根:kind 节点内 extraMounts 把 compose workspace 卷挂到这里,
+# 沙箱挂 users/<uid>/project → 与 app /workspace 与 agent-service /shared-ws 同一份数据。
+AGENT_K8S_SANDBOX_VOLUME_HOST_PATH: str = os.environ.get(
+    "AGENT_K8S_SANDBOX_VOLUME_HOST_PATH", "/mnt/compose-workspace"
+)
+# kind 节点在 compose 桥网上的主机名(网关/agent-service 按此 DNS 直连 NodePort)。
+# 若使用 Docker Desktop 内置 K8s(desktop-control-plane)不适用,需按实际节点名调整,或改为 IP。
+AGENT_K8S_SANDBOX_NODE_ADDR: str = os.environ.get(
+    "AGENT_K8S_SANDBOX_NODE_ADDR", "aiwb-control-plane"
+)
+# 是否给每用户沙箱创建一个 NodePort Service,把 CDP(9223)/MCP(8931)暴露到 node 上,
+# 供 compose 侧(网关/agent-service)经 <node_addr>:<nodePort> 直连。关闭时退回 Pod IP 直连
+# (仅集群内可达,compose 侧无法连)。
+AGENT_K8S_SANDBOX_NODEPORT: bool = _bool("AGENT_K8S_SANDBOX_NODEPORT", True)
+# NodePort 基数:CDP = base + uid%2000,MCP = base + 500 + uid%2000(与网关 Java 公式一致)。
+AGENT_K8S_SANDBOX_NODEPORT_BASE: int = _int("AGENT_K8S_SANDBOX_NODEPORT_BASE", 30000)
+# 可选:覆盖 kubeconfig 里的 apiserver 地址(如 host.docker.internal:<port>)。
+# kubeconfig 默认写 127.0.0.1(宿主导向),agent-service 在容器内需换成可达地址。
+AGENT_K8S_API_HOST: str = os.environ.get("AGENT_K8S_API_HOST", "")
 
 # --- 服务 ---
 AGENT_HOST: str = os.environ.get("AGENT_HOST", "0.0.0.0")

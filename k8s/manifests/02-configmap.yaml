@@ -1,0 +1,48 @@
+# 非敏感配置(env 值;敏感字段走 Secret)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: common-config
+  namespace: ai-workbench
+data:
+  # --- 工作区 / uid 隔离 ---
+  WORKSPACE_ROOT: "/workspace"
+  WORKSPACE_PER_USER_DATA_ROOT: "/data/users"
+  WORKSPACE_UID_BASE: "100000"
+  # --- 定时任务 ---
+  AGENT_JOBS_MAX_CONCURRENT: "1"
+  AGENT_JOBS_TIMEOUT_MINUTES: "30"
+  AGENT_JOBS_SWEEP_MS: "5000"
+  # --- 注册开关(生产默认关) ---
+  APP_REGISTRATION_ENABLED: "false"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-config
+  namespace: ai-workbench
+data:
+  AGENT_MODEL: "openai:gpt-4o-mini"
+  AGENT_MODEL_BASE_URL: ""
+  AGENT_MODEL_THINKING: "true"
+  AGENT_MODEL_REASONING_EFFORT: "high"
+  AGENT_WORKERS: "4"
+  AGENT_PG_POOL_MIN: "2"
+  AGENT_PG_POOL_MAX: "10"
+  AGENT_WS_ROOT: "/shared-ws/users"
+  AGENT_HITL: "true"
+  AGENT_GLOBAL_SKILLS: "/app/skills"
+  BACKEND_INTERNAL_URL: "http://app:8080"
+  # --- 沙箱:K8s 原生后端 ---
+  AGENT_SANDBOX_BACKEND: "k8s"
+  AGENT_SANDBOX_NETWORK_NAME: "aiwb-agents"
+  AGENT_SANDBOX_UID: "10001"
+  AGENT_SANDBOX_MEM_MB: "2048"
+  AGENT_SANDBOX_CPUS: "1.0"
+  AGENT_SANDBOX_PIDS: "256"
+  AGENT_SANDBOX_IDLE_TTL: "1800"
+  AGENT_SANDBOX_MAX_TIMEOUT: "120"
+  # K8s 工作区 PVC 名(agent-service 用 subPath 按用户挂载)
+  AGENT_K8S_WORKSPACE_PVC: "workspace"
+  AGENT_K8S_NAMESPACE: "ai-workbench"
+  # 沙箱 Pod 的 ServiceAccount:留空 = 集群 default SA(沙箱无需任何 K8s API)

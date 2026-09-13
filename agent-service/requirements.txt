@@ -6,6 +6,9 @@ fastapi>=0.115
 uvicorn[standard]>=0.32
 python-docx>=1.1
 docker>=7.1
+# K8s 部署模式(AGENT_SANDBOX_BACKEND=k8s):每用户沙箱 Pod 生命周期 + exec
+kubernetes>=30.0
+websocket-client>=1.7
 playwright==1.62.0
 langchain-mcp-adapters>=0.0.13
 mcp>=1.2.0

@@ -1,0 +1,39 @@
+# Docker Desktop 本地一键 registry(NodePort 30500):宿主(127.0.0.1)与集群节点
+# 共用同一 VM,宿主 docker push 与 kubelet pull 都走 127.0.0.1:30500,无外网 registry 依赖。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: local-registry
+  namespace: ai-workbench
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: local-registry
+  template:
+    metadata:
+      labels:
+        app: local-registry
+    spec:
+      containers:
+        - name: registry
+          image: registry:2
+          ports:
+            - name: http
+              containerPort: 5000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: local-registry
+  namespace: ai-workbench
+spec:
+  # Docker Desktop 的 LoadBalancer 会把端口映射到宿主 localhost;
+  # 节点本身也在这个 VM 的 loopback 上 → kubelet 拉 127.0.0.1:5000 同样可达。
+  type: LoadBalancer
+  selector:
+    app: local-registry
+  ports:
+    - name: http
+      port: 5000
+      targetPort: 5000

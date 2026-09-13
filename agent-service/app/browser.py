@@ -22,11 +22,20 @@ def _rel_screenshot_name() -> str:
 
 
 def _sandbox_cdp_endpoint(user_id: str) -> str:
-    """该用户合并沙箱容器的 CDP 端点(http://<容器IP>:9223)。
+    """该用户沙箱的 CDP 端点(http://<沙箱>:9223)。
 
-    容器挂 aiwb-agents 网并常驻浏览器入口(node 把 127.0.0.1:9222 转发到 0.0.0.0:9223);
-    用容器 IP 直连以绕开新版 Chromium 的 Host 头校验。
+    docker 版:容器挂 aiwb-agents 网,常驻浏览器入口(node 把 127.0.0.1:9222 转发到
+    0.0.0.0:9223),用容器 IP 直连绕开新版 Chromium 的 Host 头校验。
+    k8s 版:沙箱 Pod 暴露同名 headless Service/Pod IP,同样返回 CDP 地址。
+    统一委托给沙箱实现(DockerSandbox.cdp_endpoint / K8sSandbox.cdp_endpoint)。
     """
+    from app.sandbox import get_sandbox
+    from app.sandbox_k8s import K8sSandbox
+
+    sb = get_sandbox(user_id)
+    if isinstance(sb, K8sSandbox):
+        return sb.cdp_endpoint()
+    # docker:沿用旧逻辑查容器 IP(绕开 Host 校验)
     import docker
 
     cli = docker.from_env()
@@ -47,9 +56,9 @@ def _open_shared_page(user_id: str):
     """
     from playwright.sync_api import sync_playwright
 
-    from app.sandbox import get_docker_sandbox
+    from app.sandbox import get_sandbox
 
-    get_docker_sandbox(user_id).ensure_browser()
+    get_sandbox(user_id).ensure_browser()
     endpoint = _sandbox_cdp_endpoint(user_id)
     p = sync_playwright().start()
     try:

@@ -356,22 +356,23 @@ def _build_backend(user_id: str, visible_skills: set[str] | None = None) -> Comp
     """default 与 /workspace/ 路由共用同一个后端(execute 只走 default)。
 
     - docker(默认):DockerSandbox —— execute 与文件工具全部在 per-user 沙箱容器内
+    - k8s:K8sSandbox —— execute 走 K8s exec /workspace 文件走共享 PVC,模型如 docker
     - local:LocalShellBackend(agent-service 进程内直跑 shell,仅本机可信调试)
     /skills 走本地只读文件系统,根列表按会话勾选过滤(visible_skills);
     SkillsMiddleware 的 source 固定为虚拟目录 /skills(它只认 backend 虚拟路径,
     传宿主绝对路径会 path_not_found —— 曾导致技能加载为空)。
     """
     mode = config.AGENT_SANDBOX_BACKEND
-    if mode == "docker":
-        from app.sandbox import get_docker_sandbox
+    if mode in ("docker", "k8s"):
+        from app.sandbox import get_sandbox
 
-        workspace_backend = get_docker_sandbox(user_id)
+        workspace_backend = get_sandbox(user_id)
     elif mode == "local":
         workspace_backend = LocalShellBackend(
             root_dir=str(ws.workspace_root(user_id)), virtual_mode=True
         )
     else:
-        raise ValueError(f"非法 AGENT_SANDBOX_BACKEND: {mode!r}(可选 docker|local)")
+        raise ValueError(f"非法 AGENT_SANDBOX_BACKEND: {mode!r}(可选 docker|k8s|local)")
 
     # 不要把 /workspace 注册成路由(docker 模式):CompositeBackend 会把命中的路由前缀
     # 剥掉,而沙箱被实现成 deepagents BaseSandbox,把收到的路径当作容器内**绝对路径**直接用

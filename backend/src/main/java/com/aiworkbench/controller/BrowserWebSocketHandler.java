@@ -359,7 +359,7 @@ public class BrowserWebSocketHandler extends TextWebSocketHandler {
         BrowserCdpClient cdp = ref instanceof AtomicReference<?> ar
                 ? (BrowserCdpClient) ar.get() : null;
         if (cdp == null || !cdp.isConnected()) {
-            // CDP 未就绪才探测容器(CDP 已连接 = 容器必在运行,省掉高频 docker inspect 子进程)
+            // CDP 未就绪才探测沙箱(CDP 已连接 = 沙箱必在运行,省掉高频探测子进程)
             if (!browserContainerManager.isReady(userId)) {
                 sendError(session, "agent 未启动");
                 return;

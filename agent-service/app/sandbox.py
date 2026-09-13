@@ -357,12 +357,18 @@ class DockerSandbox(BaseSandbox):
 
 # --- 注册表与空闲回收 -----------------------------------------------------
 
-_ACTIVE: dict[str, DockerSandbox] = {}
+# docker/k8s 两种沙箱共用该注册表;K8sSandbox 在 sandbox_k8s.py 按需 import。
+try:
+    from app.sandbox_k8s import K8sSandbox  # noqa: F401  启动即暴露类型(供 type hint/工厂)
+except Exception:  # noqa: BLE001  kubernetes 未装时(docker-only 镜像)不强求
+    K8sSandbox = type("K8sSandbox", (), {})  # type: ignore[assignment,misc]
+
+_ACTIVE: dict[str, DockerSandbox | K8sSandbox] = {}
 _ACTIVE_LOCK = threading.Lock()
 _REAPER_STARTED = False
 
 
-def register_sandbox(sb: DockerSandbox) -> None:
+def register_sandbox(sb: DockerSandbox | K8sSandbox) -> None:
     global _REAPER_STARTED
     with _ACTIVE_LOCK:
         _ACTIVE[sb.name] = sb
@@ -372,7 +378,7 @@ def register_sandbox(sb: DockerSandbox) -> None:
             _REAPER_STARTED = True
 
 
-def unregister_sandbox(sb: DockerSandbox) -> None:
+def unregister_sandbox(sb: DockerSandbox | K8sSandbox) -> None:
     with _ACTIVE_LOCK:
         _ACTIVE.pop(sb.name, None)
 
@@ -383,6 +389,28 @@ def get_docker_sandbox(user_id: str) -> DockerSandbox:
     if existing is not None:
         return existing
     return DockerSandbox(user_id)
+
+
+def get_sandbox(user_id: str) -> DockerSandbox | K8sSandbox:
+    """按 AGENT_SANDBOX_BACKEND 返回对应沙箱实现(docker|k8s)。
+
+    - docker:每用户 Docker 容器(DockerSandbox)
+    - k8s:每用户 K8s Pod + headless Service(K8sSandbox),不再依赖 docker.sock
+    注册表与空闲回收两者共用(_reap_loop 按 last_used/destroy 统一回收)。
+    """
+    mode = config.AGENT_SANDBOX_BACKEND
+    if mode == "docker":
+        return get_docker_sandbox(user_id)
+    if mode == "k8s":
+        from app.sandbox_k8s import K8sSandbox
+
+        target = K8sSandbox._pod_name(user_id)
+        with _ACTIVE_LOCK:
+            existing = _ACTIVE.get(target)
+        if existing is not None:
+            return existing
+        return K8sSandbox(user_id)
+    raise ValueError(f"非法 AGENT_SANDBOX_BACKEND: {mode!r}(可选 docker|k8s|local)")
 
 
 def _reap_loop() -> None:

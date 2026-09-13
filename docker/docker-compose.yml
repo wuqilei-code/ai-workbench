@@ -1,4 +1,4 @@
-# 容器日志轮转(json-file):限制磁盘占用,避免长期运行日志无限增长
+# 鐎圭懓娅掗弮銉ョ箶鏉烆喛娴?json-file):闂勬劕鍩楃壕浣烘磸閸楃姷鏁?闁灝鍘ら梹鎸庢埂鏉╂劘顢戦弮銉ョ箶閺冪娀妾烘晶鐐烘毐
 x-logging: &default-logging
   driver: json-file
   options:
@@ -17,49 +17,53 @@ services:
     ports:
       - "8080:80"
     environment:
-      # deepagents agent-service 地址:prod 走 compose 服务名;本机调试可指向 http://localhost:8000
+      # deepagents agent-service 閸︽澘娼?prod 鐠?compose 閺堝秴濮熼崥?閺堫剚婧€鐠嬪啳鐦崣顖涘瘹閸?http://localhost:8000
       DEEPAGENTS_BASE_URL: "${DEEPAGENTS_BASE_URL:-http://agent-service:8000}"
-      # --- 用户工作区 / uid 隔离 ---
+      # --- 濞屾瑧顔堥崷鏉挎絻濡€崇础:k8s(NodePort 缂?kind 閼哄倻鍋ｉ惄纾嬬箾)/ dns(compose 鐎圭懓娅掗崥宥囨纯鏉? ---
+      APP_SANDBOX_ADDR_MODE: "${APP_SANDBOX_ADDR_MODE:-nodeport}"
+      APP_SANDBOX_NODE_HOST: "${APP_SANDBOX_NODE_HOST:-172.21.0.200}"
+      APP_SANDBOX_NODEPORT_BASE: "${APP_SANDBOX_NODEPORT_BASE:-30000}"
+      # --- 閻劍鍩涘銉ょ稊閸?/ uid 闂呮梻顬?---
       WORKSPACE_ROOT: "${WORKSPACE_ROOT:-/workspace}"
       WORKSPACE_PER_USER_DATA_ROOT: "${WORKSPACE_PER_USER_DATA_ROOT:-/data/users}"
       WORKSPACE_UID_BASE: "${WORKSPACE_UID_BASE:-100000}"
-      # --- 定时任务(job 由 agent-service SSE 执行,无容器) ---
+      # --- 鐎规碍妞傛禒璇插(job 閻?agent-service SSE 閹笛嗩攽,閺冪姴顔愰崳? ---
       AGENT_JOBS_MAX_CONCURRENT: "${AGENT_JOBS_MAX_CONCURRENT:-1}"
       AGENT_JOBS_TIMEOUT_MINUTES: "${AGENT_JOBS_TIMEOUT_MINUTES:-30}"
       AGENT_JOBS_SWEEP_MS: "${AGENT_JOBS_SWEEP_MS:-5000}"
       # --- JWT ---
       JWT_SECRET: ${JWT_SECRET:?set in .env}
       JWT_TTL_MINUTES: "1440"
-      # --- 注册开关(生产默认关,防批量滥用;需要开放时设 true) ---
+      # --- 濞夈劌鍞藉鈧崗?閻㈢喍楠囨妯款吇閸?闂冨弶澹掗柌蹇斾簰閻?闂団偓鐟曚礁绱戦弨鐐鐠?true) ---
       APP_REGISTRATION_ENABLED: "${APP_REGISTRATION_ENABLED:-false}"
-      # --- AES 加密密钥(Base64 编码 32 字节);生产务必替换为随机密钥 ---
+      # --- AES 閸旂姴鐦戠€靛棝鎸?Base64 缂傛牜鐖?32 鐎涙濡?;閻㈢喍楠囬崝鈥崇箑閺囨寧宕叉稉娲閺堝搫鐦戦柦?---
       APP_AES_KEY: ${APP_AES_KEY:?set in .env}
-      # --- agent-service 内部回调令牌(create_skill 回写技能库;两服务一致) ---
+      # --- agent-service 閸愬懘鍎撮崶鐐剁殶娴犮倗澧?create_skill 閸ョ偛鍟撻幎鈧懗钘夌氨;娑撱倖婀囬崝鈥茬閼? ---
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:?set to a random secret in .env, shared with agent-service}
-      # --- MySQL(数据源:compose 内部 mysql 服务,经服务名访问) ---
+      # --- MySQL(閺佺増宓佸┃?compose 閸愬懘鍎?mysql 閺堝秴濮?缂佸繑婀囬崝鈥虫倳鐠佸潡妫? ---
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/ai_workbench?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8&useUnicode=true
       SPRING_DATASOURCE_USERNAME: aiworkbench
       SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:?set in .env}
-      # 浏览器面板链路排查用 DEBUG(稳定后可删)
+      # 濞村繗顫嶉崳銊╂桨閺夊潡鎽肩捄顖涘笓閺屻儳鏁?DEBUG(缁嬪啿鐣鹃崥搴″讲閸?
       LOGGING_LEVEL_COM_AIWORKBENCH_CONTROLLER: "${LOGGING_LEVEL_APP:-INFO}"
       LOGGING_LEVEL_COM_AIWORKBENCH_SERVICE_OPENCODE: "${LOGGING_LEVEL_APP:-INFO}"
     volumes:
       - workspace:/workspace
       - app-data:/data
       - user-data:/data/users
-      # 网关按需创建/回收每用户浏览器容器(复用旧 opencode 实施方案;适用单机管理员部署)
+      # 缂冩垵鍙ч幐澶愭付閸掓稑缂?閸ョ偞鏁瑰В蹇曟暏閹撮攱绁荤憴鍫濇珤鐎圭懓娅?婢跺秶鏁ら弮?opencode 鐎圭偞鏌﹂弬瑙勵攳;闁倻鏁ら崡鏇熸簚缁狅紕鎮婇崨姗€鍎寸純?
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - default
       - agents
-    # 数据源为 compose 内部 mysql 服务(mysql 服务名),等待其就绪后启动
+    # 閺佺増宓佸┃鎰礋 compose 閸愬懘鍎?mysql 閺堝秴濮?mysql 閺堝秴濮熼崥?,缁涘绶熼崗璺烘皑缂侇亜鎮楅崥顖氬З
     depends_on:
       mysql:
         condition: service_healthy
     logging: *default-logging
     restart: unless-stopped
 
-  # --- deepagents 轨道:python agent-service(每用户独立工作区/技能 + 可执行脚本) ---
+  # --- deepagents 鏉炪劑浜?python agent-service(濮ｅ繒鏁ら幋椋庡缁斿浼愭担婊冨隘/閹垛偓閼?+ 閸欘垱澧界悰宀冨壖閺? ---
   agent-service:
     build:
       context: ../agent-service
@@ -68,33 +72,34 @@ services:
         DOCKER_REGISTRY: "${DOCKER_REGISTRY:-docker.m.daocloud.io}"
     image: ai-workbench-agent-service
     ports:
-      # 仅绑回环:宿主端口供本机 Spring(dev)/调试直连;容器网内走服务名 agent-service:8000。
-      # 不要暴露到 0.0.0.0 —— agent-service 无自身鉴权,user_id 即身份。
+      # 娴犲懐绮﹂崶鐐靛箚:鐎瑰じ瀵岀粩顖氬經娓氭稒婀伴張?Spring(dev)/鐠嬪啳鐦惄纾嬬箾;鐎圭懓娅掔純鎴濆敶鐠х増婀囬崝鈥虫倳 agent-service:8000閵?
+      # 娑撳秷顩﹂弳鎾苟閸?0.0.0.0 閳ユ柡鈧?agent-service 閺冪姾鍤滈煬顐﹀閺?user_id 閸楀疇闊╂禒濮愨偓?
       - "127.0.0.1:${AGENT_SERVICE_PORT:-8000}:8000"
     environment:
       AGENT_MODEL: "${AGENT_MODEL:?set in .env}"
       AGENT_MODEL_BASE_URL: "${AGENT_MODEL_BASE_URL:-}"
       AGENT_MODEL_API_KEY: "${AGENT_MODEL_API_KEY:-}"
-      # 并发加固:多 worker + PG checkpoint 连接池
+      # 楠炶泛褰傞崝鐘叉祼:婢?worker + PG checkpoint 鏉╃偞甯村Ч?
       AGENT_WORKERS: "${AGENT_WORKERS:-4}"
       AGENT_PG_POOL_MIN: "${AGENT_PG_POOL_MIN:-2}"
       AGENT_PG_POOL_MAX: "${AGENT_PG_POOL_MAX:-10}"
       AGENT_WS_ROOT: /shared-ws/users
       AGENT_PG_DSN: "postgresql://aiworkbench:${POSTGRES_PASSWORD:-aiworkbench-pass}@postgres:5432/agent_workbench"
       AGENT_HITL: "${AGENT_HITL:-true}"
-      # 平台级内置技能目录(镜像内 /app/skills 含 browser-operate 等)
+      # 楠炲啿褰寸痪褍鍞寸純顔藉Η閼崇晫娲拌ぐ?闂€婊冨剼閸?/app/skills 閸?browser-operate 缁?
       AGENT_GLOBAL_SKILLS: /app/skills
-      # create_skill 工具回写后端技能库(内部接口 + 共享令牌)
+      # create_skill 瀹搞儱鍙块崶鐐插晸閸氬海顏幎鈧懗钘夌氨(閸愬懘鍎撮幒銉ュ經 + 閸忓彉闊╂禒銈囧)
       BACKEND_INTERNAL_URL: "http://app:8080"
-      # --- agent-service 内部回调令牌(create_skill 回写技能库;两服务必须一致且为随机值) ---
+      # --- agent-service 閸愬懘鍎撮崶鐐剁殶娴犮倗澧?create_skill 閸ョ偛鍟撻幎鈧懗钘夌氨;娑撱倖婀囬崝鈥崇箑妞よ绔撮懛缈犵瑬娑撴椽娈㈤張鍝勨偓? ---
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:?set to a random secret in .env, shared with app}
-      # 执行沙箱:execute 与 /workspace 工具在 per-user 容器内跑(docker|local);
-      # 沙箱同时承载共享浏览器(CDP/playwright-mcp),容器挂 aiwb-agents 网供网关节流面板直连
-      AGENT_SANDBOX_BACKEND: "${AGENT_SANDBOX_BACKEND:-docker}"
-      AGENT_SANDBOX_IMAGE: "${AGENT_SANDBOX_IMAGE:-ai-workbench-sandbox:latest}"
+      # 閹笛嗩攽濞屾瑧顔?execute 娑?/workspace 瀹搞儱鍙块崷?per-user 鐎圭懓娅掗崘鍛扮獓(docker|local|k8s);
+      # 濞屾瑧顔堥崥灞炬閹佃儻娴囬崗鍙橀煩濞村繗顫嶉崳?CDP/playwright-mcp)閵嗗倹璐╅崥鍫熺仸閺?k8s = 濞屾瑧顔?Pod 閸?kind 闂嗗棛鍏?
+      # executor 缂?<node>:<nodePort> 閻╃绻?瀹搞儰缍旈崠楦胯泲閼哄倻鍋?extraMounts 閻╁瓨瀵?docker_workspace 閸楁灚鈧?
+      AGENT_SANDBOX_BACKEND: "${AGENT_SANDBOX_BACKEND:-k8s}"
+      AGENT_SANDBOX_IMAGE: "${AGENT_SANDBOX_IMAGE:-kind-registry:5000/aiwb-sandbox:1}"
       AGENT_SANDBOX_NETWORK: "${AGENT_SANDBOX_NETWORK:-true}"
       AGENT_SANDBOX_NETWORK_NAME: "${AGENT_SANDBOX_NETWORK_NAME:-aiwb-agents}"
-      # daemon 视角的 workspace 卷数据根(卷名 = <compose项目名>_workspace)
+      # daemon 鐟欏棜顫楅惃?workspace 閸楅攱鏆熼幑顔界壌(閸楀嘲鎮?= <compose妞ゅ湱娲伴崥?_workspace)
       AGENT_SANDBOX_VOLUME_ROOT: "${AGENT_SANDBOX_VOLUME_ROOT:-/var/lib/docker/volumes/docker_workspace/_data/users}"
       AGENT_SANDBOX_UID: "${AGENT_SANDBOX_UID:-10001}"
       AGENT_SANDBOX_MEM_MB: "${AGENT_SANDBOX_MEM_MB:-2048}"
@@ -102,15 +107,29 @@ services:
       AGENT_SANDBOX_PIDS: "${AGENT_SANDBOX_PIDS:-256}"
       AGENT_SANDBOX_IDLE_TTL: "${AGENT_SANDBOX_IDLE_TTL:-1800}"
       AGENT_SANDBOX_MAX_TIMEOUT: "${AGENT_SANDBOX_MAX_TIMEOUT:-120}"
+      # --- k8s 濞ｅ嘲鎮庨弸鑸电€▽娆戭唸(kind 闂嗗棛鍏? ---
+      AGENT_K8S_NAMESPACE: "${AGENT_K8S_NAMESPACE:-ai-workbench}"
+      # hostpath = 濞屾瑧顔?Pod 閹?kind 閼哄倻鍋?extraMounts 閻?compose 閸楅娲拌ぐ?閺堫剚婧€姒涙顓?;
+      # pvc = 闂嗗棛鍏㈤崘?PVC 鐎涙ê鍋?
+      AGENT_K8S_SANDBOX_VOLUME_TYPE: "${AGENT_K8S_SANDBOX_VOLUME_TYPE:-hostpath}"
+      AGENT_K8S_SANDBOX_VOLUME_HOST_PATH: "${AGENT_K8S_SANDBOX_VOLUME_HOST_PATH:-/mnt/compose-workspace}"
+      # kind 閼哄倻鍋ｉ崷?aiwb-agents 濡椼儳缍夐惃鍕瀻閸?IP(瀹?docker network connect --ip 閸ュ搫鐣?IP 閻╃绻涚紒鏇炵磻 Chromium Host 閺嶏繝鐛?
+      AGENT_K8S_SANDBOX_NODE_ADDR: "${AGENT_K8S_SANDBOX_NODE_ADDR:-172.21.0.200}"
+      AGENT_K8S_SANDBOX_NODEPORT: "${AGENT_K8S_SANDBOX_NODEPORT:-true}"
+      AGENT_K8S_SANDBOX_NODEPORT_BASE: "${AGENT_K8S_SANDBOX_NODEPORT_BASE:-30000}"
+      # kubeconfig 闁?apiserver 閺勵垰顔栨稉鏄忣潒鐟?127.0.0.1:port,鐎圭懓娅掗崘鍛床閹?host.docker.internal
+      AGENT_K8S_API_HOST: "host.docker.internal:60176"
+      KUBECONFIG: /kube/config
     volumes:
       - user-data:/data/users
-      # 与 app 共用 workspace 卷:agent 写 /shared-ws/users/<uid>/project
-      # == app 前端文件树 /workspace/users/<uid>/project,保证 UI 可见。
+      # 工作区:默认命名卷;Linux 生产用 docker-compose.prod.yml 切换为 bind mount
       - workspace:/shared-ws
-      # 沙箱容器生命周期管理(per-user 容器由 agent-service 创建)
+      # 濞屾瑧顔堢€圭懓娅掗悽鐔锋嚒閸涖劍婀＄粻锛勬倞(per-user 鐎圭懓娅掗悽?agent-service 閸掓稑缂?docker 閸氬海顏幍宥夋付鐟?
       - /var/run/docker.sock:/var/run/docker.sock
-    # 运行期加固:agent-service 需 root(对用户工作区 chown 到沙箱 uid)并访问 docker.sock
-    # (创建/回收沙箱容器);no-new-privileges 防止提权放大,降低被攻破后的影响半径。
+      # kind 闂嗗棛鍏?kubeconfig(agent-service 缂佸繑顒濈粻锛勬倞濞屾瑧顔?Pod/NodePort Service)
+      - ../k8s/scripts/kind-kubeconfig.yaml:/kube/config:ro
+    # 鏉╂劘顢戦張鐔峰閸?agent-service 闂団偓 root(鐎靛湱鏁ら幋宄颁紣娴ｆ粌灏?chown 閸掔増鐭欑粻?uid)楠炴儼顔栭梻?docker.sock
+    # (閸掓稑缂?閸ョ偞鏁瑰▽娆戭唸鐎圭懓娅?;no-new-privileges 闂冨弶顒涢幓鎰綀閺€鎯с亣,闂勫秳缍嗙悮顐ｆ暰閻潙鎮楅惃鍕閸濆秴宕愬鍕┾偓?
     security_opt:
       - "no-new-privileges:true"
     healthcheck:
@@ -128,8 +147,8 @@ services:
     logging: *default-logging
     restart: unless-stopped
 
-  # 沙箱镜像构建载体(execute + 共享浏览器合并镜像);仅用于 docker compose build 产出,
-  # up 时立即退出(restart:no)。context 取仓库根以便 COPY 中文字体/浏览器入口。
+  # 濞屾瑧顔堥梹婊冨剼閺嬪嫬缂撴潪鎴掔秼(execute + 閸忓彉闊╁ù蹇氼潔閸ｃ劌鎮庨獮鍫曟殔閸?;娴犲懐鏁ゆ禍?docker compose build 娴溠冨毉,
+  # up 閺冨墎鐝涢崡鎶解偓鈧崙?restart:no)閵嗕竣ontext 閸欐牔绮ㄦ惔鎾寸壌娴犮儰绌?COPY 娑擃厽鏋冪€涙ぞ缍?濞村繗顫嶉崳銊ュ弳閸欙絻鈧?
   agent-sandbox-image:
     build:
       context: ..
@@ -140,7 +159,7 @@ services:
     restart: "no"
     command: ["true"]
 
-  # deepagents 持久化:线程 checkpoint + 跨线程 store
+  # deepagents 閹镐椒绠欓崠?缁捐法鈻?checkpoint + 鐠恒劎鍤庣粙?store
   postgres:
     image: docker.m.daocloud.io/postgres:16-alpine
     environment:
@@ -157,9 +176,9 @@ services:
     logging: *default-logging
     restart: unless-stopped
 
-  # 容器化 MySQL(2026-08-23 启用):Windows 宿主机到容器的任意端口通路不稳定
-  # (host.docker.internal 只保证已发布端口),数据库入 compose 后不再依赖该边界。
-  # 宿主机 MySQL(127.0.0.1)保留为数据源备份,未做任何改动。
+  # 鐎圭懓娅掗崠?MySQL(2026-08-23 閸氼垳鏁?:Windows 鐎瑰じ瀵岄張鍝勫煂鐎圭懓娅掗惃鍕崲閹板繒顏崣锝夆偓姘崇熅娑撳秶菙鐎?
+  # (host.docker.internal 閸欘亙绻氱拠浣稿嚒閸欐垵绔风粩顖氬經),閺佺増宓佹惔鎾冲弳 compose 閸氬簼绗夐崘宥勭贩鐠ф牞顕氭潏鍦櫕閵?
+  # 鐎瑰じ瀵岄張?MySQL(127.0.0.1)娣囨繄鏆€娑撶儤鏆熼幑顔界爱婢跺洣鍞?閺堫亜浠涙禒璁崇秿閺€鐟板З閵?
   mysql:
     image: docker.m.daocloud.io/mysql:8.4
     environment:
@@ -186,6 +205,6 @@ volumes:
   postgres-data:
 
 networks:
-  # 网关与每用户浏览器容器共用网络(网关按容器名 DNS 直连 CDP/MCP)
+  # 缂冩垵鍙ф稉搴㈢槨閻劍鍩涘ù蹇氼潔閸ｃ劌顔愰崳銊ュ彙閻劎缍夌紒?缂冩垵鍙ч幐澶婎啇閸ｃ劌鎮?DNS 閻╃绻?CDP/MCP)
   agents:
     name: aiwb-agents

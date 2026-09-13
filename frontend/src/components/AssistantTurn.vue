@@ -4,6 +4,7 @@ import { useMessage } from 'naive-ui'
 import { useChatStore } from '@/stores/chat'
 import { useFavoritesStore } from '@/stores/favorites'
 import { renderMarkdown } from '@/utils/markdown'
+import { downloadMarkdown } from '@/utils/exportMarkdown'
 import { isFileProducingTool, collectDeliverables, stripDeliverableMarkers } from '@/utils/turns'
 import { fmtMessageTime } from '@/utils/time'
 import { fileApi } from '@/api/files'
@@ -12,6 +13,7 @@ import type { Step, Turn, ToolCall } from '@/types'
 import ChatMessage from './ChatMessage.vue'
 import DeliverableBar from './DeliverableBar.vue'
 import FilePreview from './preview/FilePreview.vue'
+import StreamMarkdown from './StreamMarkdown.vue'
 import ToolCallItem from './ToolCallItem.vue'
 import WidgetFrame from './WidgetFrame.vue'
 import TypeReveal from './TypeReveal.vue'
@@ -121,6 +123,22 @@ const liveStreamText = computed(() => {
   const owns = props.turn.steps.some((s) => s.message.agentMessageId === id)
   if (!owns) return ''
   return chat.streamingText || ''
+})
+
+// ---------- 最终答案(markstream 流式渲染) ----------
+
+/** 最终答案展示文本:流式期间用实时正文,定稿后读定稿内容(剥离交付标记行) */
+const answerContent = computed(() =>
+  stripDeliverableMarkers(
+    liveStreamText.value || faStreamingText.value || displayContent(props.turn.finalAnswer),
+  ),
+)
+
+/** 最终答案是否仍在流式输出(决定 markstream 按增量渲染还是定稿渲染) */
+const answerStreaming = computed(() => {
+  if (!turnInProgress.value) return false
+  if (faStreamingText.value || liveStreamText.value) return true
+  return isStepActive(props.turn.finalAnswer)
 })
 
 // ---------- 推理段包裹卡片 ----------
@@ -798,7 +816,7 @@ function stepHtml(step: Step): string {
       </div>
 
       <!-- 最终答案 -->
-      <div v-if="turn.finalAnswer || liveStreamText" class="content">
+      <div v-if="turn.finalAnswer || liveStreamText" class="fa-wrap" :class="{ 'md-tail-dim': answerStreaming }">
         <div v-if="turn.finalAnswer" class="fa-tools">
           <button
             class="copy-btn star-btn"
@@ -831,12 +849,7 @@ function stepHtml(step: Step): string {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
           </button>
         </div>
-        <span
-          v-if="liveStreamText || faStreamingText || displayContent(turn.finalAnswer)"
-          class="md-streaming"
-          :class="{ 'md-tail-dim': isStepActive(turn.finalAnswer) }"
-          v-html="renderMarkdown(stripDeliverableMarkers(liveStreamText || faStreamingText || displayContent(turn.finalAnswer)))"
-        />
+        <StreamMarkdown v-if="answerContent" :content="answerContent" :final="!answerStreaming" />
       </div>
       <div v-if="followUpQuestions.length" class="followups">
         <span class="fu-label">继续问:</span>
@@ -1031,35 +1044,11 @@ function stepHtml(step: Step): string {
   margin-top: 10px;
 }
 .author { font-size: 13px; font-weight: 600; color: var(--text); }
-.content { position: relative; margin-top: 10px; font-size: 15px; line-height: 1.75; letter-spacing: 0.01em; color: var(--text); }
-/* 输出正文标题:参考 Trae 风格,加大加粗、与正文拉开层级 */
-.content :deep(h1),
-.content :deep(h2),
-.content :deep(h3),
-.content :deep(h4) { margin: 16px 0 8px; font-weight: 700; color: var(--text); line-height: 1.4; }
-.content :deep(h1:first-child),
-.content :deep(h2:first-child),
-.content :deep(h3:first-child) { margin-top: 0; }
-.content :deep(h1) { font-size: 20px; }
-.content :deep(h2) { font-size: 18px; }
-.content :deep(h3) { font-size: 16px; }
-.content :deep(strong) { font-weight: 650; }
-/* 流式中的答案:markdown 实时渲染,尾部一行渐隐(隐藏光效),随输出推进自然固化 */
+.fa-wrap { position: relative; margin-top: 10px; font-size: 15px; line-height: 1.75; letter-spacing: 0.01em; color: var(--text); }
+/* 流式中的答案:markstream 增量渲染,尾部一行渐隐(隐藏光效),随输出推进自然固化 */
 .md-tail-dim {
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2.2em), rgba(0, 0, 0, 0.25) calc(100% - 0.5em));
   mask-image: linear-gradient(to bottom, #000 calc(100% - 2.2em), rgba(0, 0, 0, 0.25) calc(100% - 0.5em));
-}
-.content :deep(p) { margin: 8px 0; }
-.content :deep(p:first-child) { margin-top: 0; }
-.content :deep(p:last-child) { margin-bottom: 0; }
-.content :deep(ul),
-.content :deep(ol) { padding-left: 20px; margin: 8px 0; }
-.content :deep(li) { margin: 5px 0; line-height: 1.75; }
-.content :deep(li > p) { margin: 2px 0; }
-.content :deep(hr) {
-  border: none;
-  border-top: 1px solid var(--border-soft);
-  margin: 14px 0;
 }
 /* 最终答案工具条:水平排列,悬停显示 */
 .fa-tools {
@@ -1071,7 +1060,7 @@ function stepHtml(step: Step): string {
   box-shadow: var(--shadow);
   opacity: 0; transition: opacity .15s;
 }
-.content:hover .fa-tools { opacity: 1; }
+.fa-wrap:hover .fa-tools { opacity: 1; }
 /* 触屏:最终答案工具条常显 */
 @media (hover: none) {
   .fa-tools { opacity: 1; }
@@ -1084,33 +1073,6 @@ function stepHtml(step: Step): string {
 .copy-btn:hover { background: var(--surface-hover); color: var(--text-2); }
 .copy-btn.star-btn.on { color: #f0b429; }
 .copy-btn.regen-btn:hover { color: var(--accent); }
-.content :deep(pre.hljs) { background: var(--code-bg); border-radius: var(--radius-sm); padding: 12px; overflow-x: auto; }
-.content :deep(code) { font-family: ui-monospace, monospace; font-size: 13px; }
-.content :deep(pre code) { background: none; }
-.content :deep(code:not(pre code)) { background: var(--surface-hover); padding: 2px 5px; border-radius: 4px; }
-.content :deep(table) {
-  border-collapse: collapse;
-  margin: 10px 0;
-  width: 100%;
-  display: block;
-  overflow-x: auto;
-  font-size: 13px;
-}
-.content :deep(th),
-.content :deep(td) {
-  border: 1px solid var(--border);
-  padding: 6px 12px;
-  text-align: left;
-  vertical-align: top;
-}
-.content :deep(th) {
-  background: var(--surface-hover);
-  font-weight: 600;
-  color: var(--text);
-  white-space: nowrap;
-}
-.content :deep(td) { color: var(--text-2); }
-.content :deep(tr:nth-child(even) td) { background: var(--surface); }
 
 /* 思考区折叠头:朴素可点击文字行 + 右 chevron */
 .think-header {

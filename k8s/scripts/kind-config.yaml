@@ -1,0 +1,20 @@
+# kind 集群(混合架构:仅承载 abbox 沙箱 Pod)。
+# - extraMounts 把 Docker Desktop VM 内 compose 的 workspace 卷目录 bind 进节点
+#   (/mnt/compose-workspace = compose 的 docker_workspace 卷数据),沙箱 Pod 用它做 hostPath,
+#   从而与 app/agent-service(compose 侧)共享同一份用户工作区。
+# - 之后手动 `docker network connect aiwb-agents <node>` 让节点接入 compose 桥网,
+#   沙箱 Service 的 NodePort 即可从 compose 容器(节点容器 IP:nodePort)直连 CDP/MCP。
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: aiwb
+# 镜像通道:Docker Desktop 引擎下 kind load 会 ctr 失败,走官方 kind-registry 方案
+# (kind-registry 容器 connect 到 kind 网络,节点经 http://kind-registry:5000 拉镜像)。
+containerdConfigPatches:
+  - |-
+    [plugins."io.containerd.grpc.v1.cri".registry.mirrors."kind-registry:5000"]
+      endpoint = ["http://kind-registry:5000"]
+nodes:
+  - role: control-plane
+    extraMounts:
+      - hostPath: /var/lib/docker/volumes/docker_workspace/_data
+        containerPath: /mnt/compose-workspace
