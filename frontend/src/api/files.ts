@@ -6,6 +6,11 @@ export const fileApi = {
   /** 递归搜索文件名(root 限定范围;技能模式传 .opencode/skills) */
   search: (root: string, q: string) =>
     http.get<FileNode[]>('/files/search', { params: { root, q } }).then(unwrap),
+  /** 批量存在性检查:返回仍存在于工作区的路径子集(结果文件栏过滤"已清理"文件用) */
+  existsBatch: (paths: string[]) =>
+    http
+      .get<string[]>(`/files/exists?${paths.map((p) => `paths=${encodeURIComponent(p)}`).join('&')}`)
+      .then(unwrap),
   content: (path: string) => http.get<string>('/files/content', { params: { path } }).then(unwrap),
   write: (path: string, content: string) => http.post('/files', { path, content }),
   delete: (path: string) => http.delete('/files', { params: { path } }),

@@ -252,6 +252,14 @@ public class AgentStreamBridge {
         volatile Integer contextTokens;
         /** deepagents 压缩触发阈值(token);圆环分母,刷新后据此恢复 */
         volatile Integer contextLimit;
+        /** 本轮各模型调用 token 用量累计(model_usage 事件按消息 id 去重后累加;
+         *  persistTurn 写入 chat_message 数值列,驾驶舱每日/生命周期/模型维度聚合数据源) */
+        final java.util.Set<String> usageIds = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        volatile long inputTokens;
+        volatile long outputTokens;
+        volatile long reasoningTokens;
+        volatile long cacheReadTokens;
+        volatile long cacheWriteTokens;
 
         TurnStream(String sessionId) {
             this.sessionId = sessionId;
@@ -446,6 +454,18 @@ public class AgentStreamBridge {
                     }
                     hub.dispatch(ts.sessionId, "usage", payload);
                 }
+                case "model_usage" -> {
+                    // 本轮单次模型调用 token 用量(agent-service 从 usage_metadata 提取);
+                    // 按消息 id 去重后累计,persistTurn 时写入 chat_message 数值列
+                    String uid = payload.path("id").asText("");
+                    if (uid.isEmpty() || ts.usageIds.add(uid)) {
+                        ts.inputTokens += payload.path("input").asLong(0);
+                        ts.outputTokens += payload.path("output").asLong(0);
+                        ts.reasoningTokens += payload.path("reasoning").asLong(0);
+                        ts.cacheReadTokens += payload.path("cacheRead").asLong(0);
+                        ts.cacheWriteTokens += payload.path("cacheWrite").asLong(0);
+                    }
+                }
                 case "error" -> {
                     hub.dispatch(ts.sessionId, "error", payload);
                     finalize(ts, "error");
@@ -471,6 +491,9 @@ public class AgentStreamBridge {
                     } catch (Exception e) {
                         log.warn("persist pending permission failed (session={}): {}", ts.sessionId, e.toString());
                     }
+                    // HITL 暂停不走 finalize:此处补一次持久化,把中断前最后一次
+                    // 模型调用的 token 用量落库(否则该轮用量丢失)
+                    persistTurn(ts, "streaming");
                     ObjectNode perm = objectMapper.createObjectNode();
                     perm.put("id", requestId);
                     perm.put("name", toolName);
@@ -611,7 +634,9 @@ public class AgentStreamBridge {
             chatMessageService.upsertAssistantTurn(
                     ts.sessionId, ts.assistantMessageId,
                     ts.fullText.toString(), ts.toolCalls, ts.timeline, status, elapsedSec,
-                    ts.contextTokens, ts.contextLimit);
+                    ts.contextTokens, ts.contextLimit,
+                    new ChatMessageService.TurnUsage(ts.inputTokens, ts.outputTokens,
+                            ts.reasoningTokens, ts.cacheReadTokens, ts.cacheWriteTokens));
         } catch (Exception e) {
             log.warn("persist turn failed (session={}): {}", ts.sessionId, e.toString());
         }

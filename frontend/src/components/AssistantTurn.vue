@@ -341,6 +341,33 @@ const fileDeliverables = computed(() =>
   deliverables.value.filter((d) => !/^widgets\/[^/]+\.html$/i.test(d.path)),
 )
 
+/** 存在性校验过滤:AI 清理中间产物(或用户删除)后,`[结果文件]` 标记与工具目录
+ *  diff 里声明的路径可能已不存在,不能继续展示。先乐观展示,随后批量校验剔除。
+ *  校验失败(网络等)时保留原列表——宁可多显示也不吞掉真实文件。 */
+const verifiedDeliverables = ref<{ path: string; name: string }[]>([])
+
+let verifySeq = 0
+watch(
+  () => fileDeliverables.value.map((d) => d.path).join('\n'),
+  async () => {
+    const items = fileDeliverables.value
+    const seq = ++verifySeq
+    if (!items.length) {
+      verifiedDeliverables.value = []
+      return
+    }
+    verifiedDeliverables.value = items
+    try {
+      const existing = new Set(await fileApi.existsBatch(items.map((d) => d.path)))
+      if (seq !== verifySeq) return
+      verifiedDeliverables.value = items.filter((d) => existing.has(d.path))
+    } catch {
+      if (seq === verifySeq) verifiedDeliverables.value = items
+    }
+  },
+  { immediate: true },
+)
+
 /** 按时间线穿插:某一步里 pure_show_widget 已产出的组件路径(流式期间工具一完成即出现) */
 function stepWidgetPaths(step: Step | null): string[] {
   if (!step) return []
@@ -595,7 +622,7 @@ function closePreview() {
 const downloadingAll = ref(false)
 async function downloadAllFiles() {
   if (downloadingAll.value) return
-  const items = deliverables.value
+  const items = verifiedDeliverables.value
   if (!items.length) return
   downloadingAll.value = true
   try {
@@ -684,8 +711,8 @@ function stepHtml(step: Step): string {
       :turn-id="props.turn.id"
     />
     <DeliverableBar
-      v-if="fileDeliverables.length"
-      :items="fileDeliverables"
+      v-if="verifiedDeliverables.length"
+      :items="verifiedDeliverables"
       :busy="downloadingAll"
       :downloading-path="downloadingPath"
       @preview="previewFile"
@@ -944,10 +971,10 @@ function stepHtml(step: Step): string {
         </div>
       </div>
 
-      <!-- 结果文件区:AI 声明的交付文件,点击预览 -->
+      <!-- 结果文件区:AI 声明的交付文件(存在性校验后),点击预览 -->
       <DeliverableBar
-        v-if="fileDeliverables.length"
-        :items="fileDeliverables"
+        v-if="verifiedDeliverables.length"
+        :items="verifiedDeliverables"
         :busy="downloadingAll"
         @preview="previewFile"
         @download="downloadFile"

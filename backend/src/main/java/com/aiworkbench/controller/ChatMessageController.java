@@ -39,6 +39,7 @@ public class ChatMessageController {
     private final ChatMessageService chatMessageService;
     private final ChatSessionService chatSessionService;
     private final SessionEventHub hub;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     /**
      * 消息历史(从 MySQL 加载),游标分页:
@@ -163,6 +164,19 @@ public class ChatMessageController {
             emitter.send(SseEmitter.event().name("open")
                     .data("{\"agentSessionId\":\"" + agentSessionId + "\"}"));
         } catch (Exception ignored) {}
+        // 补发未处置的待确认/提问:hub.dispatch 是 fire-and-forget,前端重连间隙
+        // (网络抖动/看门狗重连/刷新)恰好落在 dispatch 时授权卡会丢失;
+        // 订阅即查即补,前端幂等挂载同 requestId,连接重建瞬间自愈。
+        try {
+            com.fasterxml.jackson.databind.node.ObjectNode pending =
+                    chatMessageService.findPendingPermission(agentSessionId);
+            if (pending != null) {
+                emitter.send(SseEmitter.event().name("permission.asked")
+                        .data(objectMapper.writeValueAsString(pending)));
+            }
+        } catch (Exception e) {
+            log.debug("replay pending permission failed (session={}): {}", agentSessionId, e.toString());
+        }
         return emitter;
     }
 }

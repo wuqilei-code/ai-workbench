@@ -49,6 +49,27 @@ public class FileController {
         return R.ok(workspaceService.searchFiles(SecurityUtil.currentUserId(), root, q));
     }
 
+    /** 批量存在性检查:返回仍存在于工作区的路径子集(结果文件栏过滤"已清理"文件用)。
+     *  越权/非法路径一律视为不存在,不抛异常。 */
+    @GetMapping("/exists")
+    public R<List<String>> exists(@RequestParam("paths") List<String> paths) {
+        var uid = SecurityUtil.currentUserId();
+        List<String> existing = new java.util.ArrayList<>();
+        if (paths != null) {
+            for (String p : paths) {
+                if (p == null || p.isBlank()) continue;
+                try {
+                    if (java.nio.file.Files.exists(workspaceService.getFilePath(uid, p))) {
+                        existing.add(p);
+                    }
+                } catch (Exception ignored) {
+                    // 越权/非法路径视为不存在
+                }
+            }
+        }
+        return R.ok(existing);
+    }
+
     @GetMapping("/content")
     public R<String> content(@RequestParam String path) {
         return R.ok(workspaceService.readFile(SecurityUtil.currentUserId(), path));

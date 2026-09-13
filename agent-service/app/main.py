@@ -247,6 +247,7 @@ def stream(request: Request, user_id: str, body: InvokeRequest) -> StreamingResp
         emitted_tools: set[str] = set()
         tool_calls: dict[str, tuple[str, dict]] = {}
         wc_decoders: dict[str, "_WidgetCodeDecoder"] = {}
+        usage_emitted: set[str] = set()
         yield _sse("start", {"thread_id": body.thread_id})
         try:
             if body.resume_decision is not None:
@@ -319,6 +320,9 @@ def stream(request: Request, user_id: str, body: InvokeRequest) -> StreamingResp
                             # 普通 HITL 审批
                             yield _sse("permission", hreq if isinstance(hreq, dict) else {})
                         return
+                    # 本轮各模型调用的 token 用量(驾驶舱聚合数据源)
+                    for out in _usage_events(value, usage_emitted):
+                        yield out
                     for out in _emit_update(value, user_id, emitted_tools, tool_calls, wc_decoders):
                         yield out
         except Exception as exc:  # noqa: BLE001
@@ -499,6 +503,42 @@ def _skill_from_read(name: str, args: dict) -> str | None:
     p = args.get("file_path") or args.get("path") or args.get("file") or ""
     m = _SKILL_MD_RE.match(str(p).strip().replace("\\", "/"))
     return m.group(1).lower() if m else None
+
+
+def _usage_events(update, emitted: set) -> list[str]:
+    """updates 模式:从节点更新的 AIMessage 提取本次模型调用的 token 用量。
+
+    langchain usage_metadata 是单次模型调用的最终累计值(input/output/reasoning/
+    cache_read/cache_creation);同一消息可能在多个节点更新里重复出现,按消息 id
+    去重(无 id 时退化为数值指纹)。网关按事件累计后随 persistTurn 写入
+    chat_message 数值列,驾驶舱(每日/生命周期/模型维度)据此聚合。
+    """
+    outs: list[str] = []
+    if not isinstance(update, dict):
+        return outs
+    for upd in update.values():
+        if not isinstance(upd, dict):
+            continue
+        for m in (upd.get("messages", []) or []):
+            um = getattr(m, "usage_metadata", None)
+            if not isinstance(um, dict):
+                continue
+            mid = getattr(m, "id", None) or ""
+            key = mid or f"{um.get('input_tokens', 0)}:{um.get('output_tokens', 0)}"
+            if key in emitted:
+                continue
+            emitted.add(key)
+            ind = um.get("input_token_details") or {}
+            outd = um.get("output_token_details") or {}
+            outs.append(_sse("model_usage", {
+                "id": mid,
+                "input": um.get("input_tokens", 0) or 0,
+                "output": um.get("output_tokens", 0) or 0,
+                "reasoning": outd.get("reasoning", 0) or 0,
+                "cacheRead": ind.get("cache_read", 0) or 0,
+                "cacheWrite": ind.get("cache_creation", 0) or 0,
+            }))
+    return outs
 
 
 def _emit_update(update, user_id: str | None = None, emitted_tools: set | None = None,

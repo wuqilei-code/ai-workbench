@@ -187,12 +187,16 @@ public class ChatMessageService {
      * @param toolCalls      工具调用节点(callId → {id,name,args,output,status}),保持插入序
      * @param elapsedSec     本轮生成耗时(秒,自流开始计),写入 parts 供前端刷新后展示
      */
+    /** 单轮 token 用量聚合值(网关 model_usage 事件累计;写入 chat_message 数值列供驾驶舱聚合) */
+    public record TurnUsage(long inputTokens, long outputTokens, long reasoningTokens,
+                            long cacheReadTokens, long cacheWriteTokens) {}
+
     public void upsertAssistantTurn(String agentSessionId, String agentMessageId,
                                     String text, Map<String, ObjectNode> toolCalls,
                                     java.util.List<ObjectNode> timeline, String status,
                                     Long elapsedSec) {
         upsertAssistantTurn(agentSessionId, agentMessageId, text, toolCalls, timeline,
-                status, elapsedSec, null, null);
+                status, elapsedSec, null, null, null);
     }
 
     /**
@@ -203,6 +207,16 @@ public class ChatMessageService {
                                     String text, Map<String, ObjectNode> toolCalls,
                                     java.util.List<ObjectNode> timeline, String status,
                                     Long elapsedSec, Integer contextTokens, Integer contextLimit) {
+        upsertAssistantTurn(agentSessionId, agentMessageId, text, toolCalls, timeline,
+                status, elapsedSec, contextTokens, contextLimit, null);
+    }
+
+    /** 全参:含本轮 token 用量(驾驶舱每日/生命周期/模型维度聚合数据源)。 */
+    public void upsertAssistantTurn(String agentSessionId, String agentMessageId,
+                                    String text, Map<String, ObjectNode> toolCalls,
+                                    java.util.List<ObjectNode> timeline, String status,
+                                    Long elapsedSec, Integer contextTokens, Integer contextLimit,
+                                    TurnUsage usage) {
         ChatSession session = chatSessionService.findByAgentSessionId(agentSessionId);
         if (session == null) {
             log.debug("upsertAssistantTurn: unknown agent session {}", agentSessionId);
@@ -244,6 +258,14 @@ public class ChatMessageService {
                 }
                 m.setParts(objectMapper.writeValueAsString(partsNode));
                 m.setToolCallCount(toolCalls.size());
+                // token 数值列(驾驶舱聚合数据源;此前从未写入导致图表恒为 0)
+                if (usage != null) {
+                    m.setInputTokens(usage.inputTokens());
+                    m.setOutputTokens(usage.outputTokens());
+                    m.setReasoningTokens(usage.reasoningTokens());
+                    m.setCacheReadTokens(usage.cacheReadTokens());
+                    m.setCacheWriteTokens(usage.cacheWriteTokens());
+                }
             } catch (Exception e) {
                 log.warn("serialize parts failed (agentMessageId={}): {}", agentMessageId, e.toString());
             }
@@ -307,6 +329,51 @@ public class ChatMessageService {
                 log.warn("upsertPendingPermission failed (msg={}): {}", agentMessageId, e.toString());
             }
         }
+    }
+
+    /**
+     * 查找该 agent 会话最近一条未处置的待确认/提问请求(assistant 消息 parts.pendingPermission)。
+     * 返回与网关 permission.asked 同构的 payload(id/name/args/description/allowed);无则 null。
+     * <p>
+     * 用途:SSE 订阅建立时补发。hub.dispatch 是 fire-and-forget,前端重连间隙
+     * (网络抖动/45s 看门狗/刷新页面)恰好落在 dispatch 时会导致授权卡不出现——
+     * 订阅即补发可让任何丢事件场景在连接重建瞬间自愈(前端幂等挂载同 requestId)。
+     */
+    public ObjectNode findPendingPermission(String agentSessionId) {
+        ChatSession session = chatSessionService.findByAgentSessionId(agentSessionId);
+        if (session == null) {
+            return null;
+        }
+        List<ChatMessage> recent = chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
+                .eq(ChatMessage::getSessionId, session.getId())
+                .orderByDesc(ChatMessage::getId)
+                .last("limit 20"));
+        for (ChatMessage m : recent) {
+            if (m.getParts() == null || m.getParts().isBlank()) continue;
+            try {
+                JsonNode pending = objectMapper.readTree(m.getParts()).path("pendingPermission");
+                String requestId = pending.path("requestId").asText("");
+                if (requestId.isEmpty()) continue;
+                JsonNode tool = pending.path("tool");
+                ObjectNode perm = objectMapper.createObjectNode();
+                perm.put("id", requestId);
+                perm.put("name", tool.path("name").asText("tool"));
+                JsonNode args = tool.path("args");
+                if (args.isObject()) perm.set("args", args);
+                perm.put("description", tool.path("description").asText(""));
+                ArrayNode allowed = perm.putArray("allowed");
+                JsonNode al = pending.path("allowed");
+                if (al.isArray() && al.size() > 0) {
+                    for (JsonNode d : al) allowed.add(d.asText());
+                } else {
+                    allowed.add("approve");
+                    allowed.add("reject");
+                }
+                return perm;
+            } catch (Exception ignored) {
+            }
+        }
+        return null;
     }
 
     /** 清除指定 agent 会话中指定 requestId 的待确认请求(允许/拒绝/取消后)。 */
