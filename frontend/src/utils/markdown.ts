@@ -67,12 +67,31 @@ function previewHref(raw: string): string {
   return path
 }
 
-function previewLinks(state: any) {
+/** 兼容流式解析器与 markdown-it 两种核心 state 的 Token 构造(两者都在 state.Token 上暴露) */
+function newToken(state: any, type: string, tag: string, nesting: number): any {
+  return new state.Token(type, tag, nesting)
+}
+
+/** preview_links 核心规则:把内联文本中的预览地址识别为可点击链接。
+ *  同时注册于 markdown-it(legacy 渲染)与 stream-markdown-parser(markstream-vue),
+ *  两者 token 结构兼容;流式解析器对部分 linkify 裸链接直接生成结构化 link 节点,一并处理。 */
+export function previewLinks(state: any) {
   for (const block of state.tokens) {
     if (block.type !== 'inline' || !block.children) continue
     const children = block.children
+    // 第零遍:结构化 link 节点(带 href),直接改写节点字段
+    for (let i = 0; i < children.length; i++) {
+      const token = children[i]
+      if (token.type !== 'link' || typeof token.href !== 'string') continue
+      if (!/^(?:https?:\/\/)?(?:localhost|127\.0\.0\.1):\d{2,5}/.test(token.href)) continue
+      token.href = previewHref(token.href)
+      token.attrs = [['target', '_blank'], ['rel', 'noreferrer noopener'], ['class', 'preview-link']]
+      if (token.children && token.children.length === 1 && token.children[0].type === 'text') {
+        token.children[0].content = '🖥 打开预览'
+        token.children[0].raw = '🖥 打开预览'
+      }
+    }
     // 第一遍:重写 linkify 已生成的 localhost 链接(<a href="http://localhost:8012">…</a>)
-    // 其 href 指向用户本机,必须改为代理地址才能访问。
     for (let i = 0; i < children.length; i++) {
       const token = children[i]
       if (token.type !== 'link_open') continue
@@ -93,11 +112,12 @@ function previewLinks(state: any) {
         if (inner.type === 'link_close') break
       }
     }
-    // 第二遍:裸文本(含 /api/preview/ 或 localhost:端口)转成代理链接
+    // 第二遍:裸文本(含 /api/preview/ 或 localhost:端口)转成代理链接;
+    // 跳过已在链接内部(level > 0)的文本,避免嵌套 <a>
     for (let i = 0; i < children.length; i++) {
       const token = children[i]
-      // 处理普通文本与反引号内联代码(code_inline)——agent 常用 `/api/preview/8010/` 反引号形式
       if (token.type !== 'text' && token.type !== 'code_inline') continue
+      if (token.level > 0) continue
       const text: string = token.content
       if (!text.includes('/api/preview/') && !/localhost:\d|127\.0\.0\.1:\d/.test(text)) continue
       let last = 0
@@ -107,11 +127,11 @@ function previewLinks(state: any) {
       while ((m = PREVIEW_RE.exec(text)) !== null) {
         const before = text.slice(last, m.index)
         if (before) {
-          const t = new state.Token('text', '', 0)
+          const t = newToken(state, 'text', '', 0)
           t.content = before
           newChildren.push(t)
         }
-        const link = new state.Token('link_open', 'a', 1)
+        const link = newToken(state, 'link_open', 'a', 1)
         link.attrs = [
           ['href', previewHref(m[0])],
           ['target', '_blank'],
@@ -119,16 +139,16 @@ function previewLinks(state: any) {
           ['class', 'preview-link'],
         ]
         newChildren.push(link)
-        const inner = new state.Token('text', '', 0)
+        const inner = newToken(state, 'text', '', 0)
         inner.content = '🖥 打开预览'
         newChildren.push(inner)
-        const close = new state.Token('link_close', 'a', -1)
+        const close = newToken(state, 'link_close', 'a', -1)
         newChildren.push(close)
         last = m.index + m[0].length
       }
       const tail = text.slice(last)
       if (tail) {
-        const t = new state.Token('text', '', 0)
+        const t = newToken(state, 'text', '', 0)
         t.content = tail
         newChildren.push(t)
       }

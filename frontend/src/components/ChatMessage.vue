@@ -8,6 +8,7 @@ import { useChatStore } from '@/stores/chat'
 import { fileApi } from '@/api/files'
 import { fmtMessageTime } from '@/utils/time'
 import TypeReveal from './TypeReveal.vue'
+import StreamMarkdown from './StreamMarkdown.vue'
 import type { MessageVo } from '@/types'
 
 const props = defineProps<{
@@ -200,7 +201,10 @@ async function submitEdit() {
       </template>
       <template v-else>
         <div class="content-area" :class="{ card: isUser }">
-          <div v-if="parsed.text" class="content">
+          <!-- AI 消息:markstream 流式渲染(平滑增量 + 代码块高亮 + 复制按钮) -->
+          <StreamMarkdown v-if="!isUser && parsed.text" :content="parsed.text" :final="!streaming" />
+          <!-- 用户消息:保持原 markdown 渲染(含 [skill:] 技能标签) -->
+          <div v-else-if="parsed.text" class="content">
             <TypeReveal v-if="streaming" :text="parsed.text" active />
             <div v-else v-html="html" />
           </div>
