@@ -481,6 +481,9 @@ public class AgentStreamBridge {
                     String requestId = "perm-" + UUID.randomUUID();
                     ts.pausedOnPermission = true;
                     ts.pendingPermissionRequestId = requestId;
+                    // 先持久化当前 TurnStream:确保 assistant 消息行存在,
+                    // 否则 upsertPendingPermission 匹配不到行会静默丢失权限卡
+                    persistTurn(ts, "streaming");
                     try {
                         chatMessageService.upsertPendingPermission(
                                 ts.sessionId, ts.assistantMessageId, requestId,
@@ -491,9 +494,6 @@ public class AgentStreamBridge {
                     } catch (Exception e) {
                         log.warn("persist pending permission failed (session={}): {}", ts.sessionId, e.toString());
                     }
-                    // HITL 暂停不走 finalize:此处补一次持久化,把中断前最后一次
-                    // 模型调用的 token 用量落库(否则该轮用量丢失)
-                    persistTurn(ts, "streaming");
                     ObjectNode perm = objectMapper.createObjectNode();
                     perm.put("id", requestId);
                     perm.put("name", toolName);

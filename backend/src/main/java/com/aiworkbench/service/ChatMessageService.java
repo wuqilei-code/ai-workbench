@@ -294,6 +294,7 @@ public class ChatMessageService {
                                         java.util.List<String> allowed) {
         ChatSession session = chatSessionService.findByAgentSessionId(agentSessionId);
         if (session == null) {
+            log.warn("upsertPendingPermission: session not found (agentSessionId={})", agentSessionId);
             return;
         }
         synchronized (partsLock(session.getId())) {
@@ -302,6 +303,8 @@ public class ChatMessageService {
                     .eq(ChatMessage::getAgentMessageId, agentMessageId)
                     .last("limit 1"));
             if (m == null) {
+                log.warn("upsertPendingPermission: message not found (agentSessionId={}, agentMessageId={})",
+                        agentSessionId, agentMessageId);
                 return;
             }
             try {

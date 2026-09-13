@@ -346,3 +346,58 @@ export function stripDeliverableMarkers(text: string): string {
     .replace(/^\s*\n/, '')
     .trimEnd()
 }
+
+// ---------- 任务规划(write_todos) ----------
+
+/** 单个规划任务项(write_todos 工具参数,整表替换式) */
+export interface PlanTodo {
+  content: string
+  status: 'pending' | 'in_progress' | 'completed'
+  /** 进行中的现在进行时描述(如"正在渲染图表"),展示优先于 content */
+  active_form?: string
+}
+
+/** 从 write_todos 工具入参解析任务清单(容错:模型可能传数组/嵌套/JSON 字符串)。 */
+function parsePlanArgs(args: any): PlanTodo[] | null {
+  if (!args) return null
+  let raw: any = args
+  if (!Array.isArray(raw)) raw = raw.todos ?? raw.items ?? raw.plan
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw)
+    } catch {
+      return null
+    }
+  }
+  if (!Array.isArray(raw) || raw.length === 0) return null
+  const out: PlanTodo[] = []
+  for (const it of raw) {
+    if (!it || typeof it !== 'object') continue
+    const content = String(it.content ?? it.task ?? it.title ?? '').trim()
+    if (!content) continue
+    const st = String(it.status ?? 'pending').toLowerCase()
+    const status: PlanTodo['status'] =
+      st === 'completed' || st === 'done' ? 'completed'
+        : st === 'in_progress' || st === 'active' || st === 'running' ? 'in_progress'
+          : 'pending'
+    out.push({ content, status, active_form: it.active_form ? String(it.active_form) : undefined })
+  }
+  return out.length ? out : null
+}
+
+/** 提取 turn 当前的任务规划:按时间序扫描所有工具调用,最后一次 write_todos 的
+ *  整表替换生效(流式期间随工具事件实时更新;历史消息从落库 parts 恢复)。 */
+export function extractPlan(turn: Turn): PlanTodo[] {
+  if (!turn) return []
+  let latest: PlanTodo[] | null = null
+  const scan = (tcs: ToolCall[] | undefined) => {
+    for (const tc of tcs || []) {
+      if (tc.name !== 'write_todos') continue
+      const parsed = parsePlanArgs(tc.args)
+      if (parsed) latest = parsed
+    }
+  }
+  for (const s of turn.steps) scan(s.toolCalls)
+  if (turn.finalAnswer) scan(turn.finalAnswer.toolCalls)
+  return latest || []
+}

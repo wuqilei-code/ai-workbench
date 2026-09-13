@@ -7,6 +7,7 @@ import { useMessage, useDialog } from 'naive-ui'
 import ChatMessage from '@/components/ChatMessage.vue'
 import AssistantTurn from '@/components/AssistantTurn.vue'
 import ChatInput from '@/components/ChatInput.vue'
+import TaskPlan from '@/components/TaskPlan.vue'
 import WelcomeBoard from '@/components/WelcomeBoard.vue'
 import TemplateLibrary from '@/components/TemplateLibrary.vue'
 import DocumentGenerator from '@/components/DocumentGenerator.vue'
@@ -26,6 +27,7 @@ import { chatApi } from '@/api/chat'
 import { mcpApi } from '@/api/mcp'
 import type { MessageVo, SkillInfo, UserSkill } from '@/types'
 import type { FlowItem, SummaryItem, Turn } from '@/utils/turns'
+import { extractPlan } from '@/utils/turns'
 
 const route = useRoute()
 const router = useRouter()
@@ -626,6 +628,13 @@ watch(() => chat.isStreaming, (now, prev) => {
 
 /** 用户是否停留在底部区域(阈值内视为贴底)。贴底时流式输出自动跟随;上翻阅读时不被拉回。 */
 const stickToBottom = ref(true)
+
+/** 当前生成中 turn 的任务规划:悬浮在输入框上方,随 write_todos 实时刷新;
+ *  生成结束(完成/出错/中断)即隐藏——完成态的结果由结果文件卡与正文承载。 */
+const activePlan = computed(() => {
+  if (!chat.isStreaming || !chat.turns.length) return []
+  return extractPlan(chat.turns[chat.turns.length - 1])
+})
 let _prevScrollHeight = 0
 let _prevScrollTop = 0
 /** 正在前插更早分页:期间抑制自动滚底(messages.length 变化由 loadOlderMessages 前插引起) */
@@ -984,6 +993,8 @@ const virtualItems = computed<VirtualListItem[]>(() => {
         </div>
 
         <div v-if="chat.currentSessionId" class="composer-wrap">
+          <!-- 任务规划悬浮卡:生成期间钉在输入框上方,实时展示 AI 的计划进度 -->
+          <TaskPlan :todos="activePlan" class="composer-plan" />
           <!-- 未贴底时显示「回到最新」下箭头,点击滚到会话最下方 -->
           <button
             v-show="!stickToBottom"
@@ -1436,6 +1447,8 @@ const virtualItems = computed<VirtualListItem[]>(() => {
 .chat-virtual-inner { max-width: 860px; margin: 0 auto; padding: 0 20px; }
 .chat-virtual-inner > * { padding-top: 24px; padding-bottom: 24px; }
 .composer-wrap { max-width: 860px; margin: 0 auto; width: 100%; }
+/* 任务规划悬浮卡:钉在输入框上方,轻投影与消息区区分 */
+.composer-plan { margin: 0 0 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, .08); }
 /* 「回到最新消息」下箭头:显示在输入框上方居中,未贴底时出现 */
 .scroll-to-bottom-btn {
   display: flex; align-items: center; justify-content: center;

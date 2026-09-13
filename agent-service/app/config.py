@@ -110,7 +110,10 @@ AGENT_HOST: str = os.environ.get("AGENT_HOST", "0.0.0.0")
 AGENT_PORT: int = _int("AGENT_PORT", 8000)
 # 并发加固:多个 uvicorn worker 各自处理请求(进程级并行,配合 PG 连接池)。
 AGENT_WORKERS: int = max(1, _int("AGENT_WORKERS", 4))
-AGENT_MAX_TURNS: int = _int("AGENT_MAX_TURNS", 50)
+# 单请求步数上限(每次模型调用/工具执行各计一步)。任务规划卡片会让 AI 高频更新
+# write_todos(每次更新=1 步),复杂任务(多文件+验证+浏览器)轻松超 50 步,
+# 50 会触发 GraphRecursionError 直接掐断输出(表现为规划卡永远停在第一项转圈)。
+AGENT_MAX_TURNS: int = _int("AGENT_MAX_TURNS", 150)
 AGENT_LOG_LEVEL: str = os.environ.get("AGENT_LOG_LEVEL", "info")
 
 # --- 后端内部接口(create_skill 工具回写技能库;令牌需与后端 app.internal-token 一致) ---

@@ -383,11 +383,15 @@ function isBlankToolOutput(tc: ToolCall): boolean {
 }
 
 /** chip 展示过滤:pure_show_widget 已完成的不再显示原始 chip(避免 [WIDGET_FILE] 噪声);
+ *  write_todos 的清单已在任务规划卡片渲染,chip 不重复展示;
  *  空输出的已定稿工具也不展示(时间线里一堆没内容的命令行记录) */
 function displayToolCalls(step: Step | null): ToolCall[] {
   if (!step) return []
   return (step.toolCalls ?? []).filter(
-    (tc) => !(tc.name === 'pure_show_widget' && tc.outputs?.length) && !isBlankToolOutput(tc),
+    (tc) =>
+      !(tc.name === 'pure_show_widget' && tc.outputs?.length) &&
+      tc.name !== 'write_todos' &&
+      !isBlankToolOutput(tc),
   )
 }
 

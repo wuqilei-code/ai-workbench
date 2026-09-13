@@ -158,7 +158,7 @@ from deepagents.middleware.summarization import (
 )
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_openai import ChatOpenAI
-from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware import AgentMiddleware, TodoListMiddleware
 
 from app import config
 from app import workspace as ws
@@ -539,6 +539,16 @@ _DEFAULT_SYSTEM_PROMPT = (
     "如果有明确的几个选项,用 options 参数传入选项(用 | 分隔,如 options=\"Python|JavaScript|都可以\")。"
     "需要用户选多个时设 multiple=\"true\"。没有固定选项时留空 options,用户自由输入。"
     "只在真正需要用户输入时才提问,不要用提问代替思考。"
+    "\n\n任务规划(必须遵守):凡是需要两步以上才能完成的任务——生成文档/报告/图表/网页、"
+    "先查资料再产出、浏览器操作后写文件、多文件产出、跑脚本验证等——在开始动手前,必须先用 "
+    "write_todos 工具列出任务清单(每项一句具体描述,如\"用 mermaid 技能绘制诉讼流程图\"),"
+    "一次只把一项设为 in_progress;每完成一项立即把该项标为 completed 并把下一项设为 in_progress;"
+    "全部完成后才开始写最终回复。"
+    "更新清单时,优先把 write_todos 与下一步动作的工具调用合并在同一次发起(write_todos 可以"
+    "和其它工具并行,只禁止一次发多个 write_todos),不要为更新计划单独消耗一轮;也可以阶段性"
+    "批量更新多项状态。"
+    "前端有任务规划卡片实时展示进度,这是用户可见的承诺清单,不要省略。"
+    "只有单步即可完成的小任务(直接回答、只写一个小文件且无后续步骤)才允许不用 write_todos。"
     "\n\n不要主动创建测试/示例文件(如 hello.docx、test.py、demo 等),除非用户明确要求。"
     "首次对话时直接回应用户需求,不要用生成文件来\u201c演示能力\u201d。"
 )
@@ -606,7 +616,10 @@ class AgentManager:
             # 默认的自动压缩中间件共享 _summarization_event,前台 summary 提示同样生效。
             # ContextUsageMiddleware 置于 scrub 之后、压缩之前(外层):每次模型调用前
             # 用同款口径统计占用并经 custom 流回传,供前端圆环与压缩阈值对齐。
+            # 任务规划:挂载 langchain TodoListMiddleware,提供 write_todos 工具,
+            # AI 处理复杂任务前先列计划、随进度更新状态;前端任务卡片实时渲染。
             middleware=[_DeepSeekFileScrub(),
+                        TodoListMiddleware(),
                         ContextUsageMiddleware(usage_counter, _compression_threshold(usage_counter)),
                         create_summarization_tool_middleware(model, backend)]
             + ([ReloadSkillsMiddleware(backend=backend, sources=["/skills"])] if skills else []),
