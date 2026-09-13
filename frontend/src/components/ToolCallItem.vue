@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 import { summarizeToolCall } from '@/utils/turns'
+import { highlightToolOutput } from '@/utils/highlight'
 import type { ToolCall } from '@/types'
 
 const props = defineProps<{ tc: ToolCall }>()
@@ -11,6 +12,9 @@ const msg = useMessage()
 /** 工具输出(可能为空 → 不渲染输出框) */
 const output = computed(() => props.tc.output ?? '')
 const running = computed(() => props.tc.status === 'running')
+
+/** 输出高亮后的 HTML(JSON 结构化着色 / 日志关键词着色) */
+const outputHtml = computed(() => highlightToolOutput(output.value))
 
 /** 用户手动展开/折叠覆盖;置 null 恢复自动态 */
 const userOverride = ref<boolean | null>(null)
@@ -108,20 +112,22 @@ function downloadOutput() {
       <span class="chip-status">{{ statusIcon }}</span>
     </span>
 
-    <div v-if="expanded && output" class="tool-output-wrap">
-      <div class="tool-output-bar">
-        <span>输出</span>
-        <span class="output-actions" @click.stop>
-          <a class="output-act" title="复制工具输出" @click="copyOutput">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          </a>
-          <a class="output-act" title="下载为文本文件" @click="downloadOutput">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          </a>
-        </span>
+    <transition name="toolout">
+      <div v-if="expanded && output" class="tool-output-wrap">
+        <div class="tool-output-bar">
+          <span>输出</span>
+          <span class="output-actions" @click.stop>
+            <a class="output-act" title="复制工具输出" @click="copyOutput">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </a>
+            <a class="output-act" title="下载为文本文件" @click="downloadOutput">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            </a>
+          </span>
+        </div>
+        <pre ref="boxEl" class="tool-output-body" v-html="outputHtml"></pre>
       </div>
-      <pre ref="boxEl" class="tool-output-body">{{ output }}</pre>
-    </div>
+    </transition>
   </div>
 </template>
 
@@ -186,4 +192,17 @@ function downloadOutput() {
 .tool-output-body::-webkit-scrollbar { width: 6px; }
 .tool-output-body::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
 .tool-output-body:hover::-webkit-scrollbar-thumb { background: var(--border); }
+
+/* 展开/折叠过渡 */
+.toolout-enter-active, .toolout-leave-active { transition: opacity .18s ease, transform .18s ease; }
+.toolout-enter-from, .toolout-leave-to { opacity: 0; transform: translateY(-4px); }
+
+/* 输出高亮配色(v-html 内容,经 :deep 命中) */
+.tool-output-body :deep(.j-key) { color: var(--accent); }
+.tool-output-body :deep(.j-str) { color: var(--ok); }
+.tool-output-body :deep(.j-num) { color: #3b82f6; }
+.tool-output-body :deep(.j-bool) { color: var(--warn); }
+.tool-output-body :deep(.j-null) { color: var(--text-4); }
+.tool-output-body :deep(.lg-err) { color: var(--err); font-weight: 500; }
+.tool-output-body :deep(.lg-warn) { color: var(--warn); }
 </style>
