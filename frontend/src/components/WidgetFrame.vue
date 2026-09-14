@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useMessage } from 'naive-ui'
 import { fileApi } from '@/api/files'
 import { useThemeStore } from '@/stores/theme'
+import { SVG_LINE_FILL_FIX_CSS } from '@/utils/svgFix'
 
 /**
  * dynamic-ui 内联可视化组件渲染器:
@@ -40,9 +41,16 @@ function stripScripts(code: string): string {
   return code.replace(/<script\b[\s\S]*?<\/script\s*>/gi, '').replace(/<script\b[\s\S]*$/i, '')
 }
 
-/** 检测 widget 代码是否自身支持暗色主题(data-widget-theme 门控 / prefers-color-scheme) */
+/** 检测 widget 代码是否自身支持暗色主题。
+ *  - data-widget-theme:显式主题门控(提示词契约),认定支持;
+ *  - prefers-color-scheme:必须出现在 <style> 块内才真正生效 —— 仅在注释/字符串里
+ *    出现时不应判定支持,否则硬编码白底的 SVG 流程图会跳过反色兜底,暗色下刺眼。 */
 function hasThemeSupport(code: string): boolean {
-  return /data-widget-theme/.test(code) || /prefers-color-scheme/.test(code)
+  if (/data-widget-theme/.test(code)) return true
+  const styles = Array.from(code.matchAll(/<style\b[\s\S]*?<\/style\s*>/gi))
+    .map((m) => m[0])
+    .join('\n')
+  return /prefers-color-scheme/.test(styles)
 }
 
 /**
@@ -83,7 +91,11 @@ const BOOT = `
   window.addEventListener('message',function(e){
     var d=e.data;if(!d||d.__aiwb_host!==1)return;
     if(d.type==='theme'&&document.documentElement){document.documentElement.setAttribute('data-widget-theme',d.value);return}
-    if(d.type==='nodark'&&document.documentElement){document.documentElement.setAttribute('data-aiwb-nodark','1');return}
+    if(d.type==='nodark'&&document.documentElement){
+      /* enable=false 时移除反色(切回亮色/内容本身有暗色支持),否则启用 */
+      if(d.enable===false){document.documentElement.removeAttribute('data-aiwb-nodark')}
+      else{document.documentElement.setAttribute('data-aiwb-nodark','1')}
+      return}
     if(d.type==='patch'){apply(String(d.html||''))}
   });
   function setAttrs(dn,sn){
@@ -118,12 +130,32 @@ const BOOT = `
       reconcileChildren(root,tpl.content);
       while(root.firstChild&&root.firstChild.nodeType===3&&!root.firstChild.nodeValue.trim())root.removeChild(root.firstChild);
     }catch(err){root.innerHTML=html}
-    requestAnimationFrame(reportH);
+    requestAnimationFrame(function(){fixSvg();reportH()});
   }
   function reportH(){send({type:'height',height:Math.ceil(document.documentElement.getBoundingClientRect().height)})}
-  if('ResizeObserver' in window){new ResizeObserver(reportH).observe(document.documentElement)}
-  window.addEventListener('load',function(){reportH();send({type:'ready'})});
-  setTimeout(function(){reportH();send({type:'ready'})},600);
+  /* AI 生成的 SVG viewBox 尺寸常与内容不匹配(如 viewBox 高 1180 但内容到 y=1664),
+   * 超出部分被裁掉表现为"长图展示不完整"。按 getBBox() 实测内容包围盒自适应扩展 viewBox。 */
+  function fixSvg(){
+    var list=document.querySelectorAll('svg[viewBox]');
+    for(var i=0;i<list.length;i++){
+      var s=list[i];
+      try{
+        var b=s.getBBox();
+        if(!b||!isFinite(b.width)||!isFinite(b.height)||b.width<=0||b.height<=0)continue;
+        var vb=(s.getAttribute('viewBox')||'').split(/[\\s,]+/);
+        if(vb.length!==4)continue;
+        var x=parseFloat(vb[0]),y=parseFloat(vb[1]),w=parseFloat(vb[2]),h=parseFloat(vb[3]);
+        if(!isFinite(x)||!isFinite(y)||!isFinite(w)||!isFinite(h)||w<=0||h<=0)continue;
+        var p=2,nx=Math.min(x,b.x-p),ny=Math.min(y,b.y-p);
+        var nw=Math.max(x+w,b.x+b.width+p)-nx,nh=Math.max(y+h,b.y+b.height+p)-ny;
+        if(nw>w+0.5||nh>h+0.5||nx<x-0.5||ny<y-0.5){s.setAttribute('viewBox',nx+' '+ny+' '+nw+' '+nh)}
+      }catch(e){}
+    }
+  }
+  if(document.fonts&&document.fonts.ready){document.fonts.ready.then(function(){fixSvg();reportH()})}
+  if('ResizeObserver' in window){new ResizeObserver(function(){fixSvg();reportH()}).observe(document.documentElement)}
+  window.addEventListener('load',function(){fixSvg();reportH();send({type:'ready'})});
+  setTimeout(function(){fixSvg();reportH();send({type:'ready'})},600);
   window.addEventListener('wheel',function(e){
     var de=document.documentElement;
     if(de.scrollHeight<=de.clientHeight+1){
@@ -164,24 +196,24 @@ function themeFallback(): string {
     `:root{color-scheme:${isDark() ? 'dark' : 'light'}}` +
     fallback(isDark() ? 'dark' : 'light') +
     `html,body{margin:0;padding:0;background:transparent;color:var(--text,#E5E5E5)}` +
+    /* 无暗色支持(nodark)的硬编码浅色内容(SVG 流程图等)整体反色+色相旋转兜底:
+     * 作用于 body 级,不依赖 widget 自带 data-dynamic-ui-widget 属性;文件/流式两模式共用 */
+    `:root[data-aiwb-nodark="1"] body{filter:invert(1) hue-rotate(180deg)}` +
     `</style>`
   )
 }
 
 function buildDoc(code: string): string {
   const themeVal = isDark() ? 'dark' : 'light'
-  // 无暗色支持的 widget:整体反色+色相旋转,让硬编码浅色在暗色下可读
+  // 无暗色支持的 widget:html 预置 nodark 属性,反色规则由 themeFallback() 统一提供
   const needsInvert = isDark() && !hasThemeSupport(code)
   const nodarkAttr = needsInvert ? ' data-aiwb-nodark="1"' : ''
-  const invertCSS = needsInvert
-    ? ':root[data-aiwb-nodark="1"] [data-dynamic-ui-widget]{filter:invert(1) hue-rotate(180deg)}'
-    : ''
   return (
     `<!doctype html><html data-widget-theme="${themeVal}"${nodarkAttr}><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
     `<style>html,body{margin:0;padding:0;background:transparent}</style>` +
+    `<style>${SVG_LINE_FILL_FIX_CSS}</style>` +
     themeFallback() +
-    (invertCSS ? `<style>${invertCSS}</style>` : '') +
     `</head><body>` +
     balancedScripts(normalizeWidgetTheme(code)) +
     BOOT +
@@ -202,6 +234,7 @@ function buildLiveShell(): string {
     `<!doctype html><html data-widget-theme="${isDark() ? 'dark' : 'light'}"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
     `<style>html,body{margin:0;padding:0;background:transparent}</style>` +
+    `<style>${SVG_LINE_FILL_FIX_CSS}</style>` +
     themeFallback() +
     `</head><body><div id="__wd"></div>${BOOT}</body></html>`
   )
@@ -221,8 +254,9 @@ function postToFrame(payload: Record<string, unknown>): boolean {
 function pushPatch(code: string) {
   const stripped = stripScripts(normalizeWidgetTheme(code))
   if (!stripped.trim()) return
-  // 流式期间首次收到有效代码时检测暗色支持;若无,通知壳添加反色滤镜
-  if (isDark() && !_liveDarkChecked && code.trim().length > 50) {
+  // 流式期间首次收到足够长代码时检测暗色支持;若无,通知壳添加反色滤镜
+  // (阈值取 200:流式早期 <style> 尚未生成,过早检测会把"稍后有暗色规则"误判为不支持)
+  if (isDark() && !_liveDarkChecked && code.trim().length > 200) {
     _liveDarkChecked = true
     if (!hasThemeSupport(code)) {
       postToFrame({ type: 'nodark' })
@@ -420,7 +454,8 @@ function onMessage(e: MessageEvent) {
     if (_pendingLive) pushPatch(_pendingLive)
     console.debug('[widget] live ready')
   } else if (d.type === 'height' && typeof d.height === 'number') {
-    height.value = Math.max(80, Math.min(3000, d.height))
+    // 上限放宽到 8000:长流程图等高内容经 viewBox 自适应后可能超过 3000
+    height.value = Math.max(80, Math.min(8000, d.height))
     console.debug('[widget] height', d.height)
   } else if (d.type === 'wheel' && typeof d.dy === 'number') {
     // iframe 高度与内容齐平时内部无滚动空间:滚轮链式交给聊天容器
@@ -452,6 +487,12 @@ function scrollAncestorBy(dy: number) {
 watch(() => props.path, load)
 watch(() => theme.mode, (v) => {
   postToFrame({ type: 'theme', value: v })
+  // nodark 反色兜底随主题实时启停,无需刷新页面:
+  // 按当前内容重新判定"无暗色支持",dark→启用反色,light→移除
+  const code = (props.liveCode != null ? _pendingLive : rawCode.value) || ''
+  if (code.trim().length > 200) {
+    postToFrame({ type: 'nodark', enable: v === 'dark' && !hasThemeSupport(code) })
+  }
 })
 
 onMounted(() => {

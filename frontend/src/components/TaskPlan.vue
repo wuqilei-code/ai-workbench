@@ -1,8 +1,9 @@
 <script setup lang="ts">
 /** 任务规划卡片:渲染 write_todos 产出的任务清单,随流式实时更新。
  *  进行中项高亮 + spinner,完成项打勾;头部显示整体进度条。
+ *  支持折叠:点击头部展开/收起,折叠后仅保留标题与 N/M 进度。
  *  数据来源:AssistantTurn 通过 extractPlan(turn) 取最后一次 write_todos 的整表。 */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { PlanTodo } from '@/utils/turns'
 
 const props = defineProps<{ todos: PlanTodo[] }>()
@@ -12,6 +13,12 @@ const pct = computed(() =>
   props.todos.length ? Math.round((completedCount.value / props.todos.length) * 100) : 0,
 )
 
+/** 折叠状态:用户手动切换,流式更新期间保持 */
+const collapsed = ref(false)
+function toggleCollapsed() {
+  collapsed.value = !collapsed.value
+}
+
 /** 展示文本:进行中优先用 active_form(现在进行时描述) */
 function label(t: PlanTodo): string {
   return (t.status === 'in_progress' && t.active_form) || t.content
@@ -19,35 +26,40 @@ function label(t: PlanTodo): string {
 </script>
 
 <template>
-  <div v-if="todos.length" class="task-plan">
-    <div class="plan-head">
+  <div v-if="todos.length" class="task-plan" :class="{ collapsed }">
+    <div class="plan-head" @click="toggleCollapsed">
       <span class="plan-title">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         任务规划
       </span>
-      <span class="plan-progress-text">{{ completedCount }}/{{ todos.length }}</span>
+      <span class="plan-head-right">
+        <span class="plan-progress-text">{{ completedCount }}/{{ todos.length }}</span>
+        <svg class="plan-chevron" :class="{ open: !collapsed }" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </span>
     </div>
-    <div class="plan-bar">
-      <div class="plan-bar-fill" :style="{ width: pct + '%' }" />
+    <div v-show="!collapsed" class="plan-body">
+      <div class="plan-bar">
+        <div class="plan-bar-fill" :style="{ width: pct + '%' }" />
+      </div>
+      <ul class="plan-list">
+        <li
+          v-for="(t, i) in todos"
+          :key="i"
+          class="plan-item"
+          :class="[t.status]"
+        >
+          <span class="plan-check">
+            <!-- 完成:绿勾 -->
+            <svg v-if="t.status === 'completed'" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+            <!-- 进行中:spinner 环 -->
+            <span v-else-if="t.status === 'in_progress'" class="plan-ring" />
+            <!-- 待办:空心圆 -->
+            <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9" /></svg>
+          </span>
+          <span class="plan-text">{{ label(t) }}</span>
+        </li>
+      </ul>
     </div>
-    <ul class="plan-list">
-      <li
-        v-for="(t, i) in todos"
-        :key="i"
-        class="plan-item"
-        :class="[t.status]"
-      >
-        <span class="plan-check">
-          <!-- 完成:绿勾 -->
-          <svg v-if="t.status === 'completed'" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
-          <!-- 进行中:spinner 环 -->
-          <span v-else-if="t.status === 'in_progress'" class="plan-ring" />
-          <!-- 待办:空心圆 -->
-          <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9" /></svg>
-        </span>
-        <span class="plan-text">{{ label(t) }}</span>
-      </li>
-    </ul>
   </div>
 </template>
 
@@ -63,22 +75,40 @@ function label(t: PlanTodo): string {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 7px 12px 4px;
+  padding: 7px 12px;
   color: var(--text);
   font-size: 13px;
   font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color var(--motion-fast) var(--ease-standard);
 }
+.plan-head:hover { background: var(--fill-0); }
 .plan-title {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   color: var(--accent);
 }
+.plan-head-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 .plan-progress-text {
   font-size: 12px;
   font-weight: 500;
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
+}
+.plan-chevron {
+  color: var(--text-3);
+  transition: transform var(--motion-fast) var(--ease-standard);
+}
+.plan-chevron.open { transform: rotate(180deg); }
+.plan-body {
+  border-top: 1px solid var(--border-soft);
+  padding-top: 6px;
 }
 .plan-bar {
   margin: 0 12px 8px;

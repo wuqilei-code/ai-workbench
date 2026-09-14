@@ -2,6 +2,7 @@
 import { ref, watch, computed, onBeforeUnmount } from 'vue'
 import { fileApi } from '@/api/files'
 import { extToLang } from './ext'
+import { injectSvgLineFillFix } from '@/utils/svgFix'
 
 /**
  * 交互式 HTML 预览:支持「页面(渲染执行)/代码(高亮源码)」两种视图切换。
@@ -108,7 +109,7 @@ async function load() {
     const html = String(text)
     raw.value = html
     const resolved = await resolveResources(html)
-    pageDoc.value = injectCharset(resolved)
+    pageDoc.value = injectSvgLineFillFix(injectCharset(resolved))
   } catch (e: any) {
     error.value = e?.message || '加载失败'
   } finally {

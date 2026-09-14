@@ -10,8 +10,6 @@ import ChatInput from '@/components/ChatInput.vue'
 import TaskPlan from '@/components/TaskPlan.vue'
 import WelcomeBoard from '@/components/WelcomeBoard.vue'
 import TemplateLibrary from '@/components/TemplateLibrary.vue'
-import DocumentGenerator from '@/components/DocumentGenerator.vue'
-import ErrorDiagnose from '@/components/ErrorDiagnose.vue'
 import FavoritesPanel from '@/components/FavoritesPanel.vue'
 import SkillMarketplace from '@/components/SkillMarketplace.vue'
 import FileTree from '@/components/FileTree.vue'
@@ -137,8 +135,6 @@ function startResize(e: MouseEvent) {
 
 const chatInputRef = ref<InstanceType<typeof ChatInput> | null>(null)
 const templateLibShow = ref(false)
-const docGenShow = ref(false)
-const errorDiagnoseShow = ref(false)
 const marketplaceShow = ref(false)
 const skillTreeKey = ref(0)
 /** 内置技能名(技能栏顶部内置列表;用户技能区/会话配置只展示自定义技能) */
@@ -217,29 +213,25 @@ async function removeUserSkill(s: UserSkill) {
   }
 }
 watch(activeTab, (t) => { if (t === 'skills') loadUserSkills() })
-/** 会话自定义技能配置:左=可选项,右=已选;内置技能默认加载,不可配置 */
+/** 会话自定义技能配置:穿梭框选择;内置技能默认加载,不可配置。
+ *  左侧「可选」列表按页取数(已选项始终注入 options,保证右侧完整回显)。 */
 const customSkills = ref<string[]>([])
 const skillsPick = ref<string[]>([])
 const skillsOpen = ref(false)
+const SKILL_PAGE_SIZE = 8
 const skillPage = ref(1)
-const skillSize = 8
-const skillTotal = computed(() => Math.max(1, Math.ceil(customSkills.value.length / skillSize)))
-const skillPageItems = computed(() => customSkills.value.slice((skillPage.value - 1) * skillSize, skillPage.value * skillSize))
-function toggleSkillPick(s: string) {
-  if (skillsPick.value.includes(s)) skillsPick.value = skillsPick.value.filter((x) => x !== s)
-  else skillsPick.value = [...skillsPick.value, s]
-}
+const skillUnpicked = computed(() => customSkills.value.filter((s) => !skillsPick.value.includes(s)))
+const skillPageCount = computed(() => Math.max(1, Math.ceil(skillUnpicked.value.length / SKILL_PAGE_SIZE)))
+const skillTransferOptions = computed(() => [
+  ...skillsPick.value.map((s) => ({ label: s, value: s })),
+  ...skillUnpicked.value.slice((skillPage.value - 1) * SKILL_PAGE_SIZE, skillPage.value * SKILL_PAGE_SIZE).map((s) => ({ label: s, value: s })),
+])
+watch(() => skillsPick.value.length, () => { if (skillPage.value > skillPageCount.value) skillPage.value = skillPageCount.value })
 async function openSkillPicker() {
   try { customSkills.value = await chatApi.customSkills() } catch { customSkills.value = [] }
   skillsPick.value = (chat.currentSession?.skills || []).filter((s) => customSkills.value.includes(s))
   skillPage.value = 1
   skillsOpen.value = true
-}
-function addSkill(s: string) {
-  if (!skillsPick.value.includes(s)) skillsPick.value = [...skillsPick.value, s]
-}
-function removeSkill(s: string) {
-  skillsPick.value = skillsPick.value.filter((x) => x !== s)
 }
 async function applySkills() {
   if (!chat.currentSessionId) return
@@ -268,10 +260,6 @@ async function openMcpPicker() {
   mcpPick.value = cur == null ? [...mcpAvail.value] : [...cur]
   mcpPage.value = 1
   mcpOpen.value = true
-}
-function toggleMcp(name: string) {
-  if (mcpPick.value.includes(name)) mcpPick.value = mcpPick.value.filter((x) => x !== name)
-  else mcpPick.value = [...mcpPick.value, name]
 }
 async function applyMcp() {
   if (!chat.currentSessionId) return
@@ -307,17 +295,22 @@ async function resetMcp() {
 }
 /** 自动化管理弹窗(点侧边栏「自动化」打开:任务列表 + 启停 + 新建) */
 const automationShow = ref(false)
-/** MCP 管理弹窗(点侧边栏「MCP 连接」打开:Server 增/删/改/启停) */
+/** 工具库弹窗(点侧边栏「工具库」打开:Server 增/删/改/启停) */
 const mcpShow = ref(false)
 /** 会话级 MCP 勾选(点顶部「MCP」按钮打开:按会话选择要加载的 Server) */
 const mcpOpen = ref(false)
 const mcpPick = ref<string[]>([])
 const mcpAvail = ref<string[]>([])
 const mcpSaving = ref(false)
+const MCP_PAGE_SIZE = 8
 const mcpPage = ref(1)
-const mcpSize = 8
-const mcpTotal = computed(() => Math.max(1, Math.ceil(mcpAvail.value.length / mcpSize)))
-const mcpPageItems = computed(() => mcpAvail.value.slice((mcpPage.value - 1) * mcpSize, mcpPage.value * mcpSize))
+const mcpUnpicked = computed(() => mcpAvail.value.filter((n) => !mcpPick.value.includes(n)))
+const mcpPageCount = computed(() => Math.max(1, Math.ceil(mcpUnpicked.value.length / MCP_PAGE_SIZE)))
+const mcpTransferOptions = computed(() => [
+  ...mcpPick.value.map((n) => ({ label: n, value: n })),
+  ...mcpUnpicked.value.slice((mcpPage.value - 1) * MCP_PAGE_SIZE, mcpPage.value * MCP_PAGE_SIZE).map((n) => ({ label: n, value: n })),
+])
+watch(() => mcpPick.value.length, () => { if (mcpPage.value > mcpPageCount.value) mcpPage.value = mcpPageCount.value })
 /** 消息定位轮询中(从任务/收藏跳转后等待消息加载) */
 const locating = ref(false)
 /** 安装技能后刷新技能目录树 */
@@ -353,14 +346,6 @@ function onScenarioSelect(prompt: string) {
   chatInputRef.value?.fill(prompt)
 }
 function onTemplateUse(prompt: string) {
-  chatInputRef.value?.fill(prompt)
-}
-/** 文档生成:把拼好的提示词填入输入框供确认后发送。 */
-function onDocGenerate(prompt: string) {
-  chatInputRef.value?.fill(prompt)
-}
-/** 报错解读:同上,填入输入框供确认后发送。 */
-function onErrorGenerate(prompt: string) {
   chatInputRef.value?.fill(prompt)
 }
 
@@ -821,14 +806,6 @@ const virtualItems = computed<VirtualListItem[]>(() => {
           <span class="conn-dot"></span>
           {{ chat.connected ? '已连接' : (chat.reconnecting ? '重连中…' : '未连接') }}
         </span>
-        <n-button class="find-btn" size="small" quaternary title="会话内置/自定义技能(自定义按会话勾选加载)" @click="openSkillPicker">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 12 2c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg>
-          <span class="btn-label">技能</span>
-        </n-button>
-        <n-button class="find-btn" size="small" quaternary title="会话级启用 MCP Server(按会话勾选加载,默认全部已启用)" @click="openMcpPicker">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
-          <span class="btn-label">MCP</span>
-        </n-button>
         <n-button class="find-btn" size="small" quaternary title="会话内查找 (Ctrl+F)" @click="openFind">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <span class="btn-label">查找</span>
@@ -1004,7 +981,7 @@ const virtualItems = computed<VirtualListItem[]>(() => {
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
-          <ChatInput ref="chatInputRef" @open-doc-gen="docGenShow = true" @open-error-diagnose="errorDiagnoseShow = true" @open-test-analysis="onTestAnalysis" />
+          <ChatInput ref="chatInputRef" @open-test-analysis="onTestAnalysis" @open-skills="openSkillPicker" @open-mcp="openMcpPicker" />
         </div>
       </div>
 
@@ -1099,14 +1076,6 @@ const virtualItems = computed<VirtualListItem[]>(() => {
     :show="mcpShow"
     @update:show="(v: boolean) => mcpShow = v"
   />
-  <DocumentGenerator
-    v-model:show="docGenShow"
-    @generate="onDocGenerate"
-  />
-  <ErrorDiagnose
-    v-model:show="errorDiagnoseShow"
-    @generate="onErrorGenerate"
-  />
   <SkillMarketplace
     v-model:show="marketplaceShow"
     @installed="onSkillInstalled"
@@ -1126,34 +1095,10 @@ const virtualItems = computed<VirtualListItem[]>(() => {
       </div>
     </template>
     <div class="picker-body">
-      <div class="picker-desc">内置技能默认加载、无需勾选；下面的<em>自定义技能</em>（市场安装/自己创建）勾选后即在本会话启用。</div>
-      <div class="pick-list">
-        <div v-if="!customSkills.length" class="pick-empty">暂无自定义技能</div>
-        <div v-for="s in skillPageItems" :key="s" class="pick-row" :class="{ on: skillsPick.includes(s) }" :title="skillsPick.includes(s) ? `移除 ${s}` : `启用 ${s}`" @click="toggleSkillPick(s)">
-          <span class="pick-box" :class="{ checked: skillsPick.includes(s) }">
-            <svg v-if="skillsPick.includes(s)" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-          </span>
-          <span class="pick-row-name">{{ s }}</span>
-          <span class="pick-row-tag" :class="skillsPick.includes(s) ? 'on' : ''">{{ skillsPick.includes(s) ? '本会话已选' : '点击选择' }}</span>
-        </div>
-      </div>
-      <div class="pick-page">
-        <n-button size="small" quaternary :disabled="skillPage <= 1" @click="skillPage--">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
-          上一页
-        </n-button>
-        <span class="pick-page-info">{{ skillPage }} / {{ skillTotal }}</span>
-        <n-button size="small" quaternary :disabled="skillPage >= skillTotal" @click="skillPage++">
-          下一页
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
-        </n-button>
-      </div>
-      <div class="pick-selected">
-        <span class="pick-sel-label">已选 {{ skillsPick.length }} 项</span>
-        <div class="pick-chips">
-          <span v-for="s in skillsPick" :key="s" class="pick-chip" :title="`移除 ${s}`" @click="removeSkill(s)">{{ s }} ✕</span>
-          <span v-if="!skillsPick.length" class="pick-chip-empty">未选择自定义技能（仅内置技能）</span>
-        </div>
+      <div class="picker-desc">内置技能默认加载、无需勾选；把<em>自定义技能</em>（市场安装/自己创建）移到右侧即在本会话启用。</div>
+      <n-transfer v-model:value="skillsPick" :options="skillTransferOptions" source-filterable source-title="可选自定义技能" target-title="本会话已选" class="picker-transfer" />
+      <div v-if="skillUnpicked.length > SKILL_PAGE_SIZE" class="picker-pager">
+        <n-pagination :page="skillPage" :page-count="skillPageCount" size="small" @update:page="skillPage = $event" />
       </div>
     </div>
     <div class="sp-actions">
@@ -1180,34 +1125,10 @@ const virtualItems = computed<VirtualListItem[]>(() => {
       </div>
     </template>
     <div class="picker-body">
-      <div class="picker-desc">未作选择时默认加载你<em>全部已启用</em>的 MCP；勾选后本会话只加载选中的 Server（可随时「恢复默认」）。</div>
-      <div class="pick-list">
-        <div v-if="!mcpAvail.length" class="pick-empty">暂无已启用的 MCP Server，请先在侧边栏「MCP 连接」中添加并启用</div>
-        <div v-for="n in mcpPageItems" :key="n" class="pick-row" :class="{ on: mcpPick.includes(n) }" :title="mcpPick.includes(n) ? `移除 ${n}` : `启用 ${n}`" @click="toggleMcp(n)">
-          <span class="pick-box" :class="{ checked: mcpPick.includes(n) }">
-            <svg v-if="mcpPick.includes(n)" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-          </span>
-          <span class="pick-row-name">{{ n }}</span>
-          <span class="pick-row-tag" :class="mcpPick.includes(n) ? 'on' : ''">{{ mcpPick.includes(n) ? '本会话已选' : '点击选择' }}</span>
-        </div>
-      </div>
-      <div class="pick-page">
-        <n-button size="small" quaternary :disabled="mcpPage <= 1" @click="mcpPage--">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
-          上一页
-        </n-button>
-        <span class="pick-page-info">{{ mcpPage }} / {{ mcpTotal }}</span>
-        <n-button size="small" quaternary :disabled="mcpPage >= mcpTotal" @click="mcpPage++">
-          下一页
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
-        </n-button>
-      </div>
-      <div class="pick-selected">
-        <span class="pick-sel-label">已选 {{ mcpPick.length }} 项</span>
-        <div class="pick-chips">
-          <span v-for="n in mcpPick" :key="n" class="pick-chip" :title="`移除 ${n}`" @click="toggleMcp(n)">{{ n }} ✕</span>
-          <span v-if="!mcpPick.length" class="pick-chip-empty">未选择（本会话不加载 MCP，默认加载全部已启用）</span>
-        </div>
+      <div class="picker-desc">未作选择时默认加载你<em>全部已启用</em>的 MCP；把 Server 移到右侧后，本会话只加载选中的（可随时「恢复默认」）。</div>
+      <n-transfer v-model:value="mcpPick" :options="mcpTransferOptions" source-filterable source-title="可选 MCP Server" target-title="本会话已选" class="picker-transfer" />
+      <div v-if="mcpUnpicked.length > MCP_PAGE_SIZE" class="picker-pager">
+        <n-pagination :page="mcpPage" :page-count="mcpPageCount" size="small" @update:page="mcpPage = $event" />
       </div>
     </div>
     <div class="sp-actions">
@@ -1309,7 +1230,7 @@ const virtualItems = computed<VirtualListItem[]>(() => {
   display: flex; align-items: center; justify-content: center;
   box-shadow: 0 6px 18px rgba(0,0,0,.10);
 }
-.picker-ico-skill { background: linear-gradient(135deg,#7c5cff,#a78bfa); color: #fff; }
+.picker-ico-skill { background: linear-gradient(135deg,#4a4d55,#2a2c31); color: #fff; }
 .picker-ico-mcp { background: linear-gradient(135deg,#0ea5e9,#38bdf8); color: #fff; }
 .picker-head-text { flex: 1; min-width: 0; }
 .picker-title { font-size: 17px; font-weight: 700; color: var(--text); line-height: 1.3; }
@@ -1317,6 +1238,10 @@ const virtualItems = computed<VirtualListItem[]>(() => {
 .picker-count { font-size: 12px; }
 
 .picker-body { padding: 4px 2px 2px; }
+/* 穿梭框选择:加高列表,分页条置底 */
+.picker-body :deep(.n-transfer-list) { height: 300px; }
+.picker-body :deep(.n-transfer-list-header__title) { font-size: 13px; font-weight: 600; }
+.picker-pager { display: flex; justify-content: flex-end; padding: 10px 2px 0; }
 .picker-desc {
   font-size: 13px; color: var(--text-2); line-height: 1.7;
   background: var(--surface-hover); border: 1px solid var(--border-soft);
@@ -1341,21 +1266,21 @@ const virtualItems = computed<VirtualListItem[]>(() => {
 }
 .pick-row:last-child { border-bottom: none; }
 .pick-row:hover { background: var(--surface-hover); }
-.pick-row.on { background: rgba(139,92,246,.08); }
+.pick-row.on { background: var(--fill-0); }
 .pick-box {
   flex-shrink: 0; width: 22px; height: 22px; border-radius: 7px;
   display: flex; align-items: center; justify-content: center;
   border: 2px solid var(--border-2); background: var(--bg);
   transition: all .15s;
 }
-.pick-box.checked { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pick-box.checked { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
 .pick-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .pick-row-tag {
   flex-shrink: 0; font-size: 12px; font-weight: 600;
   padding: 3px 10px; border-radius: 8px;
   background: var(--surface-hover); color: var(--text-3);
 }
-.pick-row-tag.on { background: rgba(139,92,246,.14); color: var(--accent); }
+.pick-row-tag.on { background: var(--fill-1); color: var(--accent-text); }
 .pick-page {
   display: flex; align-items: center; justify-content: center; gap: 16px;
   margin-top: 12px;
@@ -1370,13 +1295,13 @@ const virtualItems = computed<VirtualListItem[]>(() => {
 .pick-chips { display: flex; flex-wrap: wrap; gap: 8px; flex: 1; min-width: 0; }
 .pick-chip {
   display: inline-flex; align-items: center; gap: 5px;
-  font-size: 13px; background: rgba(139,92,246,.14); color: var(--accent);
-  border: 1px solid rgba(139,92,246,.35); border-radius: 8px;
+  font-size: 13px; background: var(--fill-1); color: var(--accent-text);
+  border: 1px solid var(--border); border-radius: 8px;
   padding: 4px 10px; cursor: pointer; user-select: none;
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   transition: background .15s;
 }
-.pick-chip:hover { background: rgba(139,92,246,.22); }
+.pick-chip:hover { background: var(--fill-2); }
 .pick-chip-empty { font-size: 13px; color: var(--text-3); }
 
 .sp-actions {
@@ -1396,7 +1321,7 @@ const virtualItems = computed<VirtualListItem[]>(() => {
 .us-main { min-width: 0; flex: 1; }
 .us-name { font-size: 13px; font-weight: 600; color: var(--text); margin-right: 6px; }
 .us-tag { font-size: 11px; padding: 1px 6px; border-radius: 8px; margin-right: 6px; }
-.us-tag.pub { background: rgba(139,92,246,.14); color: var(--accent); }
+.us-tag.pub { background: var(--fill-1); color: var(--accent-text); }
 .us-tag.pri { background: var(--surface-hover); color: var(--text-3); }
 .us-tag.own { background: rgba(88,196,155,.12); color: var(--ok); }
 .us-tag.inst { background: #f59e0b22; color: #f59e0b; }
@@ -1540,31 +1465,37 @@ const virtualItems = computed<VirtualListItem[]>(() => {
 .ws-launcher .n-button { margin-right: 2px; }
 .ws-launcher .n-button svg { margin-right: 4px; }
 
-/* 已打开标签栏:类似编辑器标签,可关闭 */
+/* 已打开标签栏:分段胶囊风格,可关闭 */
 .ws-tabbar {
-  display: flex; gap: 2px;
-  padding: 6px 8px 0;
-  border-bottom: 1px solid var(--border-soft);
+  display: flex; gap: 4px;
+  padding: 8px 10px 0;
   overflow-x: auto;
 }
 .ws-tab {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 4px 8px; border-radius: 6px 6px 0 0;
-  font-size: 12px; color: var(--text-2);
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 10px; border-radius: 8px;
+  font-size: 12.5px; color: var(--text-2);
   cursor: pointer; white-space: nowrap;
-  border: 1px solid transparent; border-bottom: none;
+  transition: background .12s, color .12s;
 }
-.ws-tab:hover { background: var(--surface-hover); }
+.ws-tab:hover { background: var(--surface-hover); color: var(--text); }
 .ws-tab.active {
-  color: var(--accent); background: var(--surface);
-  border-color: var(--border-soft);
+  color: var(--accent-text); background: var(--accent-soft);
+  font-weight: 600;
 }
 .ws-tab-close {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 14px; height: 14px; border-radius: 50%;
+  width: 15px; height: 15px; border-radius: 50%;
   color: var(--text-3);
+  opacity: 0; transition: opacity .12s, background .12s;
 }
-.ws-tab-close:hover { background: var(--border-soft); color: var(--text); }
+.ws-tab:hover .ws-tab-close, .ws-tab.active .ws-tab-close { opacity: .7; }
+.ws-tab-close:hover { opacity: 1 !important; background: var(--border-soft); color: var(--text); }
+
+/* 触屏:关闭按钮常显(hover 不生效) */
+@media (hover: none) {
+  .ws-tab-close { opacity: .7; }
+}
 
 .workspace-tabs { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 8px 12px; }
 /* 浏览器标签全区域展示:去掉内边距与滚动,画布铺满整个面板 */

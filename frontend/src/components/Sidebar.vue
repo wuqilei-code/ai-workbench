@@ -337,7 +337,7 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
       </div>
       <div class="nav-item" @click="emit('open-mcp')">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
-        <span>MCP 连接</span>
+        <span>工具库</span>
       </div>
     </div>
 
@@ -472,15 +472,15 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px; height: 28px;
-  border-radius: 6px;
+  width: var(--control-h); height: var(--control-h);
+  border-radius: var(--radius-sm);
   margin-right: 2px;
   flex-shrink: 0;
   cursor: pointer;
   color: var(--text-3);
-  transition: color .15s, background .15s;
+  transition: color var(--motion-fast) var(--ease-standard), background-color var(--motion-fast) var(--ease-standard);
 }
-.mode-toggle:hover { color: var(--accent); background: var(--surface-hover); }
+.mode-toggle:hover { color: var(--accent); background: var(--fill-0); }
 .mode-tab {
   display: flex;
   align-items: center;
@@ -488,12 +488,12 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
   font-size: 13px;
   color: var(--text-3);
   padding: 6px 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
 }
 .mode-tab:hover {
-  background: var(--surface-hover);
+  background: var(--fill-0);
   color: var(--text-2);
 }
 .mode-tab.active {
@@ -512,17 +512,17 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
   padding: 10px 12px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  color: var(--text-2);
+  color: var(--text);
   font-size: 14px;
-  transition: all 0.15s;
+  transition: background-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
 }
 .nav-item:hover {
-  background: var(--surface-hover);
-  color: var(--text);
+  background: var(--fill-0);
+  color: var(--accent-text);
 }
 .nav-item svg {
   flex-shrink: 0;
-  opacity: 0.7;
+  opacity: 0.85;
 }
 .session-section {
   flex: 1;
@@ -537,11 +537,9 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
   padding: 12px 16px 8px;
 }
 .section-title {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
   color: var(--text-3);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 .list-tabs {
   display: flex;
@@ -554,10 +552,10 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
   padding: 4px 10px;
   border-radius: 12px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
 }
 .list-tabs .tab:hover {
-  background: var(--surface-hover);
+  background: var(--fill-0);
   color: var(--text-2);
 }
 .list-tabs .tab.active {
@@ -615,29 +613,21 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
   cursor: pointer;
   margin-bottom: 2px;
   position: relative;
-  transition: all 0.15s;
+  transition: background-color var(--motion-fast) var(--ease-standard);
 }
 .session-item:hover {
-  background: var(--surface-hover);
+  background: var(--fill-0);
 }
+/* Semi 规范:按下态用 fill 阶梯,不做 scale 形变 */
 .session-item:active {
-  transform: scale(0.99);
+  background: var(--fill-1);
 }
 .session-item.active {
   background: var(--accent-soft);
 }
-.session-item.active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 20%;
-  bottom: 20%;
-  width: 3px;
-  border-radius: 2px;
-  background: var(--accent);
-}
 .session-item.active .title {
-  color: var(--accent);
+  color: var(--text);
+  font-weight: 500;
 }
 .session-item .title {
   overflow: hidden;
@@ -645,23 +635,21 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
   white-space: nowrap;
   flex: 1;
   min-width: 0;
-  color: var(--text-2);
-  font-size: 13px;
+  color: var(--text);
+  font-size: 14px;
 }
 .search-box {
   padding: 0 16px 8px;
 }
 .group-header {
   padding: 8px 12px 4px;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--text-3);
-  letter-spacing: 0.3px;
-  text-transform: uppercase;
 }
 .item-time {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-3);
   transition: opacity 0.15s;
 }
@@ -706,10 +694,10 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
   color: var(--text-3);
   cursor: pointer;
   padding: 0;
-  transition: all 0.15s;
+  transition: background-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
 }
 .op-btn:hover {
-  background: var(--surface);
+  background: var(--fill-1);
   color: var(--accent);
 }
 </style>

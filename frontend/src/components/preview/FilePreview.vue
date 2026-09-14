@@ -226,7 +226,7 @@ onBeforeUnmount(() => {
   width: 28px; height: 28px;
   display: flex; align-items: center; justify-content: center;
   border-radius: 8px; font-size: 15px; flex-shrink: 0;
-  background: var(--accent-soft, rgba(139,92,246,0.12));
+  background: var(--accent-soft, rgba(0,0,0,0.06));
 }
 .fp-name-col {
   display: flex; flex-direction: column; gap: 1px; min-width: 0;
@@ -239,8 +239,8 @@ onBeforeUnmount(() => {
   display: flex; gap: 8px; font-size: 11px; color: var(--text-3);
 }
 .fp-lang {
-  background: var(--accent-soft, rgba(139,92,246,0.12));
-  color: var(--accent-text, #A78BFA);
+  background: var(--accent-soft, rgba(0,0,0,0.06));
+  color: var(--accent-text, #17181c);
   padding: 0 5px; border-radius: 3px; font-size: 10px;
 }
 .fp-spacer { flex: 1; }

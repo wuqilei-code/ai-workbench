@@ -239,13 +239,13 @@ async function submitEdit() {
   margin-top: 1px;
 }
 .msg.user .avatar {
-  background: var(--surface);
-  color: var(--text-2);
+  background: var(--accent-soft);
+  color: var(--accent-text);
   border: 1px solid var(--border-soft);
 }
 .msg.assistant .avatar {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-contrast);
 }
 /* Trae 风格:assistant 回答不带头像/作者行,与多步时间线一致 */
 .msg.assistant .avatar { display: none; }
@@ -284,8 +284,15 @@ async function submitEdit() {
 .msg.assistant .content-area { max-width: 96%; }
 .content-area.card {
   background: var(--user-bubble-bg);
-  border-radius: 12px;
-  padding: 10px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 16px 16px 4px 16px;
+  padding: 11px 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  transition: background var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard);
+}
+.msg.user .content-area.card:hover {
+  border-color: var(--border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
 .content { font-size: 14px; line-height: 1.8; letter-spacing: 0.01em; color: var(--text); }
 .edit-box {
@@ -316,7 +323,7 @@ async function submitEdit() {
   background: var(--accent-soft); color: var(--accent);
   border: 1px solid var(--border); text-decoration: none; font-size: 13px;
 }
-.content :deep(a.preview-link:hover) { background: var(--accent); color: #fff; }
+.content :deep(a.preview-link:hover) { background: var(--accent); color: var(--accent-contrast); }
 .content :deep(pre.hljs) { background: var(--code-bg); border-radius: var(--radius-sm); padding: 12px; overflow-x: auto; }
 .content :deep(code) { font-family: ui-monospace, monospace; font-size: 13px; }
 .content :deep(pre code) { background: none; }
@@ -369,15 +376,15 @@ async function submitEdit() {
   text-decoration: none; max-width: 220px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
-.att-link:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.att-link:hover { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
 .att-link.busy { opacity: .55; pointer-events: none; }
 
 /* 消息中的技能标签(内联) */
 :deep(.skill-tag-inline) {
   display: inline-flex; align-items: center; gap: 4px;
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.12), rgba(139, 92, 246, 0.12));
-  color: var(--accent);
-  border: 1px solid rgba(139, 92, 246, 0.35);
+  background: var(--fill-1);
+  color: var(--accent-text);
+  border: 1px solid var(--border);
   font-size: 12px; font-weight: 600;
   padding: 2px 8px; border-radius: 6px;
   vertical-align: middle; margin: 0 2px;

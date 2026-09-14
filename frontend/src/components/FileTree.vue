@@ -304,7 +304,7 @@ function fmtTime(ts: number): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-/** 创建日期:今天显示 时:分,今年显示 月-日,更早显示 年-月-日 */
+/** 创建日期:今天显示 时:分,昨天显示「昨天」,今年显示 月-日,更早显示 年-月-日 */
 function fmtDate(ts: number): string {
   if (!ts) return ''
   const d = new Date(ts)
@@ -312,6 +312,10 @@ function fmtDate(ts: number): string {
   const p = (n: number) => String(n).padStart(2, '0')
   const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()
   if (sameDay) return `${p(d.getHours())}:${p(d.getMinutes())}`
+  const yest = new Date(now)
+  yest.setDate(now.getDate() - 1)
+  const isYesterday = d.getFullYear() === yest.getFullYear() && d.getMonth() === yest.getMonth() && d.getDate() === yest.getDate()
+  if (isYesterday) return '昨天'
   if (d.getFullYear() === now.getFullYear()) return `${p(d.getMonth() + 1)}-${p(d.getDate())}`
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
@@ -376,14 +380,34 @@ function onSearchInput() {
   }, 300)
 }
 
-/** 实际展示的节点:搜索模式用结果,否则用当前目录;过滤 excludeNames 黑名单顶层项 */
+/** 实际展示的节点:搜索模式用结果,否则用当前目录(目录优先,目录按名,文件按创建时间倒序);过滤 excludeNames 黑名单顶层项 */
+const sortedNodes = computed<FileNode[]>(() => {
+  const list = [...nodes.value]
+  list.sort((a, b) => {
+    if (a.directory !== b.directory) return a.directory ? -1 : 1
+    if (a.directory) return a.name.localeCompare(b.name)
+    return (b.created || 0) - (a.created || 0)
+  })
+  return list
+})
 const displayNodes = computed<FileNode[]>(() => {
-  const list = searchResults.value ?? nodes.value
+  const list = searchResults.value ?? sortedNodes.value
   const exclude = props.excludeNames
   if (!exclude || exclude.length === 0) return list
   return list.filter((n) => !exclude.includes(n.name))
 })
 const isSearchMode = computed(() => searchResults.value !== null)
+
+/** 工具栏「+」下拉:skillsMode 追加新建技能 */
+const createOptions = computed(() => {
+  const opts = [{ key: 'file', label: '新建文件' }, { key: 'dir', label: '新建目录' }]
+  return props.skillsMode ? [{ key: 'skill', label: '新建技能' }, { type: 'divider', key: 'd1' }, ...opts] : opts
+})
+function onCreateSelect(key: string | number) {
+  if (key === 'skill') createSkill()
+  else if (key === 'dir') createDir()
+  else createFile()
+}
 
 /** 当前目录内可预览文件(非目录),供 ←/→ 翻页;当前选中文件在首或尾时禁用对应方向 */
 const previewList = computed(() => displayNodes.value.filter((n) => !n.directory))
@@ -475,12 +499,22 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="file-tree">
-    <div class="actions">
-      <n-button v-if="skillsMode" size="tiny" type="primary" @click="createSkill">新建技能</n-button>
-      <n-button size="tiny" @click="up" :disabled="!currentPath">上级</n-button>
-      <n-button size="tiny" @click="createFile">新建文件</n-button>
-      <n-button size="tiny" @click="createDir">新建目录</n-button>
-      <n-button size="tiny" type="info" :loading="uploading" @click="triggerUpload">上传</n-button>
+    <div class="toolbar">
+      <button class="tb-btn" :disabled="!currentPath" title="上级目录" @click="up">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+      </button>
+      <div class="crumb" :title="isSearchMode ? `搜索:${searchQuery}` : displayPath">
+        <template v-if="isSearchMode">搜索「{{ searchQuery }}」· {{ displayNodes.length }} 个结果</template>
+        <template v-else>{{ displayPath }}</template>
+      </div>
+      <n-dropdown trigger="click" :options="createOptions" @select="onCreateSelect">
+        <button class="tb-btn" title="新建">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </n-dropdown>
+      <button class="tb-btn" :class="{ busy: uploading }" title="上传文件" @click="triggerUpload">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      </button>
       <input ref="fileInput" type="file" multiple class="hidden-input" @change="handleUpload" />
     </div>
     <n-input
@@ -495,17 +529,16 @@ onBeforeUnmount(() => {
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       </template>
     </n-input>
-    <div class="path">{{ isSearchMode ? `搜索结果 (${displayNodes.length})` : displayPath }}</div>
     <div v-if="skillsMode" class="hint">
       技能 = 目录 + <code>SKILL.md</code>;进入技能目录后可「新建目录/新建文件/上传」添加脚本等扩展,智能体经 bash 工具按相对路径执行。
     </div>
     <n-spin :show="loading || searching">
-      <div v-for="n in displayNodes" :key="n.path" class="node">
+      <div v-for="n in displayNodes" :key="n.path" class="node" :class="{ 'ai-changed': isAiChanged(n), selected: selectedFile === n.path }">
         <div class="node-main" @click="open(n)" @contextmenu="onContextMenu(n, $event)">
           <span class="node-icon">
             <template v-if="skillDisplay(n)">{{ skillDisplay(n)!.icon }}</template>
-            <svg v-else-if="n.directory" class="dir-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
-            <svg v-else class="file-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
+            <svg v-else-if="n.directory" class="dir-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+            <svg v-else class="file-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
           </span>
           <span v-if="isAiChanged(n)" class="ai-mark" title="本轮 AI 改动">✦</span>
           <span class="node-name" :class="{ dir: n.directory }" :title="skillDisplay(n) ? `${skillDisplay(n)!.title} (${n.name})` : n.name">{{ skillDisplay(n) ? skillDisplay(n)!.title : n.name }}</span>
@@ -605,26 +638,57 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .file-tree { display: flex; flex-direction: column; height: 100%; }
-.actions { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
-.hidden-input { display: none; }
-.path {
-  font-size: 12px; color: var(--text-3); margin-bottom: 8px;
-  font-family: ui-monospace, monospace; word-break: break-all;
+
+/* 工具行:上级 + 路径 + 新建下拉 + 上传 */
+.toolbar {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 8px; padding: 3px;
+  background: var(--surface-hover); border: 1px solid var(--border-soft);
+  border-radius: 10px;
 }
+.tb-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0; flex-shrink: 0;
+  background: transparent; border: none; border-radius: 7px;
+  color: var(--text-2); cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.tb-btn:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent-text); }
+.tb-btn:disabled { opacity: .35; cursor: default; }
+.tb-btn.busy { animation: tb-spin 1s linear infinite; }
+@keyframes tb-spin { to { transform: rotate(360deg); } }
+.crumb {
+  flex: 1; min-width: 0;
+  font-size: 12px; color: var(--text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 0 2px;
+}
+.hidden-input { display: none; }
 .hint {
-  font-size: 12px; color: var(--text-3); line-height: 1.5; margin-bottom: 8px;
+  font-size: 12px; color: var(--text-3); line-height: 1.5; margin: 8px 0;
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px 8px;
 }
 .hint code { color: var(--accent-text); font-family: ui-monospace, monospace; }
+
+/* 文件行 */
 .node {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 4px 6px; border-radius: 8px; gap: 6px;
+  padding: 6px 8px; border-radius: 8px; gap: 6px;
   position: relative;
+  transition: background .12s;
 }
 .node:hover { background: var(--surface-hover); }
+.node.selected .node-main { background: var(--accent-soft); border-radius: 6px; }
+.node.selected .node-main .node-name { color: var(--accent-text); font-weight: 600; }
+/* AI 改动:行左侧高亮竖条 */
+.node.ai-changed::before {
+  content: ''; position: absolute; left: -1px; top: 7px; bottom: 7px;
+  width: 2px; border-radius: 2px; background: var(--warn);
+}
 .node-main {
-  display: flex; align-items: center; gap: 6px;
-  cursor: pointer; flex: 1; min-width: 0; padding: 2px 4px;
+  display: flex; align-items: center; gap: 7px;
+  cursor: pointer; flex: 1; min-width: 0; padding: 2px 5px;
+  border-radius: 6px;
 }
 .node-icon { flex-shrink: 0; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; }
 .node-icon .dir-icon { color: var(--accent); }
@@ -633,8 +697,12 @@ onBeforeUnmount(() => {
 .ai-mark { color: var(--warn); font-size: 11px; flex-shrink: 0; }
 .node-name.dir { font-weight: 600; }
 .node-size { color: var(--text-3); font-size: 11px; flex-shrink: 0; margin-left: auto; }
-.node-date { color: var(--text-3); font-size: 11px; opacity: .7; flex-shrink: 0; white-space: nowrap; }
-.node-ops { display: flex; gap: 2px; flex-shrink: 0; }
+.node-date { color: var(--text-3); font-size: 11px; flex-shrink: 0; white-space: nowrap; min-width: 34px; text-align: right; }
+.node-ops {
+  display: flex; gap: 2px; flex-shrink: 0;
+  opacity: 0; transition: opacity .12s;
+}
+.node:hover .node-ops, .node-ops:focus-within { opacity: 1; }
 .op-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 22px; height: 22px; padding: 0;
@@ -647,6 +715,10 @@ onBeforeUnmount(() => {
 .node-sub { color: var(--accent-text); font-size: 11px; font-family: ui-monospace, monospace; flex-shrink: 0; margin-left: auto; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .skill-sub { color: var(--text-3); font-size: 11px; font-family: ui-monospace, monospace; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* 触屏:操作按钮常显(hover 不生效) */
+@media (hover: none) {
+  .node-ops { opacity: 1; }
+}
 </style>
 
 <style>
@@ -692,7 +764,7 @@ onBeforeUnmount(() => {
   width: 30px; height: 30px;
   display: flex; align-items: center; justify-content: center;
   border-radius: 8px;
-  background: var(--accent-soft, rgba(139,92,246,0.12));
+  background: var(--accent-soft, rgba(255,255,255,0.1));
   flex-shrink: 0;
 }
 .fp-modal .n-card__content {
@@ -742,8 +814,8 @@ onBeforeUnmount(() => {
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
 .fp-nav:hover {
-  background: var(--accent, #8B5CF6);
-  color: #fff;
+  background: var(--accent, #e8eaed);
+  color: var(--accent-contrast, #17181c);
   transform: translateY(-50%) scale(1.1);
 }
 .fp-nav--left { left: 10px; }

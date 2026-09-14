@@ -1016,7 +1016,7 @@ function stepHtml(step: Step): string {
 .turn-logo {
   width: 22px; height: 22px; border-radius: 6px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  background: var(--accent); color: #fff;
+  background: var(--accent); color: var(--accent-contrast);
 }
 .turn-name { font-size: 13px; font-weight: 600; color: var(--text); }
 .msg-time { font-size: 11px; color: var(--text-3); }
@@ -1346,16 +1346,16 @@ function stepHtml(step: Step): string {
   background: var(--surface, #fff); cursor: pointer;
   transition: all 0.15s ease; flex: 1 1 calc(50% - 4px); min-width: 140px;
 }
-.perm-option-card:hover { border-color: var(--accent, #8b5cf6); background: var(--surface-hover, #f5f5f5); }
-.perm-option-card.selected { border-color: var(--accent, #8b5cf6); background: rgba(139, 92, 246, 0.06); }
+.perm-option-card:hover { border-color: var(--accent); background: var(--fill-0); }
+.perm-option-card.selected { border-color: var(--accent); background: var(--fill-0); }
 .perm-option-check { flex-shrink: 0; }
 .perm-checkbox {
   width: 16px; height: 16px; border-radius: 4px;
   border: 1.5px solid var(--border-soft, #c0c0c8);
   display: flex; align-items: center; justify-content: center;
-  transition: all 0.15s ease; color: #fff;
+  transition: all 0.15s ease; color: var(--accent-contrast, #fff);
 }
-.perm-checkbox.checked { background: var(--accent, #8b5cf6); border-color: var(--accent, #8b5cf6); }
+.perm-checkbox.checked { background: var(--accent); border-color: var(--accent); }
 .perm-checkbox svg { width: 11px; height: 11px; }
 .perm-radio {
   width: 16px; height: 16px; border-radius: 50%;
@@ -1363,12 +1363,12 @@ function stepHtml(step: Step): string {
   display: flex; align-items: center; justify-content: center;
   transition: all 0.15s ease;
 }
-.perm-radio.checked { border-color: var(--accent, #8b5cf6); }
-.perm-radio-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent, #8b5cf6); }
+.perm-radio.checked { border-color: var(--accent); }
+.perm-radio-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
 .perm-option-text { font-size: 14px; color: var(--text-1); line-height: 1.4; }
 .perm-other-input { margin-top: 8px; width: 100%; }
-.permission-block { border-color: rgba(139, 92, 246, 0.3); }
-.permission-block .pending-block-header { background: rgba(139, 92, 246, 0.08); color: var(--accent); }
+.permission-block { border-color: var(--border); }
+.permission-block .pending-block-header { background: var(--fill-0); color: var(--accent-text); }
 
 .question-item {
   margin-bottom: 14px;

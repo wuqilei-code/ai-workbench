@@ -10,18 +10,19 @@ const isDark = computed(() => theme.mode === 'dark')
 /** 暗色主题覆盖:柔和现代暗色(低饱和靛蓝主色、大圆角、细腻边框) */
 const darkOverrides: GlobalThemeOverrides = {
   common: {
-    primaryColor: '#8B5CF6',
-    primaryColorHover: '#A78BFA',
-    primaryColorPressed: '#7C3AED',
-    primaryColorSuppl: '#8B5CF6',
-    infoColor: '#8B5CF6',
+    primaryColor: '#5B78FF',
+    primaryColorHover: '#7490FF',
+    primaryColorPressed: '#4059E6',
+    primaryColorSuppl: '#5B78FF',
+    infoColor: '#9BA1AA',
     successColor: '#10B981',
     warningColor: '#F59E0B',
     errorColor: '#EF4444',
-    borderRadius: '8px',
-    borderRadiusSmall: '6px',
+    borderRadius: '6px',
+    borderRadiusSmall: '4px',
+    fontWeightStrong: '600',
     fontSize: '14px',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Roboto, "Helvetica Neue", Arial, sans-serif',
     bodyColor: '#14161a',
     cardColor: '#1d2026',
     modalColor: '#1d2026',
@@ -43,23 +44,34 @@ const darkOverrides: GlobalThemeOverrides = {
     iconColor: '#9aa1ab',
     iconColorHover: '#c6cad0',
   },
+  /* 暗色下 primary 是靛蓝,按钮/勾选等组件内的文字与符号用白色保证对比 */
+  Button: {
+    textColorPrimary: '#FFFFFF',
+    textColorHoverPrimary: '#FFFFFF',
+    textColorPressedPrimary: '#FFFFFF',
+    textColorFocusPrimary: '#FFFFFF',
+  },
+  Checkbox: { checkColor: '#FFFFFF' },
+  Radio: { dotColorActive: '#FFFFFF' },
+  Switch: { railColorActive: '#5B78FF', loadingColor: '#5B78FF' },
 }
 
 /** 浅色主题覆盖:同色系,亮背景、深色文字 */
 const lightOverrides: GlobalThemeOverrides = {
   common: {
-    primaryColor: '#8B5CF6',
-    primaryColorHover: '#7C3AED',
-    primaryColorPressed: '#6D28D9',
-    primaryColorSuppl: '#8B5CF6',
-    infoColor: '#8B5CF6',
+    primaryColor: '#3B5BFD',
+    primaryColorHover: '#2E49D9',
+    primaryColorPressed: '#2438B8',
+    primaryColorSuppl: '#3B5BFD',
+    infoColor: '#666666',
     successColor: '#10B981',
     warningColor: '#F59E0B',
     errorColor: '#EF4444',
-    borderRadius: '8px',
-    borderRadiusSmall: '6px',
+    borderRadius: '6px',
+    borderRadiusSmall: '4px',
+    fontWeightStrong: '600',
     fontSize: '14px',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Roboto, "Helvetica Neue", Arial, sans-serif',
     bodyColor: '#FFFFFF',
     cardColor: '#FFFFFF',
     modalColor: '#FFFFFF',
@@ -106,47 +118,61 @@ const lightOverrides: GlobalThemeOverrides = {
 /* 暗色(默认) */
 :root,
 :root[data-theme='dark'] {
-  --bg: #14161a;
-  --bg-elev: #1d2026;
-  --surface: #20242b;
-  --surface-hover: #262b33;
-  --card-bg: #2b3445;
+  --bg: #131316;
+  --bg-elev: #1a1b1e;
+  --surface: #1f2023;
+  --surface-hover: rgba(255, 255, 255, 0.06);
+  --card-bg: #26282d;
   --border: rgba(255, 255, 255, 0.09);
   --border-soft: rgba(255, 255, 255, 0.06);
   --text: #e8e9ec;
   --text-2: #aeb3bb;
   --text-3: #7c828c;
   --text-4: #5a6478;
-  --accent: #8B5CF6;
-  --accent-soft: rgba(139, 92, 246, 0.15);
-  --accent-text: #A78BFA;
+  /* 靛蓝强调:按钮/选中/链接,配白色对比字 */
+  --accent: #5b78ff;
+  --accent-soft: rgba(91, 120, 255, 0.14);
+  --accent-text: #93a8ff;
+  --accent-contrast: #ffffff;
   --ok: #58c49b;
   --warn: #e8b26b;
   --err: #e47a86;
   --radius: 8px;
   --radius-sm: 6px;
-  --shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
-  /* 氛围光晕(背景装饰) */
-  --glow-1: rgba(139, 92, 246, 0.10);
-  --glow-2: rgba(139, 92, 246, 0.06);
-  --sidebar-bg: #1d2026;
-  --chat-bg: #14161a;
-  --input-bg: #20242b;
+  --radius-xs: 4px;
+  --shadow: 0 0 1px rgba(255, 255, 255, 0.04), 0 6px 24px rgba(0, 0, 0, 0.4);
+  /* Semi 对齐:交互态 fill 阶梯(悬浮/激活/按下) */
+  --fill-0: rgba(255, 255, 255, 0.06);
+  --fill-1: rgba(255, 255, 255, 0.09);
+  --fill-2: rgba(255, 255, 255, 0.13);
+  /* Semi 对齐:动效(快速过渡 150ms + 标准缓动) */
+  --motion-fast: 150ms;
+  --motion-regular: 250ms;
+  --ease-standard: cubic-bezier(0.62, 0.05, 0.36, 0.95);
+  /* Semi 对齐:控件规格与聚焦外圈 */
+  --control-h: 32px;
+  --focus-ring: 0 0 0 2px var(--accent-soft);
+  /* 氛围光晕(背景装饰):中性白微光 */
+  --glow-1: rgba(255, 255, 255, 0.05);
+  --glow-2: rgba(255, 255, 255, 0.03);
+  --sidebar-bg: #1a1b1e;
+  --chat-bg: #131316;
+  --input-bg: #1f2023;
   --input-border: rgba(255, 255, 255, 0.12);
-  --user-bubble-bg: #2b3445;
-  --ai-bubble-bg: #20242b;
+  --user-bubble-bg: #252a33;
+  --ai-bubble-bg: #1f2023;
   --code-bg: #1e1e1e;
   /* 登录/注册页两版主题 */
-  --auth-bg: linear-gradient(150deg, #101218 0%, #161924 45%, #1b1e2e 100%);
+  --auth-bg: linear-gradient(150deg, #101013 0%, #15161a 45%, #1a1b20 100%);
   --auth-shell-bg: rgba(255, 255, 255, 0.035);
   --auth-shell-border: rgba(255, 255, 255, 0.08);
   --auth-shell-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
-  --auth-panel-bg: rgba(13, 15, 20, 0.45);
+  --auth-panel-bg: rgba(13, 14, 17, 0.45);
   --auth-panel-border: rgba(255, 255, 255, 0.06);
   --auth-card-bg: rgba(255, 255, 255, 0.04);
   --auth-card-border: rgba(255, 255, 255, 0.06);
-  --auth-glow-1: rgba(139, 92, 246, 0.16);
-  --auth-glow-2: rgba(139, 92, 246, 0.10);
+  --auth-glow-1: rgba(255, 255, 255, 0.08);
+  --auth-glow-2: rgba(255, 255, 255, 0.05);
   --auth-grid: rgba(255, 255, 255, 0.025);
 }
 
@@ -155,7 +181,7 @@ const lightOverrides: GlobalThemeOverrides = {
   --bg: #FFFFFF;
   --bg-elev: #FFFFFF;
   --surface: #FFFFFF;
-  --surface-hover: #f5f5f5;
+  --surface-hover: rgba(28, 31, 35, 0.05);
   --card-bg: #f5f5f5;
   --border: rgba(0, 0, 0, 0.08);
   --border-soft: rgba(0, 0, 0, 0.06);
@@ -163,35 +189,48 @@ const lightOverrides: GlobalThemeOverrides = {
   --text-2: #666666;
   --text-3: #999999;
   --text-4: #cccccc;
-  --accent: #8B5CF6;
-  --accent-soft: rgba(139, 92, 246, 0.08);
-  --accent-text: #7C3AED;
+  --accent: #3b5bfd;
+  --accent-soft: rgba(59, 91, 253, 0.08);
+  --accent-text: #2e49d9;
+  --accent-contrast: #ffffff;
   --ok: #10B981;
   --warn: #F59E0B;
   --err: #EF4444;
   --radius: 8px;
   --radius-sm: 6px;
-  --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  --glow-1: rgba(139, 92, 246, 0.04);
-  --glow-2: rgba(139, 92, 246, 0.02);
+  --radius-xs: 4px;
+  --shadow: 0 0 1px rgba(0, 0, 0, 0.3), 0 6px 24px rgba(0, 0, 0, 0.08);
+  /* Semi 对齐:交互态 fill 阶梯(悬浮/激活/按下) */
+  --fill-0: rgba(28, 31, 35, 0.05);
+  --fill-1: rgba(28, 31, 35, 0.08);
+  --fill-2: rgba(28, 31, 35, 0.12);
+  /* Semi 对齐:动效(快速过渡 150ms + 标准缓动) */
+  --motion-fast: 150ms;
+  --motion-regular: 250ms;
+  --ease-standard: cubic-bezier(0.62, 0.05, 0.36, 0.95);
+  /* Semi 对齐:控件规格与聚焦外圈 */
+  --control-h: 32px;
+  --focus-ring: 0 0 0 2px var(--accent-soft);
+  --glow-1: rgba(0, 0, 0, 0.03);
+  --glow-2: rgba(0, 0, 0, 0.02);
   --sidebar-bg: #f7f8fa;
   --chat-bg: #FFFFFF;
   --input-bg: #FFFFFF;
   --input-border: rgba(0, 0, 0, 0.12);
-  --user-bubble-bg: #f0f0f0;
+  --user-bubble-bg: #f1f2f6;
   --ai-bubble-bg: #f5f5f5;
   --code-bg: #f6f8fa;
   /* 登录/注册页两版主题 */
-  --auth-bg: linear-gradient(150deg, #f6f7fb 0%, #f1f2f9 45%, #eceef7 100%);
+  --auth-bg: linear-gradient(150deg, #f6f7f8 0%, #f2f3f5 45%, #eef0f2 100%);
   --auth-shell-bg: rgba(255, 255, 255, 0.75);
   --auth-shell-border: rgba(0, 0, 0, 0.08);
-  --auth-shell-shadow: 0 24px 80px rgba(80, 70, 120, 0.18);
+  --auth-shell-shadow: 0 24px 80px rgba(60, 60, 70, 0.18);
   --auth-panel-bg: rgba(255, 255, 255, 0.65);
   --auth-panel-border: rgba(0, 0, 0, 0.06);
   --auth-card-bg: rgba(255, 255, 255, 0.72);
   --auth-card-border: rgba(0, 0, 0, 0.06);
-  --auth-glow-1: rgba(139, 92, 246, 0.14);
-  --auth-glow-2: rgba(139, 92, 246, 0.08);
+  --auth-glow-1: rgba(0, 0, 0, 0.05);
+  --auth-glow-2: rgba(0, 0, 0, 0.03);
   --auth-grid: rgba(0, 0, 0, 0.04);
 }
 
@@ -202,7 +241,9 @@ html, body {
 body {
   margin: 0;
   background: var(--bg);
-  -webkit-font-smoothing: antialiased;
+  /* Semi 对齐:明确中文字体栈;基础字重 500,暗色底上笔画更饱满 */
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-weight: 500;
   text-rendering: optimizeLegibility;
 }
 
@@ -245,6 +286,13 @@ body {
 ::selection {
   background: var(--accent-soft);
   color: var(--text);
+}
+
+/* Semi 对齐:键盘导航聚焦外圈(2px,仅 focus-visible,不干扰鼠标点击) */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: var(--radius-xs);
 }
 
 /* ===== Markdown 代码块:深色底 + 右上角复制按钮 ===== */

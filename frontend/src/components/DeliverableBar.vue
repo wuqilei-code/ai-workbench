@@ -11,12 +11,12 @@ defineEmits<{
 
 /** 按扩展名给文件图标配色(与复制/刷新同款线框图标,用颜色区分类型) */
 const FILE_COLORS: Record<string, string> = {
-  pdf: '#E5484D', doc: '#3B82F6', docx: '#3B82F6', txt: '#6B7280', md: '#8B5CF6',
+  pdf: '#E5484D', doc: '#3B82F6', docx: '#3B82F6', txt: '#6B7280', md: '#64748B',
   ppt: '#F59E0B', pptx: '#F59E0B',
   xls: '#10B981', xlsx: '#10B981', csv: '#10B981',
   png: '#EC4899', jpg: '#EC4899', jpeg: '#EC4899', gif: '#EC4899', svg: '#EC4899', webp: '#EC4899',
   zip: '#F59E0B', gz: '#F59E0B', tar: '#F59E0B', '7z': '#F59E0B', rar: '#F59E0B',
-  json: '#8B5CF6', xml: '#8B5CF6', html: '#8B5CF6',
+  json: '#64748B', xml: '#64748B', html: '#64748B',
 }
 const DEFAULT_COLOR = '#6B7280'
 
@@ -74,9 +74,9 @@ function fileColor(name: string): string {
 .deliverable-bar {
   margin-top: 10px;
   max-width: 80%;
-  border: 1px solid rgba(88, 196, 155, 0.3);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: rgba(88, 196, 155, 0.05);
+  background: var(--surface);
   overflow: hidden;
 }
 .deliverable-header {
@@ -85,8 +85,9 @@ function fileColor(name: string): string {
   justify-content: space-between;
   gap: 8px;
   padding: 6px 12px;
-  background: rgba(88, 196, 155, 0.1);
-  color: var(--ok);
+  background: var(--fill-0);
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text-2);
   font-size: 13px;
   font-weight: 600;
 }
@@ -100,18 +101,19 @@ function fileColor(name: string): string {
   align-items: center;
   gap: 4px;
   padding: 3px 10px;
-  border: 1px solid rgba(88, 196, 155, 0.4);
+  border: 1px solid var(--border);
   border-radius: 6px;
   background: transparent;
-  color: var(--ok);
+  color: var(--text-2);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: background .12s, border-color .12s;
+  transition: background .12s, border-color .12s, color .12s;
 }
 .download-all-btn:hover {
-  background: rgba(88, 196, 155, 0.12);
-  border-color: rgba(88, 196, 155, 0.6);
+  background: var(--fill-1);
+  border-color: var(--fill-2);
+  color: var(--text);
 }
 .download-all-btn:disabled {
   opacity: .5;
@@ -143,7 +145,7 @@ function fileColor(name: string): string {
 }
 .deliverable-item:hover {
   background: var(--surface-hover);
-  border-color: rgba(88, 196, 155, 0.5);
+  border-color: var(--text-4);
 }
 .deliverable-icon { display: inline-flex; flex-shrink: 0; }
 .deliverable-name {
@@ -159,7 +161,7 @@ function fileColor(name: string): string {
   flex-shrink: 0;
   transition: color .12s;
 }
-.deliverable-item:hover .deliverable-action { color: var(--ok); }
+.deliverable-item:hover .deliverable-action { color: var(--accent); }
 .item-busy .deliverable-action { opacity: .6; }
 .deliverable-item.item-busy .deliverable-action.spin { animation: dl-pulse 1s ease-in-out infinite; }
 @keyframes dl-pulse { 0%,100% { opacity: .5; } 50% { opacity: 1; } }

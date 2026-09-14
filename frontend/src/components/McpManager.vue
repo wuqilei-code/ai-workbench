@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { mcpApi } from '@/api/mcp'
 import { useMessage } from 'naive-ui'
 import type { McpVo } from '@/types'
@@ -12,6 +12,34 @@ const msg = useMessage()
 const servers = ref<McpVo[]>([])
 const loading = ref(false)
 const rowBusy = ref<string | null>(null)
+
+/** 工具库两类 Tab：MCP Server / 接口工具，分别独立维护 */
+type TabType = 'remote' | 'manual'
+const activeTab = ref<TabType>('remote')
+
+const tabOptions: Array<{ label: string; value: TabType }> = [
+  { label: 'MCP Server', value: 'remote' },
+  { label: '接口工具', value: 'manual' },
+]
+
+function serverType(s: McpVo): TabType {
+  return s.type === 'manual' ? 'manual' : 'remote'
+}
+
+const filteredServers = computed(() => servers.value.filter((s) => serverType(s) === activeTab.value))
+
+const tabDesc: Record<TabType, string> = {
+  remote: '接入远程 MCP Server（HTTP/SSE），启用后其内置工具会出现在会话顶部「MCP」按钮中，按会话勾选即可使用。',
+  manual: '手动定义 HTTP 接口（支持 {变量} 模板与 AI 填充参数），每个接口变成一个 agent 工具；公共 Headers 调用时自动携带。',
+}
+
+// ---------- 分页 ----------
+const page = ref(1)
+const pageSize = 5
+const pageCount = computed(() => Math.max(1, Math.ceil(filteredServers.value.length / pageSize)))
+const pagedServers = computed(() => filteredServers.value.slice((page.value - 1) * pageSize, page.value * pageSize))
+watch(activeTab, () => { page.value = 1 })
+watch(() => filteredServers.value.length, (len) => { if (page.value > pageCount.value) page.value = pageCount.value })
 
 const showModal = ref(false)
 const editingId = ref<number | null>(null)
@@ -28,18 +56,6 @@ interface ManualRow {
 }
 const manualRows = ref<ManualRow[]>([])
 const methodOptions = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'].map((m) => ({ label: m, value: m }))
-
-const typeOptions: Array<{ label: string; value: FormType }> = [
-  { label: 'MCP Server（远程 HTTP/SSE）', value: 'remote' },
-  { label: 'OpenAPI 接口组（文档批量转）', value: 'openapi' },
-  { label: '手动接口组（无 Swagger）', value: 'manual' },
-]
-
-function typeLabel(t?: string | null): string {
-  if (t === 'openapi') return 'OpenAPI 接口'
-  if (t === 'manual') return '手动接口'
-  return 'MCP Server'
-}
 
 // ---------- 接口编辑弹窗 ----------
 const ifaceModal = ref(false)
@@ -184,7 +200,7 @@ watch(() => props.show, async (v) => {
 })
 
 function openCreate() {
-  form.value = { name: '', type: 'remote', url: '', headers: '', enabled: 1 }
+  form.value = { name: '', type: activeTab.value, url: '', headers: '', enabled: 1 }
   manualRows.value = []
   editingId.value = null
   showModal.value = true
@@ -278,34 +294,43 @@ function manualCount(s: McpVo): number {
 </script>
 
 <template>
-  <n-modal :show="show" @update:show="emit('update:show', $event)" preset="card" title="MCP 连接管理" style="width: 780px; max-width: 96vw">
-    <div class="mcp-desc">
-      管理你个人的 MCP Server / OpenAPI 接口组 / 手动接口组。开启后，对应工具会出现在会话顶部「MCP」按钮中，按会话勾选即可使用。
-    </div>
+  <n-modal :show="show" @update:show="emit('update:show', $event)" preset="card" title="工具库" style="width: 780px">
+    <n-tabs v-model:value="activeTab" type="segment" size="small" animated>
+      <n-tab v-for="t in tabOptions" :key="t.value" :name="t.value">
+        <span>{{ t.label }}</span>
+        <span class="tab-count">{{ servers.filter((s) => serverType(s) === t.value).length }}</span>
+      </n-tab>
+    </n-tabs>
+
+    <div class="mcp-desc">{{ tabDesc[activeTab] }}</div>
 
     <div class="mng-head">
-      <span class="mng-title">已配置（{{ servers.length }}）</span>
+      <span class="mng-title">已配置（{{ filteredServers.length }}）</span>
       <n-button type="primary" size="small" dashed @click="openCreate">+ 添加</n-button>
     </div>
 
-    <n-spin :show="loading">
-      <div v-if="!servers.length && !loading" style="text-align: center; color: var(--text-4); padding: 20px 0; font-size: 13px;">暂无配置</div>
-      <div class="mcp-list">
-        <div class="mcp-card" v-for="s in servers" :key="s.id" style="padding: 14px 16px;">
-          <div class="meta" style="margin-bottom: 8px; align-items: center;">
-            <span style="font-weight: 700; font-size: 15px;">{{ s.name }}</span>
-            <n-tag size="small" :bordered="false" :type="s.type === 'openapi' ? 'info' : s.type === 'manual' ? 'warning' : 'success'" style="margin-left: 6px;">{{ typeLabel(s.type) }}</n-tag>
-            <n-tag size="small" :bordered="false" :type="s.enabled === 1 ? 'success' : 'default'" style="margin-left: 4px;">{{ s.enabled === 1 ? '已启用' : '已停用' }}</n-tag>
-          </div>
-          <div class="meta"><span class="label">URL</span><code class="url">{{ s.url || '—' }}</code></div>
-          <div class="meta"><span class="label">Headers</span><span class="headers">{{ headerPreview(s.headers) }}</span></div>
-          <div v-if="s.type === 'manual'" class="meta"><span class="label">接口</span><span class="headers">{{ manualCount(s) }} 个</span></div>
-          <div style="display: flex; gap: 6px; margin-top: 8px;">
-            <n-button size="tiny" quaternary @click="openEdit(s)">编辑</n-button>
-            <n-button size="tiny" quaternary :type="s.enabled === 1 ? 'warning' : 'success'" :loading="rowBusy === String(s.id)" @click="toggleServer(s)">{{ s.enabled === 1 ? '停用' : '启用' }}</n-button>
-            <n-button size="tiny" quaternary type="error" :loading="rowBusy === String(s.id)" @click="deleteServer(s)">删除</n-button>
+    <n-spin :show="loading" class="lib-spin">
+      <div class="lib-body">
+        <div v-if="!pagedServers.length && !loading" style="text-align: center; color: var(--text-4); padding: 20px 0; font-size: 13px;">暂无配置，点击右上角「+ 添加」创建</div>
+        <div class="mcp-list">
+          <div class="mcp-card" v-for="s in pagedServers" :key="s.id" style="padding: 14px 16px;">
+            <div class="meta" style="margin-bottom: 8px; align-items: center;">
+              <span style="font-weight: 700; font-size: 15px;">{{ s.name }}</span>
+              <n-tag size="small" :bordered="false" :type="s.enabled === 1 ? 'success' : 'default'" style="margin-left: 4px;">{{ s.enabled === 1 ? '已启用' : '已停用' }}</n-tag>
+            </div>
+            <div class="meta"><span class="label">URL</span><code class="url">{{ s.url || '—' }}</code></div>
+            <div class="meta"><span class="label">Headers</span><span class="headers">{{ headerPreview(s.headers) }}</span></div>
+            <div v-if="s.type === 'manual'" class="meta"><span class="label">接口</span><span class="headers">{{ manualCount(s) }} 个</span></div>
+            <div style="display: flex; gap: 6px; margin-top: 8px;">
+              <n-button size="tiny" quaternary @click="openEdit(s)">编辑</n-button>
+              <n-button size="tiny" quaternary :type="s.enabled === 1 ? 'warning' : 'success'" :loading="rowBusy === String(s.id)" @click="toggleServer(s)">{{ s.enabled === 1 ? '停用' : '启用' }}</n-button>
+              <n-button size="tiny" quaternary type="error" :loading="rowBusy === String(s.id)" @click="deleteServer(s)">删除</n-button>
+            </div>
           </div>
         </div>
+      </div>
+      <div v-if="filteredServers.length > pageSize" class="lib-pager">
+        <n-pagination :page="page" :page-size="pageSize" :item-count="filteredServers.length" :page-slot="5" @update:page="page = $event" />
       </div>
     </n-spin>
 
@@ -313,16 +338,13 @@ function manualCount(s: McpVo): number {
   </n-modal>
 
   <!-- 主表单弹窗 -->
-  <n-modal v-model:show="showModal" preset="card" :title="editingId != null ? '编辑连接' : '添加连接'" :style="form.type === 'manual' ? 'width: 820px; max-width: 96vw' : 'width: 600px; max-width: 94vw'" @update:show="showModal = $event">
+  <n-modal v-model:show="showModal" preset="card" :title="editingId != null ? '编辑连接' : '添加连接'" style="width: 780px" @update:show="showModal = $event">
     <n-form label-placement="top">
-      <n-form-item label="类型">
-        <n-select v-model:value="form.type" :options="typeOptions" />
-      </n-form-item>
       <n-form-item label="名称（小写 kebab-case，如 my-server/fetch）"><n-input v-model:value="form.name" placeholder="my-server" /></n-form-item>
-      <n-form-item v-if="form.type !== 'manual'" :label="form.type === 'openapi' ? 'OpenAPI/Swagger 文档 URL' : 'MCP 端点 URL（HTTP/SSE）'">
-        <n-input v-model:value="form.url" :placeholder="form.type === 'openapi' ? 'https://api.example.com/openapi.json' : 'https://mcp.example.com/mcp'" />
+      <n-form-item v-if="form.type !== 'manual'" label="MCP 端点 URL（HTTP/SSE）">
+        <n-input v-model:value="form.url" placeholder="https://mcp.example.com/mcp" />
       </n-form-item>
-      <n-form-item v-else label="接口组 Base URL（协议+主机+前缀）">
+      <n-form-item v-else label="接口工具 Base URL（协议+主机+前缀）">
         <n-input v-model:value="form.url" placeholder="https://api.example.com/v1" />
       </n-form-item>
       <n-form-item label="Headers（公共鉴权，可选，JSON）"><n-input v-model:value="form.headers" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" placeholder='{"Authorization":"Bearer xxx"}' /></n-form-item>
@@ -353,9 +375,6 @@ function manualCount(s: McpVo): number {
       </template>
 
       <n-form-item label="启用"><n-switch v-model:value="form.enabled" :checked-value="1" :unchecked-value="0" /></n-form-item>
-      <n-alert v-if="form.type === 'openapi'" type="info" :bordered="false" style="margin-bottom: 12px">
-        保存后，该 Swagger 文档里的每个接口都会变成一个可被 agent 调用的工具（工具名为「{{ form.name }}_接口名」）。
-      </n-alert>
       <n-alert v-if="form.type === 'manual'" type="info" :bordered="false" style="margin-bottom: 12px">
         路径支持 <code>{变量}</code> 模板，如 /orders/{id}；点「+ 添加接口」进入编辑弹窗，可使用 AI 自动填充参数。该组的公共 Headers 会在调用时自动带上。
       </n-alert>
@@ -406,7 +425,23 @@ function manualCount(s: McpVo): number {
 </template>
 
 <style scoped>
-.mcp-desc { font-size: 13px; color: var(--text-2); line-height: 1.7; background: var(--surface-hover); border: 1px solid var(--border-soft); border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; }
+/* segment tab:计数徽章(active 近白底上用半透明深色保证可读) */
+.tab-count {
+  margin-left: 6px; padding: 0 7px;
+  font-size: 11px; line-height: 17px;
+  border-radius: 9px;
+  background: var(--surface-hover);
+  color: var(--text-3);
+  transition: background .15s, color .15s;
+}
+.tab-count:first-child { margin-left: 0; }
+:deep(.n-tabs-tab--active) .tab-count { background: rgba(0, 0, 0, 0.1); color: var(--text-2); }
+:root[data-theme='dark'] .n-tabs-tab--active .tab-count { background: rgba(0, 0, 0, 0.14); color: var(--text-2); }
+
+.mcp-desc { font-size: 13px; color: var(--text-2); line-height: 1.7; background: var(--surface-hover); border: 1px solid var(--border-soft); border-radius: 10px; padding: 10px 14px; margin: 4px 0 16px; }
+/* 固定窗口高度:列表区滚动,分页固定底部 */
+.lib-body { height: 460px; overflow-y: auto; }
+.lib-pager { display: flex; justify-content: flex-end; padding-top: 12px; border-top: 1px solid var(--border-soft); margin-top: 12px; }
 .mng-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .mng-title { font-size: 14px; font-weight: 700; color: var(--text); }
 .mcp-list { display: flex; flex-direction: column; gap: 12px; }
@@ -423,7 +458,7 @@ function manualCount(s: McpVo): number {
 .me-title { font-size: 13px; font-weight: 600; color: var(--text-2); }
 .me-empty { font-size: 13px; color: var(--text-4); text-align: center; padding: 20px 0; border: 1px dashed var(--border-soft); border-radius: 10px; }
 .me-card { border: 1px solid var(--border-soft); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; background: var(--bg-elev); transition: border-color .15s; }
-.me-card:hover { border-color: var(--primary-color, #7c3aed); }
+.me-card:hover { border-color: var(--accent); }
 .me-card-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .me-card-path { font-family: var(--font-mono, monospace); font-size: 13px; color: var(--text); background: var(--surface-hover); border-radius: 4px; padding: 1px 6px; }
 .me-card-name { font-size: 13px; font-weight: 600; color: var(--text-2); }

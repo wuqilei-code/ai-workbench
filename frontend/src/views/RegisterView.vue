@@ -169,9 +169,9 @@ const features = [
 .logo-mark {
   width: 40px; height: 40px; border-radius: 12px;
   display: flex; align-items: center; justify-content: center;
-  background: linear-gradient(135deg, #8B5CF6, #6D28D9);
-  color: #fff;
-  box-shadow: 0 6px 18px rgba(139, 92, 246, 0.35);
+  background: linear-gradient(135deg, #F2F3F5, #C9CDD4);
+  color: #17181c;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }
 .brand-name {
   font-size: 20px; font-weight: 700; color: var(--text);
@@ -200,8 +200,8 @@ const features = [
   transition: border-color .15s, background .15s, transform .15s;
 }
 .feature-card:hover {
-  border-color: rgba(139, 92, 246, 0.4);
-  background: rgba(139, 92, 246, 0.06);
+  border-color: var(--border);
+  background: var(--fill-0);
   transform: translateY(-2px);
 }
 .feature-icon { font-size: 18px; flex-shrink: 0; line-height: 1.4; }

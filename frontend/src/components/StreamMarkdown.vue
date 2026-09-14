@@ -57,5 +57,5 @@ function configureMarkdownIt(md: any) {
   font-size: 13px;
   line-height: 1.6;
 }
-.stream-md :deep(a.preview-link:hover) { background: var(--accent); color: #fff; }
+.stream-md :deep(a.preview-link:hover) { background: var(--accent); color: var(--accent-contrast); }
 </style>

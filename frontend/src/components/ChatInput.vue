@@ -174,11 +174,11 @@ function checkSlashState() {
   if (!slashMenuOpen.value) openSlashMenu()
 }
 
-/** 交由父级打开「生成文档」「解读报错」弹窗 / 触发测试分析 */
+/** 交由父级打开技能、MCP 选择器 / 触发测试分析 */
 const emit = defineEmits<{
-  (e: 'openDocGen'): void
-  (e: 'openErrorDiagnose'): void
   (e: 'openTestAnalysis'): void
+  (e: 'openSkills'): void
+  (e: 'openMcp'): void
 }>()
 
 /** 供欢迎页/模板库等外部注入:把提示词填入输入框并聚焦(不自动发送,便于用户补充)。 */
@@ -756,7 +756,7 @@ async function startNewChat() {
 
     <input ref="fileInputRef" type="file" multiple class="hidden-input" @change="onFileChange" />
 
-    <!-- 输入卡片:contenteditable + 发送按钮 -->
+    <!-- 输入卡片:contenteditable + 内嵌底部工具栏 -->
     <div class="input-card">
       <div
         ref="inputRef"
@@ -764,22 +764,76 @@ async function startNewChat() {
         contenteditable="true"
         :data-placeholder="chat.isStreaming
           ? (hasPending ? '上方有待答问题,作答后发送;或直接输入以继续…' : 'AI 正在处理中,可点「停止」中断…')
-          : '随便问点什么…'"
+          : '今天帮你做些什么? @ 引用文件, / 调用技能'"
         @keydown="onKeydown"
         @input="onInput"
         @paste="onPaste"
         @focus="onInput"
         @click="onEditorClick"
       />
-      <div class="card-side">
-        <template v-if="chat.isStreaming">
-          <button class="send-btn send-btn-stop" title="停止" @click="onAbort">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+
+      <!-- 底部工具栏: +附件 | 快捷工具 … token环 | 模型 | 发送 -->
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <!-- 附件按钮 -->
+          <button class="tool-btn" title="选择附件" @click="pickFile" :disabled="uploading">
+            <span v-if="uploading" class="tool-spinner"></span>
+            <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
           </button>
-        </template>
-        <button v-else class="send-btn" :class="{ disabled: !canSend }" :disabled="!canSend" title="发送 (Enter)" @click="onSend">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
-        </button>
+
+          <!-- 会话技能 / MCP 工具选择 -->
+          <button class="tool-btn tool-btn-text tool-quick" title="会话内置/自定义技能(自定义按会话勾选加载)" @click="emit('openSkills')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 12 2c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg>
+            技能
+          </button>
+          <button class="tool-btn tool-btn-text tool-quick" title="会话级启用 MCP Server(按会话勾选加载,默认全部已启用)" @click="emit('openMcp')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+            工具
+          </button>
+        </div>
+
+        <div class="toolbar-right">
+          <!-- 会话 token 进度环:点击查看详情 -->
+          <button
+            class="token-ring-btn"
+            :class="{ full: ringNearFull }"
+            :title="`${ring.real ? '会话上下文' : '会话约'} ${ring.tokens.toLocaleString()} token / ${ring.limit.toLocaleString()},点击查看详情${ringNearFull ? ';建议新开会话' : ''}`"
+            @click="statsOpen = true"
+          >
+            <svg class="token-ring" width="30" height="30" viewBox="0 0 36 36">
+              <circle class="ring-bg" cx="18" cy="18" r="15" />
+              <circle
+                class="ring-fg"
+                cx="18" cy="18" r="15"
+                :style="{
+                  strokeDasharray: `${2 * Math.PI * 15}`,
+                  strokeDashoffset: `${2 * Math.PI * 15 * (1 - tokenRatio)}`,
+                  stroke: ringColor,
+                }"
+              />
+              <text x="18" y="21" class="ring-text" :style="{ fill: ringColor }">{{ Math.round(tokenRatio * 100) }}%</text>
+            </svg>
+          </button>
+
+          <!-- 模型选择 -->
+          <n-select
+            v-model:value="modelValue"
+            :options="modelOptions"
+            placeholder="选择模型"
+            size="tiny"
+            class="toolbar-select"
+            :disabled="!modelOptions.length"
+          />
+
+          <template v-if="chat.isStreaming">
+            <button class="send-btn send-btn-stop" title="停止" @click="onAbort">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+            </button>
+          </template>
+          <button v-else class="send-btn" :class="{ disabled: !canSend }" :disabled="!canSend" title="发送 (Enter)" @click="onSend">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -810,61 +864,6 @@ async function startNewChat() {
         <span>↑↓ 导航</span>
         <span>Enter 选择</span>
         <span>Esc 关闭</span>
-      </div>
-    </div>
-
-    <!-- 底部工具栏: +附件 | 模型 | 模式 | 发送 -->
-    <div class="toolbar">
-      <div class="toolbar-left">
-        <!-- 附件按钮 -->
-        <button class="tool-btn" title="选择附件" @click="pickFile" :disabled="uploading">
-          <span v-if="uploading" class="tool-spinner"></span>
-          <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
-        </button>
-
-        <!-- 模型选择 -->
-        <n-select
-          v-model:value="modelValue"
-          :options="modelOptions"
-          placeholder="选择模型"
-          size="tiny"
-          class="toolbar-select"
-          :disabled="!modelOptions.length"
-        />
-
-        <!-- 快捷工具:生成文档 / 解读报错 -->
-        <button class="tool-btn tool-btn-text tool-quick" title="一键生成文档(周报/会议纪要/邮件/分析报告)" @click="emit('openDocGen')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-          生成文档
-        </button>
-        <button class="tool-btn tool-btn-text tool-quick" title="粘贴报错信息,让 AI 解读" @click="emit('openErrorDiagnose')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.8 2.3A.3.3 0 1 0 5 2H4a2 2 0 0 0-2 2v5a6 6 0 0 0 6 6a6 6 0 0 0 6-6V4a2 2 0 0 0-2-2h-1a.2.2 0 1 0 .3.3"/><path d="M8 15v1a6 6 0 0 0 6 6a6 6 0 0 0 6-6v-4"/><circle cx="20" cy="10" r="2"/></svg>
-          解读报错
-        </button>
-      </div>
-
-      <div class="toolbar-right">
-        <!-- 会话 token 进度环:点击查看详情 -->
-        <button
-          class="token-ring-btn"
-          :class="{ full: ringNearFull }"
-          :title="`${ring.real ? '会话上下文' : '会话约'} ${ring.tokens.toLocaleString()} token / ${ring.limit.toLocaleString()},点击查看详情${ringNearFull ? ';建议新开会话' : ''}`"
-          @click="statsOpen = true"
-        >
-          <svg class="token-ring" width="30" height="30" viewBox="0 0 36 36">
-            <circle class="ring-bg" cx="18" cy="18" r="15" />
-            <circle
-              class="ring-fg"
-              cx="18" cy="18" r="15"
-              :style="{
-                strokeDasharray: `${2 * Math.PI * 15}`,
-                strokeDashoffset: `${2 * Math.PI * 15 * (1 - tokenRatio)}`,
-                stroke: ringColor,
-              }"
-            />
-            <text x="18" y="21" class="ring-text" :style="{ fill: ringColor }">{{ Math.round(tokenRatio * 100) }}%</text>
-          </svg>
-        </button>
       </div>
     </div>
 
@@ -905,7 +904,6 @@ async function startNewChat() {
 <style scoped>
 .chat-input {
   position: relative;
-  border-top: 1px solid var(--border-soft);
   padding: 16px 20px;
   background: var(--chat-bg);
 }
@@ -926,8 +924,8 @@ async function startNewChat() {
 }
 .att-chip {
   display: inline-flex; align-items: center; gap: 4px;
-  background: var(--accent-soft); color: var(--accent);
-  border: 1px solid rgba(139, 92, 246, 0.3);
+  background: var(--accent-soft); color: var(--accent-text);
+  border: 1px solid var(--border);
   font-size: 12px; padding: 3px 8px; border-radius: 6px; max-width: 240px;
 }
 .att-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -938,7 +936,7 @@ async function startNewChat() {
 /* 数据问答引导卡片 */
 .data-guide {
   background: var(--accent-soft);
-  border: 1px solid rgba(139, 92, 246, 0.25);
+  border: 1px solid var(--border-soft);
   border-radius: var(--radius);
   padding: 10px 14px;
   margin-bottom: 10px;
@@ -953,41 +951,45 @@ async function startNewChat() {
 }
 .dg-sample:hover { border-color: var(--accent); color: var(--accent); }
 
-/* 输入卡片:圆角卡片 + 边框 + 阴影,聚焦高亮 */
+/* 输入卡片:大圆角卡片 + 边框 + 阴影,内部纵向布局(输入区 + 工具栏) */
 .input-card {
   display: flex;
-  align-items: flex-end;
-  gap: 6px;
-  padding: 10px 12px;
-  border-radius: 14px;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 10px 14px 8px;
+  border-radius: 20px;
   border: 1px solid var(--input-border);
   background: var(--input-bg);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-  transition: border-color .2s, box-shadow .2s;
+  box-shadow: var(--shadow);
+  transition: border-color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard);
+}
+/* Semi 规范:悬浮仅边框加深,聚焦才亮外圈 */
+.input-card:hover {
+  border-color: var(--fill-2);
 }
 .input-card:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft), 0 4px 18px rgba(139, 92, 246, 0.12);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 /* 输入框:无边框,由卡片提供边界 */
 .textarea {
   flex: 1;
   resize: none;
-  padding: 6px 4px;
+  padding: 8px 6px;
   border: none;
   background: transparent;
   color: var(--text);
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.6;
   outline: none;
-  max-height: 200px;
+  max-height: 260px;
   overflow-y: auto;
   box-sizing: border-box;
   white-space: pre-wrap;
   word-break: break-word;
 }
-.textarea.contenteditable { min-height: 1.6em; }
+.textarea.contenteditable { min-height: 4.25em; }
 .textarea.contenteditable:empty::before {
   content: attr(data-placeholder);
   color: var(--text-3);
@@ -1000,9 +1002,9 @@ async function startNewChat() {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(139, 92, 246, 0.15));
-  color: var(--accent, #6366f1);
-  border: 1px solid rgba(139, 92, 246, 0.4);
+  background: var(--fill-1);
+  color: var(--accent-text);
+  border: 1px solid var(--border);
   font-size: 12px;
   font-weight: 600;
   padding: 2px 8px;
@@ -1022,35 +1024,31 @@ async function startNewChat() {
   line-height: 1;
 }
 :deep(.skill-tag-x:hover) { opacity: 1; color: var(--err, #ef4444); }
-.card-side {
-  display: flex;
-  align-items: flex-end;
-  flex-shrink: 0;
-  padding-bottom: 2px;
-}
 .hidden-input { display: none; }
 
-/* 底部工具栏 */
+/* 底部工具栏(位于卡片内) */
 .toolbar {
   display: flex; align-items: center; justify-content: space-between;
-  margin-top: 10px; gap: 8px;
+  margin-top: 6px; gap: 8px;
 }
 .toolbar-left {
-  display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0;
 }
-.toolbar-right { flex-shrink: 0; }
+.toolbar-right {
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+}
 
-/* 工具按钮(通用):柔和描边 */
+/* 工具按钮(通用):无边框图标风格 */
 .tool-btn {
   display: inline-flex; align-items: center; gap: 4px;
-  background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm);
-  color: var(--text-3); cursor: pointer; padding: 5px 10px;
+  background: transparent; border: none; border-radius: var(--radius-sm);
+  color: var(--text-3); cursor: pointer; padding: 6px;
   font-size: 13px; line-height: 1; white-space: nowrap;
-  transition: background .15s, color .15s, border-color .15s;
+  transition: background-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
 }
-.tool-btn:hover { background: var(--surface-hover); color: var(--text); border-color: var(--border); }
+.tool-btn:hover { background: var(--fill-0); color: var(--text); }
 .tool-btn svg { flex-shrink: 0; }
-.tool-btn-text { padding: 5px 10px; }
+.tool-btn-text { padding: 6px 8px; }
 
 /* 模型下拉(紧凑) */
 .toolbar-select {
@@ -1085,14 +1083,17 @@ async function startNewChat() {
 /* 发送按钮:圆形 */
 .send-btn {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 36px; height: 36px; border-radius: 50%;
+  width: 34px; height: 34px; border-radius: 50%;
   background: var(--accent); border: none; cursor: pointer;
-  color: #fff; transition: filter .15s, opacity .15s, transform .15s;
+  color: var(--accent-contrast); transition: filter var(--motion-fast) var(--ease-standard), opacity var(--motion-fast) var(--ease-standard);
 }
-.send-btn:hover:not(.disabled) { filter: brightness(1.1); transform: translateY(-1px); }
-.send-btn.disabled { background: var(--surface-hover); color: var(--text-3); cursor: default; }
+/* Semi 规范:悬浮变亮、按下变暗,不做位移形变 */
+.send-btn:hover:not(.disabled) { filter: brightness(1.1); }
+.send-btn:active:not(.disabled) { filter: brightness(0.92); }
+.send-btn.disabled { background: var(--fill-1); color: var(--text-3); cursor: default; }
 .send-btn-stop { background: var(--err); }
 .send-btn-stop:hover { filter: brightness(1.1); }
+.send-btn-stop:active { filter: brightness(0.92); }
 
 /* token 进度环 */
 .token-ring-btn {
@@ -1131,7 +1132,7 @@ async function startNewChat() {
 .stats-warn {
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
   margin-top: 12px; padding: 10px 12px; border-radius: var(--radius);
-  background: var(--accent-soft); border: 1px solid rgba(139, 92, 246, 0.2);
+  background: var(--accent-soft); border: 1px solid var(--border-soft);
   color: var(--text-2); font-size: 13px;
 }
 .stats-warn.alert {
@@ -1146,7 +1147,7 @@ async function startNewChat() {
   .tool-quick { display: none; }
   .toolbar-select { max-width: 130px; }
   .toolbar { gap: 4px; }
-  .toolbar-left { gap: 4px; }
+  .toolbar-left, .toolbar-right { gap: 4px; }
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
   /* iOS 聚焦 <16px 输入框会自动放大页面,移动端提到 16px 避免 */
   .textarea { font-size: 16px; }
