@@ -1,5 +1,5 @@
 import { http, unwrap } from './http'
-import type { SessionVo, MessageVo, SkillInfo, TemplateVo, MarketplaceSkillVo } from '@/types'
+import type { SessionVo, MessageVo, SkillInfo, TemplateVo, MarketplaceSkillVo, SkillFileVo } from '@/types'
 
 export const chatApi = {
   listSessions: () => http.get<SessionVo[]>('/chat/sessions').then(unwrap),
@@ -10,9 +10,9 @@ export const chatApi = {
   customSkills: () => http.get<string[]>('/chat/skills/custom').then(unwrap),
   /** 我的技能(user_skill:自建/安装) */
   listMineSkills: () => http.get<any[]>('/chat/skills/mine').then(unwrap),
-  createSkill: (data: { name: string; description?: string; content?: string; visibility?: number; files?: { path: string; content: string }[] }) =>
+  createSkill: (data: { name: string; description?: string; content?: string; visibility?: number; files?: SkillFileVo[] }) =>
     http.post<any>('/chat/skills/mine', data).then(unwrap),
-  updateSkill: (id: number, data: { name?: string; description?: string; content?: string; visibility?: number; files?: { path: string; content: string }[] }) =>
+  updateSkill: (id: number, data: { name?: string; description?: string; content?: string; visibility?: number; files?: SkillFileVo[] }) =>
     http.put<any>(`/chat/skills/mine/${id}`, data).then(unwrap),
   deleteSkill: (id: number) => http.delete(`/chat/skills/mine/${id}`),
   createSession: (data: { title?: string; providerId?: string; modelId?: string; agent?: string; skills?: string[]; mcpServers?: string[] }) =>
@@ -53,7 +53,7 @@ export const chatApi = {
   deleteTemplate: (id: number) => http.delete(`/chat/templates/${id}`),
   listMarketplaceSkills: () => http.get<MarketplaceSkillVo[]>('/chat/skills/marketplace').then(unwrap),
   marketplaceSkillDetail: (id: number) => http.get<MarketplaceSkillVo>(`/chat/skills/marketplace/${id}`).then(unwrap),
-  publishSkill: (data: { name: string; description: string; category?: string; icon?: string; content: string; files?: { path: string; content: string }[] }) =>
+  publishSkill: (data: { name: string; description: string; category?: string; icon?: string; content: string; files?: SkillFileVo[] }) =>
     http.post<MarketplaceSkillVo>('/chat/skills/marketplace', data).then(unwrap),
   installSkill: (id: number) => http.post(`/chat/skills/marketplace/${id}/install`),
   deleteMarketplaceSkill: (id: number) => http.delete(`/chat/skills/marketplace/${id}`),

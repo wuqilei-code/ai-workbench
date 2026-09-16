@@ -5,8 +5,10 @@ import com.aiworkbench.common.ResultCode;
 import com.aiworkbench.dto.chat.PublishSkillRequest;
 import com.aiworkbench.dto.skill.UserSkillRequest;
 import com.aiworkbench.dto.skill.UserSkillVo;
+import com.aiworkbench.entity.SkillInstall;
 import com.aiworkbench.entity.SkillMarketplace;
 import com.aiworkbench.entity.UserSkill;
+import com.aiworkbench.mapper.SkillInstallMapper;
 import com.aiworkbench.mapper.SkillMarketplaceMapper;
 import com.aiworkbench.mapper.UserSkillMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -25,6 +27,7 @@ public class UserSkillService {
 
     private final UserSkillMapper userSkillMapper;
     private final SkillMarketplaceMapper skillMarketplaceMapper;
+    private final SkillInstallMapper skillInstallMapper;
     private final SkillMarketplaceService skillMarketplaceService;
     private final WorkspaceService workspaceService;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
@@ -108,6 +111,10 @@ public class UserSkillService {
             UserSkill s = getOwned(userId, id);
             // 安装款不可编辑,但允许删除本地副本(便于重新安装)
             userSkillMapper.deleteById(id);
+            // 同步清除安装记录,否则技能市场仍会显示「已安装」
+            skillInstallMapper.delete(new LambdaQueryWrapper<SkillInstall>()
+                    .eq(SkillInstall::getUserId, userId)
+                    .eq(SkillInstall::getSkillName, s.getName()));
             try {
                 workspaceService.deleteFile(userId, "skills/" + s.getName());
             } catch (Exception e) {
@@ -189,18 +196,34 @@ public class UserSkillService {
         workspaceService.writeFile(userId, "skills/" + name + "/SKILL.md", content);
     }
 
-    /** 写技能包:SKILL.md + 附加文件(路径安全校验:拒绝 .. / 绝对路径)。 */
+    /** 写技能包:SKILL.md + 附加文件(路径安全校验:拒绝 .. / 绝对路径)。
+     *  <p>encoding=base64 的文件按二进制写盘(Base64 解码),其余按 UTF-8 文本;整个技能包写失败时回滚已写文件。 */
     private void writeSkillFiles(Long userId, String name, String sklmd,
                                  List<com.aiworkbench.dto.chat.SkillFileVo> files) {
         workspaceService.writeFile(userId, "skills/" + name + "/SKILL.md", sklmd);
         if (files == null) return;
+        int written = 0;
         for (com.aiworkbench.dto.chat.SkillFileVo f : files) {
             if (f == null) continue;
             String rel = sanitizeRel(f.getPath());
             if (rel == null || rel.isBlank() || "SKILL.md".equals(rel) || rel.startsWith("SKILL.md/")) continue;
-            workspaceService.writeFile(userId, "skills/" + name + "/" + rel,
-                    f.getContent() == null ? "" : f.getContent());
+            String fullRel = "skills/" + name + "/" + rel;
+            try {
+                if ("base64".equals(f.getEncoding()) && f.getContent() != null) {
+                    workspaceService.writeBinaryFile(userId, fullRel,
+                            java.util.Base64.getDecoder().decode(f.getContent()));
+                } else {
+                    workspaceService.writeFile(userId, fullRel, f.getContent() == null ? "" : f.getContent());
+                }
+                written++;
+            } catch (Exception e) {
+                // 补偿:清除半成品,保证"盘上有技能文件 ⇔ 库里有记录"不被破坏
+                try { workspaceService.deleteFile(userId, "skills/" + name); } catch (Exception ignored) {}
+                throw new BusinessException(ResultCode.INTERNAL_ERROR.getCode(),
+                        "技能文件写入失败(" + rel + "): " + e.getMessage());
+            }
         }
+        log.debug("write skill package files({}): {}", name, written);
     }
 
     private String sanitizeRel(String path) {

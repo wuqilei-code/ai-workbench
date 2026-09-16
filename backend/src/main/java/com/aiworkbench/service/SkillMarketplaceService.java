@@ -115,12 +115,25 @@ private final SkillMarketplaceMapper marketplaceMapper;
         }
         String dir = SKILLS_ROOT + "/" + name;
 
+        // 先规整附加文件清单(过滤非法路径/重复 SKILL.md),作为 user_skill.files 一并落库,
+        // 否则「查看已安装技能」时只读编辑器拿不到附加文件,只剩 SKILL.md
+        List<SkillFileVo> toSave = new ArrayList<>();
+        for (SkillFileVo f : deserializeFiles(s.getFiles())) {
+            if (f == null || f.getPath() == null || f.getPath().isBlank()) continue;
+            String rel = f.getPath().replace('\\', '/').replaceAll("^/+", "");
+            if (rel.contains("..") || rel.startsWith("/") || rel.isEmpty()) continue;
+            // SKILL.md 已由 content 写入,附加文件里再带一个会重复覆盖,跳过
+            if ("SKILL.md".equals(rel)) continue;
+            toSave.add(f);
+        }
+
         // 硬性约束:user_skill 记录是事实源,必须先落库成功才允许写文件;失败则整个安装回滚
         com.aiworkbench.entity.UserSkill us = new com.aiworkbench.entity.UserSkill();
         us.setUserId(userId);
         us.setName(name);
         us.setDescription(s.getDescription() == null ? "" : s.getDescription());
         us.setContent(withIconFrontmatter(s.getContent(), s.getIcon()));
+        us.setFiles(serializeFiles(toSave));
         us.setVisibility(0);
         us.setSource("installed");
         us.setSourceSkillId(id);
@@ -138,15 +151,15 @@ private final SkillMarketplaceMapper marketplaceMapper;
         try {
             workspaceService.writeFile(userId, dir + "/SKILL.md", withIconFrontmatter(s.getContent(), s.getIcon()));
             written++;
-            List<SkillFileVo> files = deserializeFiles(s.getFiles());
-            for (SkillFileVo f : files) {
-                if (f == null || f.getPath() == null || f.getPath().isBlank()) continue;
+            for (SkillFileVo f : toSave) {
                 String rel = f.getPath().replace('\\', '/').replaceAll("^/+", "");
-                if (rel.contains("..") || rel.startsWith("/") || rel.isEmpty()) continue;
-                // SKILL.md 已由 content 写入,附加文件里再带一个会重复覆盖,跳过
-                if ("SKILL.md".equals(rel)) continue;
-                workspaceService.writeFile(userId, dir + "/" + rel,
-                        f.getContent() == null ? "" : f.getContent());
+                if ("base64".equals(f.getEncoding()) && f.getContent() != null) {
+                    workspaceService.writeBinaryFile(userId, dir + "/" + rel,
+                            java.util.Base64.getDecoder().decode(f.getContent()));
+                } else {
+                    workspaceService.writeFile(userId, dir + "/" + rel,
+                            f.getContent() == null ? "" : f.getContent());
+                }
                 written++;
             }
         } catch (RuntimeException e) {

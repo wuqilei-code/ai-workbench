@@ -7,6 +7,8 @@ import lombok.Data;
 public class SkillFileVo {
     /** 相对技能目录的路径,如 scripts/clean.py、data/schema.json */
     private String path;
-    /** 文本内容(脚本/配置等文本文件;二进制暂不支持) */
+    /** 文件内容:encoding 为 base64 时是 Base64 编码的二进制;否则视为 UTF-8 文本 */
     private String content;
+    /** 编码方式:空或 "text" 表示文本; "base64" 表示 content 是 Base64 编码的二进制数据 */
+    private String encoding;
 }

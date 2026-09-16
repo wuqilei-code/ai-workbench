@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import { fileApi } from '@/api/files'
-import { useMessage } from 'naive-ui'
+import { useMessage, useDialog } from 'naive-ui'
 import { useChatStore } from '@/stores/chat'
+import TextPromptModal from './TextPromptModal.vue'
 import type { FileNode } from '@/types'
 
 /**
@@ -31,6 +32,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ (e: 'askAI', path: string): void }>()
 
 const msg = useMessage()
+const dialog = useDialog()
 const chat = useChatStore()
 const nodes = ref<FileNode[]>([])
 const currentPath = ref('')
@@ -173,9 +175,27 @@ function up() {
   load(parts.join('/'))
 }
 
-async function createFile() {
-  const name = prompt('文件名')
-  if (!name) return
+// ---------- 新建文件/目录:UI 输入弹窗 ----------
+const fileNamePromptShow = ref(false)
+const fileNamePrompt = ref<'file' | 'dir'>('file')
+
+function openCreateFile() {
+  fileNamePrompt.value = 'file'
+  fileNamePromptShow.value = true
+}
+function openCreateDir() {
+  fileNamePrompt.value = 'dir'
+  fileNamePromptShow.value = true
+}
+function onFileNameConfirm(name: string) {
+  fileNamePromptShow.value = false
+  const trimmed = name.trim()
+  if (!trimmed) return
+  if (fileNamePrompt.value === 'dir') createDirWith(trimmed)
+  else createFileWith(trimmed)
+}
+
+async function createFileWith(name: string) {
   const rel = currentPath.value ? `${currentPath.value}/${name}` : name
   try {
     await fileApi.write(abs(rel), '')
@@ -184,9 +204,7 @@ async function createFile() {
   } catch (e: any) { msg.error(e.message) }
 }
 
-async function createDir() {
-  const name = prompt('目录名')
-  if (!name) return
+async function createDirWith(name: string) {
   const rel = currentPath.value ? `${currentPath.value}/${name}` : name
   try {
     await fileApi.mkdir(abs(rel))
@@ -195,11 +213,21 @@ async function createDir() {
   } catch (e: any) { msg.error(e.message) }
 }
 
-/** skillsMode 专用:新建技能 = 建目录 + 生成合规 SKILL.md,并进入该技能目录。
+// ---------- skillsMode 新建技能:表单弹窗(名 + 描述 + 图标) ----------
+const skFormShow = ref(false)
+const skForm = ref({ name: '', description: '', icon: '' })
+
+function openSkillForm() {
+  skForm.value = { name: '', description: '', icon: '' }
+  skFormShow.value = true
+}
+
+/** 新建技能 = 建目录 + 生成合规 SKILL.md,并进入该技能目录。
  *  之后的脚本/子目录扩展用通用的「新建文件/新建目录/上传」即可。 */
-async function createSkill() {
-  const name = prompt('技能名(小写字母/数字,单连字符分隔,如 note-summarizer)')
-  if (!name) return
+async function submitSkillForm() {
+  const name = skForm.value.name.trim()
+  const description = skForm.value.description.trim()
+  const icon = skForm.value.icon.trim()
   if (!NAME_RE.test(name) || name.length > 64) {
     msg.error('技能名不合法:仅小写字母/数字,单连字符分隔,1-64 字符')
     return
@@ -212,21 +240,20 @@ async function createSkill() {
       return
     }
   } catch { /* 读取失败时忽略,交给后续 mkdir/write 报错 */ }
-  const description = prompt('技能描述(一句话说明做什么、何时使用)') || ''
-  if (!description.trim()) {
+  if (!description) {
     msg.error('描述不能为空')
     return
   }
-  if (description.trim().length > 1024) {
+  if (description.length > 1024) {
     msg.error('描述过长(最多 1024 字符)')
     return
   }
+  skFormShow.value = false
   try {
     await fileApi.mkdir(abs(name))
-    const icon = prompt('技能图标(可选,填一个 emoji,如 🤖;留空则自动分配)')?.trim() || ''
     const fmIcon = icon ? `\nicon: ${icon}` : ''
     const md =
-      `---\nname: ${name}\ndescription: ${description.trim().replace(/\n/g, ' ')}${fmIcon}\n---\n\n` +
+      `---\nname: ${name}\ndescription: ${description.replace(/\n/g, ' ')}${fmIcon}\n---\n\n` +
       `## What I do\n- \n\n## When to use me\n- \n`
     await fileApi.write(`${abs(name)}/SKILL.md`, md)
     msg.success(`已创建技能「${name}」`)
@@ -246,15 +273,22 @@ async function downloadNode(node: FileNode) {
 }
 
 async function deleteNode(node: FileNode) {
-  if (!confirm(`确认删除「${node.name}」?${node.directory ? '该目录及其内容将被删除。' : ''}`)) return
-  try {
-    await fileApi.delete(node.path)
-    msg.success('已删除')
-    if (selectedFile.value === node.path) {
-      selectedFile.value = null
-    }
-    await load(currentPath.value)
-  } catch (e: any) { msg.error(e.message) }
+  dialog.warning({
+    title: '删除确认',
+    content: `确认删除「${node.name}」?${node.directory ? '该目录及其内容将被删除。' : ''}`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await fileApi.delete(node.path)
+        msg.success('已删除')
+        if (selectedFile.value === node.path) {
+          selectedFile.value = null
+        }
+        await load(currentPath.value)
+      } catch (e: any) { msg.error(e.message) }
+    },
+  })
 }
 
 // ---------- 右键菜单:下载 / 问 AI / 复制路径 ----------
@@ -404,9 +438,9 @@ const createOptions = computed(() => {
   return props.skillsMode ? [{ key: 'skill', label: '新建技能' }, { type: 'divider', key: 'd1' }, ...opts] : opts
 })
 function onCreateSelect(key: string | number) {
-  if (key === 'skill') createSkill()
-  else if (key === 'dir') createDir()
-  else createFile()
+  if (key === 'skill') openSkillForm()
+  else if (key === 'dir') openCreateDir()
+  else openCreateFile()
 }
 
 /** 当前目录内可预览文件(非目录),供 ←/→ 翻页;当前选中文件在首或尾时禁用对应方向 */
@@ -633,6 +667,49 @@ onBeforeUnmount(() => {
       </button>
       <div class="fp-hint">Esc 关闭 · ←/→ 切换同目录文件</div>
     </n-modal>
+
+    <!-- 新建文件/目录 输入弹窗 -->
+    <TextPromptModal
+      :show="fileNamePromptShow"
+      :title="fileNamePrompt === 'dir' ? '新建目录' : '新建文件'"
+      :placeholder="fileNamePrompt === 'dir' ? '输入目录名(如 scripts、data)' : '输入文件名(如 index.md、config.json)'"
+      @update:show="fileNamePromptShow = false"
+      @confirm="onFileNameConfirm"
+      @cancel="fileNamePromptShow = false"
+    />
+
+    <!-- skillsMode 新建技能:表单弹窗(名 + 描述 + 图标) -->
+    <n-modal
+      v-model:show="skFormShow"
+      preset="card"
+      title="新建技能"
+      style="width: 460px; max-width: 92vw"
+      :mask-closable="true"
+      :close-on-esc="true"
+      :bordered="false"
+    >
+      <div class="skf-body">
+        <div class="skf-row">
+          <span class="skf-label">技能名</span>
+          <n-input v-model:value="skForm.name" placeholder="小写字母/数字/连字符,如 note-summarizer" size="small" />
+        </div>
+        <div class="skf-row">
+          <span class="skf-label">描述</span>
+          <n-input v-model:value="skForm.description" type="textarea" :rows="2" placeholder="一句话说明做什么、何时使用" size="small" />
+        </div>
+        <div class="skf-row">
+          <span class="skf-label">图标(可选)</span>
+          <n-input v-model:value="skForm.icon" placeholder="填一个 emoji,如 🤖;留空自动分配" size="small" />
+        </div>
+        <p class="skf-hint">技能 = 目录 + SKILL.md;进入目录后可「新建文件/上传」添加脚本。</p>
+      </div>
+      <template #footer>
+        <div class="skf-footer">
+          <n-button size="small" quaternary @click="skFormShow = false">取消</n-button>
+          <n-button size="small" type="primary" :disabled="!skForm.name.trim() || !skForm.description.trim()" @click="submitSkillForm">创建</n-button>
+        </div>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -719,6 +796,13 @@ onBeforeUnmount(() => {
 @media (hover: none) {
   .node-ops { opacity: 1; }
 }
+
+/* 新建技能表单弹窗 */
+.skf-body { display: flex; flex-direction: column; gap: 10px; }
+.skf-row { display: flex; flex-direction: column; gap: 3px; }
+.skf-label { font-size: 12px; color: var(--text-2); font-weight: 500; }
+.skf-hint { margin: 0; font-size: 12px; color: var(--text-3); line-height: 1.5; }
+.skf-footer { display: flex; justify-content: flex-end; gap: 8px; }
 </style>
 
 <style>

@@ -230,6 +230,18 @@ public class WorkspaceService {
         }
     }
 
+    /** 写二进制文件(技能附加文件中的图片/数据等,须持技能同步令牌)。 */
+    public void writeBinaryFile(Long userId, String relativePath, byte[] content) {
+        assertSkillSyncAllowed(relativePath);
+        Path path = safeResolve(userId, relativePath);
+        try {
+            Files.createDirectories(path.getParent());
+            Files.write(path, content);
+        } catch (IOException e) {
+            throw new BusinessException(ResultCode.INTERNAL_ERROR.getCode(), "write binary file failed");
+        }
+    }
+
     public void deleteFile(Long userId, String relativePath) {
         assertSkillSyncAllowed(relativePath);
         Path path = safeResolve(userId, relativePath);

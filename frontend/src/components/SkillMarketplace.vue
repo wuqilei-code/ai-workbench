@@ -5,6 +5,7 @@ import { chatApi } from '@/api/chat'
 import { fileApi } from '@/api/files'
 import { SKILL_CATEGORIES, skillCategoryInfo } from '@/types'
 import type { MarketplaceSkillVo, FileNode, SkillFileVo } from '@/types'
+import SkillEditor from '@/components/SkillEditor.vue'
 
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{
@@ -147,13 +148,6 @@ async function importSkill(name: string) {
   }
 }
 
-function addFile() {
-  pubFiles.value.push({ path: '', content: '' })
-}
-function removeFile(i: number) {
-  pubFiles.value.splice(i, 1)
-}
-
 /** 根据技能名/描述生成 SKILL.md 骨架,预填内容区,减少手写 frontmatter 的负担。 */
 function generateTemplate() {
   const name = (pubName.value || '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '-')
@@ -223,7 +217,7 @@ async function submitPublish() {
       category: pubCategory.value,
       icon: pubIcon.value.trim() || undefined,
       content: pubContent.value,
-      files: validFiles.value.map((f) => ({ path: f.path.trim().replace(/\\/g, '/').replace(/^\/+/, ''), content: f.content })),
+      files: validFiles.value.map((f) => ({ path: f.path.trim().replace(/\\/g, '/').replace(/^\/+/, ''), content: f.content, encoding: f.encoding })),
     })
     msg.success('已发布到技能市场')
     publishVisible.value = false
@@ -407,7 +401,7 @@ onMounted(() => {
       v-model:show="publishVisible"
       preset="card"
       title="发布技能到市场"
-      style="width: 760px; max-width: 96vw"
+      style="width: 880px; max-width: 96vw"
       :bordered="false"
     >
       <div v-if="importSkills.length || importLoading" class="mp-import">
@@ -445,33 +439,20 @@ onMounted(() => {
           >{{ e }}</span>
         </div>
         <div class="content-head">
-          <span class="content-title">SKILL.md 内容</span>
-          <n-button size="tiny" type="primary" quaternary :disabled="!pubName.trim() || !pubDesc.trim()" @click="generateTemplate">✨ 生成模板</n-button>
+          <span class="content-title">技能文件(SKILL.md 与附加脚本/数据,树形多文件编辑)</span>
+          <n-button size="tiny" type="primary" quaternary :disabled="!pubName.trim() || !pubDesc.trim()" @click="generateTemplate">✨ 生成 SKILL.md 模板</n-button>
+          <span class="files-note-v2">发布后他人一键安装整个技能包到工作区</span>
         </div>
-        <n-input
-          v-model:value="pubContent"
-          type="textarea"
-          :rows="6"
-          maxlength="60000"
-          show-count
-          size="small"
-          placeholder="SKILL.md 全文(需包含 ---frontmatter--- 的 name 与 description)"
+        <SkillEditor
+          :content="pubContent"
+          :files="pubFiles"
+          :name="pubName.trim() || 'unnamed-skill'"
+          :description="pubDesc"
+          :readonly="false"
+          @update:content="pubContent = $event"
+          @update:files="pubFiles = $event"
         />
       </div>
-
-      <div class="files-head">
-        <span class="files-title">附加文件(可选)</span>
-        <span class="files-note">脚本/模板/参考数据等。安装了别人的技能把整目录写到你工作区。</span>
-        <n-button size="tiny" quaternary type="primary" @click="addFile">+ 添加文件</n-button>
-      </div>
-      <div v-if="pubFiles.length" class="files-list">
-        <div v-for="(f, i) in pubFiles" :key="i" class="file-row">
-          <n-input v-model:value="f.path" size="small" placeholder="相对路径,如 scripts/clean.py" style="flex: 0 0 260px" />
-          <n-button size="tiny" type="error" quaternary @click="removeFile(i)">删除</n-button>
-          <n-input v-model:value="f.content" type="textarea" :rows="4" size="small" placeholder="文件内容" />
-        </div>
-      </div>
-      <div v-if="!pubFiles.length" class="files-empty">未添加附加文件(该技能将只有 SKILL.md)。</div>
 
       <template #footer>
         <div style="display: flex; justify-content: flex-end; gap: 8px">
@@ -618,20 +599,9 @@ onMounted(() => {
 .icon-choice.active { background: var(--accent-soft); border-color: var(--accent-text); }
 
 /* 附加文件编辑 */
-.files-head { display: flex; align-items: center; gap: 8px; margin: 14px 0 8px; }
-.content-head { display: flex; align-items: center; gap: 8px; margin: 14px 0 8px; }
+.content-head { display: flex; align-items: center; gap: 8px; margin: 14px 0 8px; flex-wrap: wrap; }
 .content-title { font-size: 13px; font-weight: 600; color: var(--text); }
-.files-title { font-size: 13px; font-weight: 600; color: var(--text); }
-.files-note { font-size: 11px; color: var(--text-3); flex: 1; min-width: 0; }
-.files-list { display: flex; flex-direction: column; gap: 8px; max-height: 34vh; overflow-y: auto; padding-right: 2px; }
-.file-row {
-  display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap;
-  padding: 8px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--surface);
-}
-.file-row .n-input { flex: 1 1 100%; }
-.file-row > .n-input { flex: 0 0 260px; }
-.file-row .file-row-path { flex: 0 0 260px; }
-.files-empty { font-size: 12px; color: var(--text-3); padding: 6px 0; }
+.files-note-v2 { font-size: 11px; color: var(--text-3); flex: 1; min-width: 0; }
 
 /* 详情 */
 .dt-head { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }

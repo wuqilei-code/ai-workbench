@@ -12,6 +12,7 @@ import WelcomeBoard from '@/components/WelcomeBoard.vue'
 import TemplateLibrary from '@/components/TemplateLibrary.vue'
 import FavoritesPanel from '@/components/FavoritesPanel.vue'
 import SkillMarketplace from '@/components/SkillMarketplace.vue'
+import SkillEditor from '@/components/SkillEditor.vue'
 import FileTree from '@/components/FileTree.vue'
 import AutomationManager from '@/components/AutomationManager.vue'
 import McpManager from '@/components/McpManager.vue'
@@ -23,7 +24,7 @@ import ChangeSummaryCard from '@/components/ChangeSummaryCard.vue'
 import DashboardView from '@/views/DashboardView.vue'
 import { chatApi } from '@/api/chat'
 import { mcpApi } from '@/api/mcp'
-import type { MessageVo, SkillInfo, UserSkill } from '@/types'
+import type { MessageVo, SkillInfo, SkillFileVo, UserSkill } from '@/types'
 import type { FlowItem, SummaryItem, Turn } from '@/utils/turns'
 import { extractPlan } from '@/utils/turns'
 
@@ -140,41 +141,76 @@ const skillTreeKey = ref(0)
 /** 内置技能名(技能栏顶部内置列表;用户技能区/会话配置只展示自定义技能) */
 const builtinSkillNames = computed(() => builtinSkills.value.map((s) => s.name))
 /** ---- 用户技能(user_skill:自建/安装) ---- */
+const ICON_PRESETS = ['🤖', '⚙️', '📊', '📄', '✍️', '🗂️', '💻', '🧩', '📚', '🎨', '🔬', '🚀', '🛠️', '📝', '🗣️', '🧠']
+
+/** 从 SKILL.md frontmatter 提取 icon;无则按名字哈希取兜底 emoji */
+function parseSkillIcon(content: string | undefined): string {
+  if (!content) return ''
+  const m = content.match(/^---\s*\n([\s\S]*?)\n---/)
+  if (m) {
+    const icon = m[1].match(/^icon\s*:\s*(.+)$/m)?.[1]?.trim()
+    if (icon) return icon
+  }
+  return ''
+}
+function fallbackIcon(name: string): string {
+  const pool = ['🤖', '🧩', '📊', '📄', '✍️', '🗂️', '💻', '🔬', '🎨', '🚀', '🛠️', '📝']
+  let h = 0
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0
+  return pool[h % pool.length]
+}
+
+/** 把 icon 注入 SKILL.md frontmatter(已有 icon 则替换;无 frontmatter 则创建) */
+function injectIconIntoFrontmatter(content: string, icon: string, name: string, desc: string): string {
+  if (!icon) return content
+  const c = content || ''
+  const m = c.match(/^---\s*\n([\s\S]*?)\n---/)
+  if (m) {
+    if (m[1].includes('icon:')) return c.replace(/^(icon\s*:\s*).+$/m, `$1${icon}`)
+    return c.replace(/^(---\s*\n(?:[\s\S]*?\n))/, `$1icon: ${icon}\n`)
+  }
+  const d = (desc || '').replace(/\n/g, ' ').trim() || '用户自定义技能。'
+  return `---\nname: ${name}\ndescription: ${d}\nicon: ${icon}\n---\n\n# ${name}\n\n(c 在此描述技能功能)。\n`
+}
+
 const userSkills = ref<UserSkill[]>([])
 async function loadUserSkills() {
   try { userSkills.value = await chatApi.listMineSkills() } catch { userSkills.value = [] }
 }
 const skillModalShow = ref(false)
 const skillEditingId = ref<number | null>(null)
-const skillForm = ref<{ name: string; description: string; content: string; visibility: number; files: { path: string; content: string }[] }>({
-  name: '', description: '', content: '', visibility: 0, files: [],
+const skillReadonly = ref(false)
+const skillForm = ref<{ name: string; description: string; content: string; visibility: number; icon: string; files: SkillFileVo[] }>({
+  name: '', description: '', content: '', visibility: 0, icon: '', files: [],
 })
-function addSkillFile() {
-  skillForm.value.files = [...skillForm.value.files, { path: 'scripts/tool.py', content: '' }]
-}
-function removeSkillFile(i: number) {
-  skillForm.value.files.splice(i, 1)
-}
 function openCreateSkill() {
   skillEditingId.value = null
-  skillForm.value = { name: '', description: '', content: '', visibility: 0, files: [] }
+  skillReadonly.value = false
+  skillForm.value = { name: '', description: '', content: '', visibility: 0, icon: '🤖', files: [] }
   skillModalShow.value = true
 }
 function openEditSkill(s: UserSkill) {
   skillEditingId.value = s.id
+  // 市场安装的技能只读,点击打开查看详情
+  skillReadonly.value = s.source === 'installed'
   skillForm.value = {
     name: s.name, description: s.description || '',
     content: s.content || '', visibility: s.visibility || 0,
-    files: (s.files || []).map((f) => ({ path: f.path, content: f.content || '' })),
+    icon: parseSkillIcon(s.content) || fallbackIcon(s.name),
+    files: (s.files || []).map((f) => ({ path: f.path, content: f.content || '', encoding: f.encoding })),
   }
   skillModalShow.value = true
 }
 async function saveSkill() {
   try {
+    // 把 skillForm.icon 注入 SKILL.md frontmatter,技能列表/FileTree 可读取图标
+    const contentWithIcon = injectIconIntoFrontmatter(
+      skillForm.value.content, skillForm.value.icon, skillForm.value.name.trim() || 'skill', skillForm.value.description,
+    )
     if (skillEditingId.value) {
       await chatApi.updateSkill(skillEditingId.value, {
         description: skillForm.value.description,
-        content: skillForm.value.content,
+        content: contentWithIcon,
         visibility: skillForm.value.visibility,
         files: skillForm.value.files.filter((f) => f.path && !f.path.startsWith('SKILL.md')),
       })
@@ -182,7 +218,7 @@ async function saveSkill() {
       await chatApi.createSkill({
         name: skillForm.value.name.trim(),
         description: skillForm.value.description,
-        content: skillForm.value.content,
+        content: contentWithIcon,
         visibility: skillForm.value.visibility,
         files: skillForm.value.files.filter((f) => f.path),
       })
@@ -1038,16 +1074,19 @@ const virtualItems = computed<VirtualListItem[]>(() => {
               <div v-if="!userSkills.length" class="us-empty">
                 暂无用户技能,点击「新建技能」创建,或在技能市场安装
               </div>
-              <div v-for="s in userSkills" :key="s.id" class="us-item">
-                <div class="us-main">
-                  <span class="us-name">{{ s.name }}</span>
-                  <span class="us-tag" :class="s.visibility === 1 ? 'pub' : 'pri'">{{ s.visibility === 1 ? '公开' : '私有' }}</span>
-                  <span class="us-tag" :class="s.source === 'installed' ? 'inst' : 'own'">{{ s.source === 'installed' ? '市场安装' : '自建' }}</span>
+              <div v-for="s in userSkills" :key="s.id" class="us-card">
+                <div class="us-card-icon">{{ parseSkillIcon(s.content) || fallbackIcon(s.name) }}</div>
+                <div class="us-card-body">
+                  <div class="us-card-name">{{ s.name }}</div>
+                  <div class="us-card-tags">
+                    <span class="us-tag" :class="s.source === 'installed' ? 'inst' : 'own'">{{ s.source === 'installed' ? '市场安装' : '自建' }}</span>
+                    <span class="us-tag" :class="s.visibility === 1 ? 'pub' : 'pri'">{{ s.visibility === 1 ? '公开' : '私有' }}</span>
+                  </div>
                   <div class="us-desc">{{ s.description }}</div>
                 </div>
                 <div class="us-actions">
-                  <n-button size="tiny" quaternary :disabled="s.source === 'installed'" title="编辑(市场安装的技能只读)" @click="openEditSkill(s)">编辑</n-button>
-                  <n-button size="tiny" quaternary type="error" @click="removeUserSkill(s)">删除</n-button>
+                  <button class="us-act" :title="s.source === 'installed' ? '查看详情(市场安装的技能只读)' : '编辑'" @click="openEditSkill(s)">{{ s.source === 'installed' ? '查看' : '编辑' }}</button>
+                  <button class="us-act danger" @click="removeUserSkill(s)">删除</button>
                 </div>
               </div>
             </div>
@@ -1144,52 +1183,52 @@ const virtualItems = computed<VirtualListItem[]>(() => {
     </div>
   </n-modal>
 
-  <n-modal v-model:show="skillModalShow" preset="card" :title="skillEditingId ? '编辑技能' : '新建技能'" style="width: 640px; max-width: 94vw" :bordered="false">
+  <n-modal v-model:show="skillModalShow" preset="card" :title="skillReadonly ? '查看技能' : skillEditingId ? '编辑技能' : '新建技能'" style="width: 880px; max-width: 96vw" :bordered="false">
     <div class="sk-form">
       <div class="sk-row">
         <span class="sk-label">技能名</span>
-        <n-input v-model:value="skillForm.name" :disabled="!!skillEditingId" placeholder="小写字母/数字/连字符,如 note-summarizer" />
+        <n-input v-model:value="skillForm.name" :disabled="skillReadonly || !!skillEditingId" placeholder="小写字母/数字/连字符,如 note-summarizer" />
       </div>
       <div class="sk-row">
         <span class="sk-label">描述</span>
-        <n-input v-model:value="skillForm.description" placeholder="一句话说明何时使用该技能" />
+        <n-input v-model:value="skillForm.description" :disabled="skillReadonly" placeholder="一句话说明何时使用该技能" />
       </div>
       <div class="sk-row">
         <span class="sk-label">可见性</span>
         <n-select
           v-model:value="skillForm.visibility"
+          :disabled="skillReadonly"
           :options="[{ label: '私有(仅自己可见/使用)', value: 0 }, { label: '公开(发布到技能市场)' , value: 1 }]"
           placeholder="可见性"
         />
       </div>
-      <div class="sk-row">
-        <span class="sk-label">内容(SKILL.md)</span>
-        <n-input
-          v-model:value="skillForm.content"
-          type="textarea"
-          :rows="12"
-          placeholder="技能正文,可含 markdown;frontmatter 会自动补齐(name/description)"
-        />
-      </div>
-      <div class="sk-row">
-        <span class="sk-label">
-          附加文件(脚本/数据/参考等,随技能打包进 skills/&lt;name&gt;/)
-          <n-button size="tiny" quaternary type="primary" style="margin-left:6px" @click="addSkillFile">＋ 添加文件</n-button>
-        </span>
-        <div v-if="skillForm.files.length" class="sk-files">
-          <div v-for="(f, fi) in skillForm.files" :key="fi" class="sk-file">
-            <div class="sk-file-head">
-              <n-input v-model:value="f.path" size="small" placeholder="文件路径(含文件名),如 scripts/tool.py" class="sk-file-path" />
-              <n-button size="tiny" quaternary type="error" @click="removeSkillFile(fi)">✕</n-button>
-            </div>
-            <n-input v-model:value="f.content" type="textarea" :rows="5" placeholder="文件内容" />
-          </div>
+      <div class="sk-row" v-if="!skillReadonly">
+        <span class="sk-label">图标</span>
+        <div class="icon-picker">
+          <span
+            v-for="e in ICON_PRESETS"
+            :key="e"
+            class="icon-choice"
+            :class="{ active: skillForm.icon === e }"
+            @click="skillForm.icon = e"
+          >{{ e }}</span>
         </div>
-        <div v-else class="sk-empty" style="font-size:12px;color:var(--text-3)">暂无附加文件(可选)</div>
       </div>
+      <div class="sk-row">
+        <span class="sk-label">技能文件(SKILL.md 与附加脚本/数据,树形多文件编辑)</span>
+      </div>
+      <SkillEditor
+        :content="skillForm.content"
+        :files="skillForm.files"
+        :name="skillForm.name.trim() || 'unnamed-skill'"
+        :description="skillForm.description"
+        :readonly="skillReadonly"
+        @update:content="skillForm.content = $event"
+        @update:files="skillForm.files = $event"
+      />
       <div class="sk-actions">
-        <n-button size="small" quaternary @click="skillModalShow = false">取消</n-button>
-        <n-button size="small" type="primary" @click="saveSkill">保存</n-button>
+        <n-button size="small" quaternary @click="skillModalShow = false">{{ skillReadonly ? '关闭' : '取消' }}</n-button>
+        <n-button v-if="!skillReadonly" size="small" type="primary" :disabled="!skillForm.name.trim()" @click="saveSkill">保存</n-button>
       </div>
     </div>
   </n-modal>
@@ -1317,26 +1356,53 @@ const virtualItems = computed<VirtualListItem[]>(() => {
 .us-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .us-title { font-size: 13px; font-weight: 600; color: var(--text-2); }
 .us-empty { font-size: 12px; color: var(--text-3); padding: 12px 2px; }
-.us-item { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); margin-bottom: 8px; background: var(--bg-elev); }
-.us-main { min-width: 0; flex: 1; }
-.us-name { font-size: 13px; font-weight: 600; color: var(--text); margin-right: 6px; }
-.us-tag { font-size: 11px; padding: 1px 6px; border-radius: 8px; margin-right: 6px; }
-.us-tag.pub { background: var(--fill-1); color: var(--accent-text); }
+.us-card {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  height: 80px; box-sizing: border-box; overflow: hidden;
+  border: 1px solid var(--border-soft); border-radius: 10px; margin-bottom: 8px;
+  background: var(--bg-elev); transition: border-color .15s, box-shadow .15s;
+}
+.us-card:hover { border-color: var(--accent); box-shadow: 0 2px 10px rgba(0,0,0,.05); }
+.us-card-icon {
+  width: 40px; height: 40px; flex-shrink: 0; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center; font-size: 20px;
+  background: var(--fill-1); border: 1px solid var(--border-soft);
+}
+.us-card-body { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 3px; }
+.us-card-name { font-size: 13.5px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.us-card-tags { display: flex; gap: 5px; white-space: nowrap; overflow: hidden; }
+.us-tag { font-size: 10.5px; padding: 1px 6px; border-radius: 6px; flex-shrink: 0; }
+.us-tag.pub { background: rgba(82,141,245,.15); color: var(--accent-text); }
 .us-tag.pri { background: var(--surface-hover); color: var(--text-3); }
 .us-tag.own { background: rgba(88,196,155,.12); color: var(--ok); }
 .us-tag.inst { background: #f59e0b22; color: #f59e0b; }
-.us-desc { font-size: 12px; color: var(--text-2); margin-top: 3px; word-break: break-word; }
-.us-actions { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; }
+.us-desc { font-size: 11.5px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.us-actions { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+.us-act {
+  font-size: 11px; line-height: 1; padding: 5px 12px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border-soft); background: var(--surface); color: var(--text-2);
+  transition: all .15s; white-space: nowrap;
+}
+.us-act:hover { border-color: var(--accent-text); color: var(--accent-text); background: var(--accent-soft); }
+.us-act.danger:hover { border-color: var(--error, #ec5962); color: var(--error, #ec5962); background: rgba(236,89,98,.08); }
+.us-act:disabled { opacity: .4; cursor: not-allowed; }
+.us-act:disabled:hover { border-color: var(--border-soft); color: var(--text-2); background: var(--surface); }
 
-.sk-form { display: flex; flex-direction: column; gap: 12px; }
+/* 图标选择器(技能编辑弹窗) */
+.icon-picker { display: flex; flex-wrap: wrap; gap: 6px; }
+.icon-choice {
+  width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 16px; border-radius: 8px; border: 1px solid var(--border-soft); cursor: pointer;
+  background: var(--surface); transition: all .15s;
+}
+.icon-choice:hover { border-color: var(--accent-text); }
+.icon-choice.active { background: var(--accent-soft); border-color: var(--accent-text); }
+
+.sk-form { display: flex; flex-direction: column; gap: 8px; }
 .sk-row { display: flex; flex-direction: column; gap: 4px; }
 .sk-label { font-size: 12px; color: var(--text-2); }
-.sk-files { display: flex; flex-direction: column; gap: 8px; }
-.sk-file { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); padding: 6px; }
-.sk-file-head { display: flex; gap: 6px; align-items: center; }
-.sk-file-path { flex: 1; }
-.sk-file :deep(.n-input) { border-radius: 6px; }
-.sk-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.sk-form .skill-editor { margin-top: 2px; }
+.sk-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .conn-badge.warn { color: var(--warn); }
 .conn-badge.warn .conn-dot { background: var(--warn); animation: conn-pulse 1.2s ease-in-out infinite; }
 @keyframes conn-pulse { 0%, 100% { opacity: .4; } 50% { opacity: 1; } }

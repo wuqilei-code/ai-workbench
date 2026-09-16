@@ -125,7 +125,10 @@ export interface UserSkill {
 /** 技能附加文件(SKILL.md 之外的脚本/数据/参考) */
 export interface SkillFileVo {
   path: string
+  /** 文本内容,或 encoding='base64' 时的 Base64 字符串 */
   content: string
+  /** 编码方式:空或 'text' 文本;'base64' 二进制 */
+  encoding?: string
 }
 
 /** 技能广场条目 */
