@@ -2,11 +2,12 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { adminApi } from '@/api/admin'
-import { useMessage } from 'naive-ui'
+import { useMessage, useDialog } from 'naive-ui'
 import type { ProviderVo } from '@/types'
 
 const router = useRouter()
 const msg = useMessage()
+const dialog = useDialog()
 const providers = ref<ProviderVo[]>([])
 const loading = ref(false)
 const applying = ref(false)
@@ -62,11 +63,18 @@ async function addModel() {
 
 async function removeProvider(id: number) {
   if (rowBusy.value !== null) return
-  if (!confirm('删除该 provider 及其所有模型？')) return
-  rowBusy.value = 'p-' + id
-  try { await adminApi.deleteProvider(id); msg.success('已删除'); await load() }
-  catch (e: any) { msg.error(e.message) }
-  finally { rowBusy.value = null }
+  dialog.warning({
+    title: '删除 provider',
+    content: '删除该 provider 及其所有模型?此操作不可撤销。',
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      rowBusy.value = 'p-' + id
+      try { await adminApi.deleteProvider(id); msg.success('已删除'); await load() }
+      catch (e: any) { msg.error(e.message) }
+      finally { rowBusy.value = null }
+    },
+  })
 }
 
 async function removeModel(id: number) {

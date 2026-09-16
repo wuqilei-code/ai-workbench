@@ -2,11 +2,12 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { adminApi } from '@/api/admin'
-import { useMessage } from 'naive-ui'
+import { useMessage, useDialog } from 'naive-ui'
 import type { AdminUserVo } from '@/types'
 
 const router = useRouter()
 const msg = useMessage()
+const dialog = useDialog()
 const loading = ref(false)
 const users = ref<AdminUserVo[]>([])
 const keyword = ref('')
@@ -32,13 +33,31 @@ async function load() {
 
 async function toggleStatus(u: AdminUserVo) {
   if (rowBusyId.value !== null) return
-  rowBusyId.value = u.id
   const target = u.status === 1 ? 0 : 1
   const action = target === 0 ? '禁用' : '启用'
-  if (target === 0 && !confirm(`确定禁用用户「${u.username}」？禁用后其 agent 实例将被停止，无法登录。`)) {
-    rowBusyId.value = null
+  if (target === 0) {
+    dialog.warning({
+      title: '禁用用户',
+      content: `确定禁用用户「${u.username}」?禁用后其 agent 实例将被停止,无法登录。`,
+      positiveText: '禁用',
+      negativeText: '取消',
+      onPositiveClick: async () => {
+        rowBusyId.value = u.id
+        try {
+          await adminApi.updateUserStatus(u.id, target)
+          msg.success(`已${action}「${u.username}」`)
+          await load()
+        } catch (e: any) {
+          msg.error(e.message)
+          await load()
+        } finally {
+          rowBusyId.value = null
+        }
+      },
+    })
     return
   }
+  rowBusyId.value = u.id
   try {
     await adminApi.updateUserStatus(u.id, target)
     msg.success(`已${action}「${u.username}」`)
@@ -53,13 +72,31 @@ async function toggleStatus(u: AdminUserVo) {
 
 async function toggleRole(u: AdminUserVo) {
   if (rowBusyId.value !== null) return
-  rowBusyId.value = u.id
   const target = u.role === 'admin' ? 'user' : 'admin'
   const action = target === 'admin' ? '设为管理员' : '降为普通用户'
-  if (target === 'user' && !confirm(`确定将「${u.username}」降为普通用户？`)) {
-    rowBusyId.value = null
+  if (target === 'user') {
+    dialog.warning({
+      title: '权限变更确认',
+      content: `确定将「${u.username}」降为普通用户?`,
+      positiveText: '降级',
+      negativeText: '取消',
+      onPositiveClick: async () => {
+        rowBusyId.value = u.id
+        try {
+          await adminApi.updateUserRole(u.id, target)
+          msg.success(`已将「${u.username}」${action}`)
+          await load()
+        } catch (e: any) {
+          msg.error(e.message)
+          await load()
+        } finally {
+          rowBusyId.value = null
+        }
+      },
+    })
     return
   }
+  rowBusyId.value = u.id
   try {
     await adminApi.updateUserRole(u.id, target)
     msg.success(`已将「${u.username}」${action}`)

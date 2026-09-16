@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { browserStop } from '../api/browser'
+import { useDialog } from 'naive-ui'
 
 /**
  * 共享浏览器实时画面(仅供查看 + 接管):
@@ -14,6 +15,7 @@ const props = withDefaults(
   { autoActive: true, follow: false },
 )
 const emit = defineEmits<{ (e: 'stopped'): void }>()
+const dialog = useDialog()
 
 interface TabInfo {
   id: string
@@ -137,21 +139,28 @@ function newTab() {
   sendWs({ action: 'newtab' })
 }
 
-async function closeBrowser() {
-  if (!confirm('关闭浏览器?将停止沙箱容器并释放资源,下次使用时自动重建。')) return
-  try {
-    await browserStop()
-  } catch { /* 后端失败也按已停处理,避免面板卡死 */ }
-  stoppedByUser = true
-  tabs.value = []
-  stateOk.value = false
-  connected.value = false
-  stateText.value = '浏览器已关闭'
-  if (pingTimer) { clearInterval(pingTimer); pingTimer = null }
-  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
-  if (warmupTimer) { clearInterval(warmupTimer); warmupTimer = null }
-  if (ws) { try { ws.close() } catch { /* ignore */ } ws = null }
-  emit('stopped')
+function closeBrowser() {
+  dialog.warning({
+    title: '关闭浏览器',
+    content: '将停止沙箱容器并释放资源,下次使用时自动重建。确定关闭吗?',
+    positiveText: '关闭',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await browserStop()
+      } catch { /* 后端失败也按已停处理,避免面板卡死 */ }
+      stoppedByUser = true
+      tabs.value = []
+      stateOk.value = false
+      connected.value = false
+      stateText.value = '浏览器已关闭'
+      if (pingTimer) { clearInterval(pingTimer); pingTimer = null }
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+      if (warmupTimer) { clearInterval(warmupTimer); warmupTimer = null }
+      if (ws) { try { ws.close() } catch { /* ignore */ } ws = null }
+      emit('stopped')
+    },
+  })
 }
 
 function handleState(state: string) {
@@ -402,8 +411,12 @@ onBeforeUnmount(() => {
   position: relative;
   flex: 1;
   min-height: 0;
-  background: #000;
+  margin: 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border-soft, #333);
+  background: #0a0b0d;
   overflow: hidden;
+  box-shadow: inset 0 0 32px rgba(0, 0, 0, 0.45);
 }
 .bc-scroll {
   height: 100%;
@@ -423,6 +436,7 @@ onBeforeUnmount(() => {
   user-select: none;
   -webkit-user-select: none;
   touch-action: none;
+  background: #0a0b0d;
 }
 .bc-placeholder {
   position: absolute;
@@ -438,37 +452,45 @@ onBeforeUnmount(() => {
 }
 .bc-live {
   position: absolute;
-  right: 8px;
-  bottom: 8px;
-  padding: 2px 8px;
-  border-radius: 10px;
+  right: 10px;
+  bottom: 10px;
+  padding: 3px 10px;
+  border-radius: 11px;
   font-size: 11px;
   color: #7fe0a0;
-  background: rgba(0, 0, 0, 0.65);
-  border: 1px solid var(--border-soft);
+  background: rgba(0, 0, 0, 0.72);
+  border: 1px solid rgba(127, 224, 160, 0.35);
+  animation: bc-pulse 2.4s ease-in-out infinite;
+  user-select: none;
+}
+@keyframes bc-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
 }
 .bc-live-cold {
   color: #888;
+  border-color: var(--border-soft, #333);
+  animation: none;
 }
 .bc-badge {
   position: absolute;
-  left: 8px;
-  bottom: 8px;
-  max-width: calc(100% - 16px);
-  padding: 3px 8px;
+  left: 10px;
+  bottom: 10px;
+  max-width: calc(100% - 20px);
+  padding: 3px 10px;
   border-radius: 6px;
   font-size: 11px;
   color: var(--warn);
-  background: rgba(0, 0, 0, 0.6);
-  border: 1px solid var(--border-soft);
+  background: rgba(0, 0, 0, 0.7);
+  border: 1px solid rgba(255, 193, 100, 0.35);
 }
-/* ============ 标签栏 ============ */
+/* ============ 标签栏(浏览器窗口风格) ============ */
 .bc-tabbar {
   display: flex;
   align-items: center;
-  gap: 4px;
-  height: 34px;
-  padding: 0 6px;
+  gap: 6px;
+  height: 38px;
+  padding: 0 8px;
   background: var(--bg-soft, #1e1f22);
   border-bottom: 1px solid var(--border-soft, #333);
   flex-shrink: 0;
@@ -476,7 +498,7 @@ onBeforeUnmount(() => {
 .bc-tabs {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 3px;
   flex: 1;
   min-width: 0;
   overflow-x: auto;
@@ -486,24 +508,37 @@ onBeforeUnmount(() => {
   display: none;
 }
 .bc-tab {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 4px;
-  max-width: 180px;
-  padding: 3px 8px;
-  border-radius: 6px;
+  gap: 5px;
+  max-width: 200px;
+  padding: 4px 10px;
+  border-radius: 7px;
   font-size: 12px;
-  color: #bbb;
+  color: var(--text-2, #bbb);
   cursor: pointer;
   white-space: nowrap;
   user-select: none;
+  transition: background .12s, color .12s;
 }
 .bc-tab:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.07);
+  color: #eee;
 }
 .bc-tab-active {
   color: #fff;
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--accent-soft, rgba(88, 156, 255, 0.18));
+  box-shadow: inset 0 0 0 1px var(--accent-o40, rgba(88, 156, 255, 0.28));
+}
+.bc-tab-active::before {
+  content: '';
+  flex-shrink: 0;
+  width: 5px;
+  height: 5px;
+  margin-left: 1px;
+  border-radius: 50%;
+  background: var(--accent-text, #5aa2ff);
 }
 .bc-tab-label {
   overflow: hidden;
@@ -511,6 +546,7 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 .bc-tab-close {
+  flex-shrink: 0;
   padding: 0 3px;
   border-radius: 4px;
   font-size: 13px;
@@ -523,21 +559,26 @@ onBeforeUnmount(() => {
 }
 .bc-tabbar-btn {
   flex-shrink: 0;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   border: none;
-  border-radius: 6px;
+  border-radius: 7px;
   background: transparent;
-  color: #aaa;
+  color: var(--text-2, #aaa);
   font-size: 15px;
   line-height: 1;
   cursor: pointer;
+  transition: background .12s, color .12s, transform .05s;
 }
 .bc-tabbar-btn:hover {
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
 }
+.bc-tabbar-btn:active {
+  transform: scale(0.94);
+}
 .bc-power:hover {
   color: #ff7b72;
+  background: rgba(255, 123, 114, 0.12);
 }
 </style>
