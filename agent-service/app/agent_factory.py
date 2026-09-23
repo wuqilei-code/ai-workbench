@@ -355,35 +355,32 @@ def _build_model() -> BaseChatModel:
 def _build_backend(user_id: str, visible_skills: set[str] | None = None) -> CompositeBackend:
     """default 与 /workspace/ 路由共用同一个后端(execute 只走 default)。
 
-    - docker(默认):DockerSandbox —— execute 与文件工具全部在 per-user 沙箱容器内
+    - aio(默认):AioSandbox —— execute 与文件工具全部在 per-user AIO 容器内
+      (自带浏览器/VNC/VSCode/shell)
     - local:LocalShellBackend(agent-service 进程内直跑 shell,仅本机可信调试)
     /skills 走本地只读文件系统,根列表按会话勾选过滤(visible_skills);
     SkillsMiddleware 的 source 固定为虚拟目录 /skills(它只认 backend 虚拟路径,
     传宿主绝对路径会 path_not_found —— 曾导致技能加载为空)。
     """
     mode = config.AGENT_SANDBOX_BACKEND
-    if mode == "docker":
-        from app.sandbox import get_docker_sandbox
+    if mode == "aio":
+        from app.aio_sandbox import get_aio_sandbox
 
-        workspace_backend = get_docker_sandbox(user_id)
+        workspace_backend = get_aio_sandbox(user_id)
     elif mode == "local":
         workspace_backend = LocalShellBackend(
             root_dir=str(ws.workspace_root(user_id)), virtual_mode=True
         )
     else:
-        raise ValueError(f"非法 AGENT_SANDBOX_BACKEND: {mode!r}(可选 docker|local)")
+        raise ValueError(f"非法 AGENT_SANDBOX_BACKEND: {mode!r}(可选 aio|local)")
 
-    # 不要把 /workspace 注册成路由(docker 模式):CompositeBackend 会把命中的路由前缀
-    # 剥掉,而沙箱被实现成 deepagents BaseSandbox,把收到的路径当作容器内**绝对路径**直接用
-    # (os.scandir / 说服 python 脚本直接吃原路径)。剥掉 /workspace/ 后:
-    #   - ls("/workspace/")   → 变成列容器根 /(看到 /usr,/dev,media...)
-    #   - write_file("/workspace/scripts/x.py") → 变成裸 /scripts 去容器根建目录
-    #     → PermissionError(容器根只读)
-    #   - 只有碰巧写成 "/workspace/workspace/scripts"(多套一层)被剥成 "/workspace/scripts"
-    #     (真实挂载点)才碰巧可用 —— 这正是此前"真实工作区在 /workspace/workspace"的混乱来源。
-    # 而 /workspace 路由与 default 本就是同一后端,故 docker 下干脆不注册,让 /workspace/...
-    # 原样落到 default(不经剥前缀,路径保持容器内 /workspace/... 正确指向挂载)。
-    # 注意:local 模式(LocalShellBackend virtual_mode)路径是相对 root_dir 的虚拟路径,
+    # 不要把 /workspace 注册成路由(aio 模式):CompositeBackend 会把命中的路由前缀
+    # 剥掉,而 AioSandbox 被实现成 deepagents BaseSandbox,自身负责把虚拟路径
+    # /workspace/... 翻译成 AIO 容器内 /home/gem/workspace/...。剥掉前缀会让路径变成
+    # 裸 /scripts/x.py,AioSandbox 无法翻译 → 落到容器根目录,写文件 PermissionError。
+    # 而 /workspace 路由与 default 本就是同一后端,故 aio 下不注册,让 /workspace/...
+    # 原样落到 default(路径保持完整,由 AioSandbox 翻译)。
+    # local 模式(LocalShellBackend virtual_mode)路径是相对 root_dir 的虚拟路径,
     # 需要靠 /workspace 路由剥前缀才能正确映射,因此 local 下仍保留该路由。
     routes = {
         # 技能目录只读:变更唯一入口是 create_skill 工具(经后端入库+落盘,防漂移)
@@ -399,8 +396,7 @@ def _build_backend(user_id: str, visible_skills: set[str] | None = None) -> Comp
         # artifacts_root:summarization 中间件把被压缩的旧历史/媒体卸载到
         # {artifacts_root}/conversation_history。默认 "/" 在容器内不可写
         # (PermissionError → "Older messages will not be recoverable"),
-        # 且卸载失败会让每轮都全量重总结(351+ 条消息,流式前长时间静默)。
-        # 指到 per-user 沙箱工作区,可写且按用户隔离。
+        # 且卸载失败会让每轮都全量重总结。指到 per-user 沙箱工作区,可写且按用户隔离。
         artifacts_root="/workspace",
         routes=routes,
     )

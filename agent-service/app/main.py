@@ -198,16 +198,17 @@ def skills_seed(user_id: str) -> dict:
 
 @app.post("/api/users/{user_id}/sandbox/ensure", dependencies=[Depends(verify_internal_token)])
 def sandbox_ensure(user_id: str) -> dict:
-    """确保该用户合并沙箱容器已创建运行,并按需拉起浏览器栈(懒启动,已就绪秒回)。
+    """确保该用户 AIO 沙箱容器已创建运行(懒启动,已就绪秒回)。
 
-    网关浏览器面板 warmup 调用;AI 浏览器工具走 browser.py 内部 ensure_browser。
+    网关浏览器面板 warmup 调用;AI 浏览器工具内部也会 ensure。
     """
-    from app.sandbox import get_docker_sandbox
+    if config.AGENT_SANDBOX_BACKEND != "aio":
+        return {"status": "ok", "mode": config.AGENT_SANDBOX_BACKEND}
+    from app.aio_sandbox import get_aio_sandbox
 
-    sb = get_docker_sandbox(user_id)
+    sb = get_aio_sandbox(user_id)
     try:
         container = sb.ensure()
-        sb.ensure_browser()
         return {"status": "ok", "container": container.name}
     except Exception as exc:  # noqa: BLE001
         logger.warning("[%s] sandbox ensure failed: %s", user_id, exc)
@@ -216,19 +217,61 @@ def sandbox_ensure(user_id: str) -> dict:
 
 @app.post("/api/users/{user_id}/sandbox/stop", dependencies=[Depends(verify_internal_token)])
 def sandbox_stop(user_id: str) -> dict:
-    """停止该用户的沙箱容器(浏览器面板「关闭浏览器」):立即释放 CPU/内存。
+    """停止该用户的 AIO 沙箱容器(浏览器面板「关闭浏览器」):立即释放 CPU/内存。
 
-    容器保留(不删除),下次 ensure / AI 浏览器工具按需重新创建并拉起浏览器栈。
+    容器保留(不删除),下次 ensure / AI 浏览器工具按需重新启动。
     """
-    from app.sandbox import get_docker_sandbox
+    if config.AGENT_SANDBOX_BACKEND != "aio":
+        return {"status": "ok", "mode": config.AGENT_SANDBOX_BACKEND}
+    from app.aio_sandbox import get_aio_sandbox
 
-    sb = get_docker_sandbox(user_id)
+    sb = get_aio_sandbox(user_id)
     try:
         sb.stop()
         return {"status": "ok"}
     except Exception as exc:  # noqa: BLE001
         logger.warning("[%s] sandbox stop failed: %s", user_id, exc)
         return {"status": "error", "error": str(exc)}
+
+
+@app.get("/sandbox/browser-info/{user_id}")
+def sandbox_browser_info(user_id: str) -> dict:
+    """返回 AIO 沙箱的浏览器连接信息(VNC URL / CDP URL),供前端 iframe 实时预览。"""
+    if config.AGENT_SANDBOX_BACKEND != "aio":
+        return {"mode": config.AGENT_SANDBOX_BACKEND, "vnc_url": None}
+    try:
+        from app.aio_sandbox import get_aio_sandbox
+
+        sb = get_aio_sandbox(user_id)
+        sb.ensure()
+        info = sb.browser_info()
+        public_base = sb.public_base_url()
+        return {
+            "mode": "aio",
+            "vnc_url": f"{public_base}/vnc/index.html?autoconnect=true",
+            "code_server_url": f"{public_base}/code-server/",
+            "terminal_url": f"{public_base}/terminal",
+            "cdp_url": info.get("cdp_url", ""),
+            "base_url": public_base,
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[%s] browser-info failed: %s", user_id, exc)
+        return {"mode": "aio", "error": str(exc), "vnc_url": None}
+
+
+@app.get("/sandbox/active-users")
+def sandbox_active_users() -> dict:
+    """返回当前活跃的 AIO 沙箱用户列表(供前端发现可用用户)。"""
+    if config.AGENT_SANDBOX_BACKEND != "aio":
+        return {"mode": config.AGENT_SANDBOX_BACKEND, "users": []}
+    try:
+        from app.aio_sandbox import _ACTIVE_AIO, _ACTIVE_AIO_LOCK
+
+        with _ACTIVE_AIO_LOCK:
+            users = [sb.user_id for sb in _ACTIVE_AIO.values()]
+        return {"mode": "aio", "users": users}
+    except Exception:  # noqa: BLE001
+        return {"mode": "aio", "users": []}
 
 
 @app.post("/api/users/{user_id}/stream", dependencies=[Depends(verify_internal_token)])
@@ -644,11 +687,13 @@ def _emit_update(update, user_id: str | None = None, emitted_tools: set | None =
 
 
 def _current_sandbox(user_id: str):
-    """取该用户当前沙箱后端(可能是 CompositeBackend 包装);无或非 docker 返回 None。"""
+    """取该用户当前沙箱后端;无或非 aio 返回 None。"""
+    if config.AGENT_SANDBOX_BACKEND != "aio":
+        return None
     try:
-        from app.sandbox import get_docker_sandbox
+        from app.aio_sandbox import get_aio_sandbox
 
-        return get_docker_sandbox(user_id)
+        return get_aio_sandbox(user_id)
     except Exception:  # noqa: BLE001
         return None
 

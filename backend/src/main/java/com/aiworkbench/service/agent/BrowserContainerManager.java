@@ -3,6 +3,7 @@ package com.aiworkbench.service.agent;
 import com.aiworkbench.config.WorkspaceProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -16,27 +17,24 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 每用户沙箱容器里的浏览器端点访问(deepagents 单轨,execute 与浏览器同容器)。
+ * 每用户 AIO 沙箱容器访问(agent-infra/sandbox 单轨,execute/文件/浏览器同容器)。
  * <p>
- * 容器由 agent-service 创建(挂 aiwb-agents 网 + 浏览器常驻入口),网关按容器名直连:
- * playwright-mcp(8931)/MCP、shared Chromium CDP(9223)。本类只负责:
- * - 按用户推导容器名与 CDP/MCP 地址;
- * - 探测容器就绪;未就绪时请求 agent-service 确保创建(网关自身不再用 docker CLI 建容器)。
+ * 容器由 agent-service 创建(挂 aiwb-agents 网,容器名 aio-sandbox-u<userId>),
+ * 网关不再直连容器的 CDP/MCP,只负责:
+ * - 探测容器是否就绪;
+ * - 未就绪时请求 agent-service 确保创建;
+ * - 代理 agent-service 的沙箱连接信息(VNC/VSCode/终端 URL)给前端 iframe。
  */
 @Slf4j
 @Component
 public class BrowserContainerManager {
 
-    /** playwright-mcp 端口(浏览器入口脚本启动) */
-    public static final int BROWSER_MCP_PORT = 8931;
-    /** CDP 转发端口(node 把容器内 127.0.0.1:9222 转发到 0.0.0.0:9223,可跨容器访问) */
-    public static final int BROWSER_CDP_PORT = 9223;
     private static final java.time.Duration CMD_TIMEOUT = java.time.Duration.ofSeconds(20);
 
     private final WorkspaceProperties props;
     private final WebClient webClient;
 
-    /** isReady 结果短 TTL 缓存:输入事件路径高频调用,docker inspect 子进程(~几十 ms)不能每次都跑 */
+    /** isReady 结果短 TTL 缓存:避免高频 spawn docker inspect 子进程 */
     private static final long READY_CACHE_MS = 800;
     private final Map<Long, CachedReady> readyCache = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -56,18 +54,8 @@ public class BrowserContainerManager {
     }
 
     public String containerName(Long userId) {
-        // 与 agent-service 沙箱命名一致(aiwb-sandbox-u<user_id>)
-        return "aiwb-sandbox-u" + userId;
-    }
-
-    /** playwright-mcp Streamable HTTP 地址(网关同 aiwb-agents 网,按容器名 DNS 直连) */
-    public String browserMcpUrl(Long userId) {
-        return "http://" + containerName(userId) + ":" + BROWSER_MCP_PORT + "/mcp";
-    }
-
-    /** CDP 地址(实时截图流 / 接管) */
-    public String browserCdpBaseUrl(Long userId) {
-        return "http://" + containerName(userId) + ":" + BROWSER_CDP_PORT;
+        // 与 agent-service 沙箱命名一致(aio-sandbox-u<user_id>)
+        return "aio-sandbox-u" + userId;
     }
 
     /** 沙箱容器是否在运行(800ms TTL 缓存,避免输入事件路径高频 spawn docker CLI 子进程)。 */
@@ -88,13 +76,7 @@ public class BrowserContainerManager {
         return ready;
     }
 
-    /** 兼容旧调用(容器生命周期由 agent-service 管理,无空闲回收回调)。 */
-    public void touch(Long userId) {
-        // no-op
-    }
-
-    /** 确保沙箱与浏览器栈就绪:不在运行时请 agent-service 创建并懒启动浏览器
-     *  (首次拉起 chromium 需数秒,超时放宽到 35s)。失败静默,后续按 isReady 轮询。 */
+    /** 确保沙箱就绪:不在运行时请 agent-service 创建并等待就绪。失败静默,后续按 isReady 轮询。 */
     public void getOrStart(Long userId) {
         if (isReady(userId)) {
             return;
@@ -106,7 +88,7 @@ public class BrowserContainerManager {
                     .bodyValue("{}")
                     .retrieve()
                     .toBodilessEntity()
-                    .block(java.time.Duration.ofSeconds(35));
+                    .block(java.time.Duration.ofSeconds(40));
             log.info("requested sandbox ensure for user {}", userId);
         } catch (Exception e) {
             log.warn("sandbox ensure request failed (user={}): {}", userId, e.toString());
@@ -128,6 +110,22 @@ public class BrowserContainerManager {
             log.info("requested sandbox stop for user {}", userId);
         } catch (Exception e) {
             log.warn("sandbox stop request failed (user={}): {}", userId, e.toString());
+        }
+    }
+
+    /** 代理 agent-service 的沙箱连接信息(VNC/VSCode/终端 URL),供前端 iframe 使用。 */
+    public Map<String, Object> sandboxInfo(Long userId) {
+        try {
+            Map<String, Object> body = webClient.get()
+                    .uri("/sandbox/browser-info/{userId}", userId)
+                    .retrieve()
+                    .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {
+                    })
+                    .block(java.time.Duration.ofSeconds(45));
+            return body != null ? body : Map.of("mode", "unknown");
+        } catch (Exception e) {
+            log.warn("sandbox info request failed (user={}): {}", userId, e.toString());
+            return Map.of("mode", "error", "error", e.toString());
         }
     }
 

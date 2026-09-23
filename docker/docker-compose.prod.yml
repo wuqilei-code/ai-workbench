@@ -2,8 +2,8 @@
 # 生产/云服务器部署专用 compose(用已 load 的镜像,不再 build)
 # 用法:拷本文件到云服务器,先配置同目录 .env(参考仓库 docker/.env.example),然后
 #       docker compose -f docker-compose.prod.yml up -d
-# 前提:已 docker load 导入 ai-workbench-app / ai-workbench-agent-service / ai-workbench-sandbox
-#       三个镜像;所需环境变量与 dev 版一致(见 .env.example / docker-compose.yml)。
+# 前提:已 docker load 导入 ai-workbench-app / ai-workbench-agent-service 两个镜像,
+#       并已准备 AIO 沙箱镜像(AGENT_SANDBOX_IMAGE,如 aio-sandbox:latest)。
 # ============================================================================
 services:
   app:
@@ -63,15 +63,15 @@ services:
       AGENT_GLOBAL_SKILLS: /app/skills
       BACKEND_INTERNAL_URL: "http://app:8080"
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:?set to a random secret in .env, shared with app}
-      AGENT_SANDBOX_BACKEND: "${AGENT_SANDBOX_BACKEND:-docker}"
-      AGENT_SANDBOX_IMAGE: "${AGENT_SANDBOX_IMAGE:-ai-workbench-sandbox:latest}"
+      AGENT_SANDBOX_BACKEND: "${AGENT_SANDBOX_BACKEND:-aio}"
+      AGENT_SANDBOX_IMAGE: "${AGENT_SANDBOX_IMAGE:-aio-sandbox:latest}"
       AGENT_SANDBOX_NETWORK: "${AGENT_SANDBOX_NETWORK:-true}"
       AGENT_SANDBOX_NETWORK_NAME: "${AGENT_SANDBOX_NETWORK_NAME:-aiwb-agents}"
       AGENT_SANDBOX_VOLUME_ROOT: "${AGENT_SANDBOX_VOLUME_ROOT:-/var/lib/docker/volumes/docker_workspace/_data/users}"
-      AGENT_SANDBOX_UID: "${AGENT_SANDBOX_UID:-10001}"
-      AGENT_SANDBOX_MEM_MB: "${AGENT_SANDBOX_MEM_MB:-2048}"
-      AGENT_SANDBOX_CPUS: "${AGENT_SANDBOX_CPUS:-1.0}"
-      AGENT_SANDBOX_PIDS: "${AGENT_SANDBOX_PIDS:-256}"
+      AGENT_SANDBOX_UID: "${AGENT_SANDBOX_UID:-1000}"
+      AGENT_SANDBOX_MEM_MB: "${AGENT_SANDBOX_MEM_MB:-4096}"
+      AGENT_SANDBOX_CPUS: "${AGENT_SANDBOX_CPUS:-2.0}"
+      AGENT_SANDBOX_PIDS: "${AGENT_SANDBOX_PIDS:-512}"
       AGENT_SANDBOX_IDLE_TTL: "${AGENT_SANDBOX_IDLE_TTL:-1800}"
       AGENT_SANDBOX_MAX_TIMEOUT: "${AGENT_SANDBOX_MAX_TIMEOUT:-120}"
     volumes:

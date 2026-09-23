@@ -1,92 +1,86 @@
-"""浏览器工具集:驱动"合并沙箱"里的共享 Chromium(connect_over_cdp)。
+"""浏览器工具集:驱动 AIO Sandbox 内置 Chromium(通过 CDP WebSocket)。
 
-- 与前端实时面板**同一浏览器上下文**:agent 打开/点击/输入的页面就是面板里看到的画面。
+- 与前端 VNC 实时画面**同一浏览器**:agent 打开/点击/输入的页面就是用户看到的画面,
+  用户也可以直接在 VNC 里接管操作。
 - 全部返回文本(标题/正文/操作结果),不把图片喂给模型(deepseek 不支持图像的坑)。
-- 默认不截图;仅当用户明确要求截图时才保存 PNG 到工作区。
+- 默认不截图;仅当用户明确要求时才保存 PNG 到工作区。
+- 交互优先用 Runtime.evaluate 执行 DOM 操作(比坐标点击稳定),滚动可用 JS。
+
+AIO 浏览器地址由 AioSandbox.cdp_url() 提供(容器内 /cdp/json/list 的第一个 page 目标)。
 """
 
 from __future__ import annotations
 
+import base64
+import itertools
+import json
 import logging
 import time
 
 from langchain_core.tools import tool
 
-from app import workspace as ws
-
 logger = logging.getLogger(__name__)
+
+_CDP_TIMEOUT = 25
+_NAV_WAIT = 1.0
 
 
 def _rel_screenshot_name() -> str:
     return f"browsers/browser-{time.strftime('%Y%m%d-%H%M%S')}.png"
 
 
-def _sandbox_cdp_endpoint(user_id: str) -> str:
-    """该用户合并沙箱容器的 CDP 端点(http://<容器IP>:9223)。
+class _Cdp:
+    """极简 CDP 客户端(单页面 target,直接对本页发命令)。"""
 
-    容器挂 aiwb-agents 网并常驻浏览器入口(node 把 127.0.0.1:9222 转发到 0.0.0.0:9223);
-    用容器 IP 直连以绕开新版 Chromium 的 Host 头校验。
-    """
-    import docker
+    def __init__(self, ws_url: str) -> None:
+        from websockets.sync.client import connect as _ws_connect
 
-    cli = docker.from_env()
-    name = f"aiwb-sandbox-u{user_id}"
-    c = cli.containers.get(name)
-    nets = (c.attrs.get("NetworkSettings", {}).get("Networks", {}) or {})
-    for net_meta in nets.values():
-        ip = (net_meta or {}).get("IPAddress")
-        if ip:
-            return f"http://{ip}:9223"
-    raise RuntimeError(f"沙箱容器 {name} 未接入可访问网络,无法获取 CDP 端点")
+        self._ws = _ws_connect(ws_url, open_timeout=_CDP_TIMEOUT, max_size=None)
+        self._counter = itertools.count(1)
 
+    def call(self, method: str, params: dict | None = None) -> dict:
+        mid = next(self._counter)
+        self._ws.send(json.dumps({"id": mid, "method": method, "params": params or {}}))
+        deadline = time.monotonic() + _CDP_TIMEOUT
+        while time.monotonic() < deadline:
+            raw = self._ws.recv(timeout=_CDP_TIMEOUT)
+            msg = json.loads(raw)
+            if msg.get("id") == mid:
+                if "error" in msg:
+                    raise RuntimeError(msg["error"].get("message", str(msg["error"])))
+                return msg.get("result", {})
+        raise TimeoutError(f"CDP {method} 超时")
 
-def _open_shared_page(user_id: str):
-    """connect_over_cdp 拿到共享浏览器的第一个页面(面板与 agent 共用)。
+    def js(self, expression: str, await_promise: bool = False):
+        res = self.call("Runtime.evaluate", {
+            "expression": expression,
+            "returnByValue": True,
+            "awaitPromise": await_promise,
+        })
+        if res.get("exceptionDetails"):
+            raise RuntimeError(res["exceptionDetails"].get("text", "JS 执行异常"))
+        return (res.get("result") or {}).get("value")
 
-    懒启动:连接前先幂等拉起浏览器栈(已就绪秒回,未就绪启动并等待)。
-    """
-    from playwright.sync_api import sync_playwright
-
-    from app.sandbox import get_docker_sandbox
-
-    get_docker_sandbox(user_id).ensure_browser()
-    endpoint = _sandbox_cdp_endpoint(user_id)
-    p = sync_playwright().start()
-    try:
-        browser = p.chromium.connect_over_cdp(endpoint)
-    except Exception:
-        # connect_over_cdp 失败时若不清 driver,会泄漏 Node 子进程
+    def close(self) -> None:
         try:
-            p.stop()
+            self._ws.close()
         except Exception:  # noqa: BLE001
             pass
-        raise
-    ctx = browser.contexts[0] if browser.contexts else browser.new_context()
-    page = ctx.pages[0] if ctx.pages else ctx.new_page()
-    return p, browser, ctx, page
 
 
-def _close(p, browser):
-    try:
-        browser.close()
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        p.stop()
-    except Exception:  # noqa: BLE001
-        pass
+def _open_cdp(user_id: str) -> _Cdp:
+    from app.aio_sandbox import get_aio_sandbox
 
-
-def _title_of(page) -> str:
-    try:
-        t = (page.title() or "").strip()
-        return f"(标题:{t})" if t else ""
-    except Exception:  # noqa: BLE001
-        return ""
+    sb = get_aio_sandbox(user_id)
+    sb.ensure()
+    ws_url = sb.cdp_url()
+    if not ws_url:
+        raise RuntimeError("未找到可用的浏览器页面(CDP 目标)")
+    return _Cdp(ws_url)
 
 
 def build_browser_tools(user_id: str) -> list:
-    """构造驱动共享浏览器容器的 langchain 工具集(与前端实时面板同一浏览器上下文)。"""
+    """构造驱动 AIO 内置浏览器的 langchain 工具集(与前端 VNC 画面同一浏览器)。"""
 
     @tool("browser_navigate")
     def browser_navigate(url: str, screenshot: bool = False) -> str:
@@ -98,20 +92,24 @@ def build_browser_tools(user_id: str) -> list:
         if len(url) > 2048:
             return "URL 过长。"
         try:
-            p, browser, ctx, page = _open_shared_page(user_id)
+            cdp = _open_cdp(user_id)
             try:
-                page.goto(url, wait_until="load", timeout=30_000)
-                page.wait_for_timeout(800)
-                base = f"已打开 {url}{_title_of(page)}。"
+                cdp.call("Page.enable")
+                cdp.call("Page.navigate", {"url": url})
+                time.sleep(_NAV_WAIT)
+                title = ""
+                try:
+                    title = (cdp.js("document.title") or "").strip()
+                except Exception:  # noqa: BLE001
+                    pass
+                base = f"已打开 {url}" + (f"(标题:{title})" if title else "") + "。"
                 if not screenshot:
                     return base + "用户未要求截图,因此未保存截图。"
-                rel = _rel_screenshot_name()
-                out = ws.workspace_root(user_id) / rel
-                out.parent.mkdir(parents=True, exist_ok=True)
-                page.screenshot(path=str(out))
+                data = cdp.call("Page.captureScreenshot", {"format": "png"}).get("data")
+                rel = _save_screenshot(user_id, data)
                 return base + f"已截图: {rel}。请用 `[结果文件] {rel}` 标记交付。"
             finally:
-                _close(p, browser)
+                cdp.close()
         except Exception as exc:  # noqa: BLE001
             logger.warning("browser_navigate 失败: %s", exc)
             return f"打开网页失败:{exc}"
@@ -120,16 +118,16 @@ def build_browser_tools(user_id: str) -> list:
     def browser_get_text() -> str:
         """读取当前页面文字内容(标题 + 正文前 2000 字),用于了解页面结构后再操作。"""
         try:
-            p, browser, ctx, page = _open_shared_page(user_id)
+            cdp = _open_cdp(user_id)
             try:
-                title = (page.title() or "").strip()
-                body = page.evaluate("() => (document.body ? document.body.innerText : '')") or ""
+                title = cdp.js("document.title") or ""
+                body = cdp.js("document.body ? document.body.innerText : ''") or ""
                 body = str(body).strip()
                 if len(body) > 2000:
                     body = body[:2000] + "\n…(已截断)"
                 return (f"标题: {title}\n" if title else "") + body
             finally:
-                _close(p, browser)
+                cdp.close()
         except Exception as exc:  # noqa: BLE001
             logger.warning("browser_get_text 失败: %s", exc)
             return f"读取页面失败:{exc}"
@@ -138,12 +136,18 @@ def build_browser_tools(user_id: str) -> list:
     def browser_click(selector: str) -> str:
         """按 CSS 选择器点击页面元素(如 #login、.btn、input[name=q])。"""
         try:
-            p, browser, ctx, page = _open_shared_page(user_id)
+            cdp = _open_cdp(user_id)
             try:
-                page.click(selector, timeout=8000)
+                sel = json.dumps(selector)
+                ok = cdp.js(
+                    "(function(){var el=document.querySelector(" + sel + ");"
+                    "if(!el)return false;el.click();return true;})()"
+                )
+                if not ok:
+                    return f"未找到元素:{selector}"
                 return f"已点击 {selector}。"
             finally:
-                _close(p, browser)
+                cdp.close()
         except Exception as exc:  # noqa: BLE001
             logger.warning("browser_click 失败: %s", exc)
             return f"点击失败:{exc}"
@@ -152,12 +156,21 @@ def build_browser_tools(user_id: str) -> list:
     def browser_click_text(text: str) -> str:
         """点击页面上文字匹配的第一个元素(适合按钮/链接,如"登录"、"Download")。"""
         try:
-            p, browser, ctx, page = _open_shared_page(user_id)
+            cdp = _open_cdp(user_id)
             try:
-                page.get_by_text(text, exact=False).first.click(timeout=8000)
+                t = json.dumps(text)
+                ok = cdp.js(
+                    "(function(){var t=" + t + ";"
+                    "var all=document.querySelectorAll('a,button,input,[role=button],span,div');"
+                    "for(var i=0;i<all.length;i++){var el=all[i];"
+                    "if(el.innerText&&el.innerText.trim().indexOf(t)>=0){el.click();return true;}}"
+                    "return false;})()"
+                )
+                if not ok:
+                    return f"未找到包含「{text}」的可点击元素。"
                 return f"已点击包含「{text}」的元素。"
             finally:
-                _close(p, browser)
+                cdp.close()
         except Exception as exc:  # noqa: BLE001
             logger.warning("browser_click_text 失败: %s", exc)
             return f"点击失败:{exc}"
@@ -166,12 +179,21 @@ def build_browser_tools(user_id: str) -> list:
     def browser_type(selector: str, text: str) -> str:
         """在指定输入框(selector)输入文字(如 #q、[name=email])。"""
         try:
-            p, browser, ctx, page = _open_shared_page(user_id)
+            cdp = _open_cdp(user_id)
             try:
-                page.fill(selector, text, timeout=8000)
+                sel = json.dumps(selector)
+                val = json.dumps(text)
+                ok = cdp.js(
+                    "(function(){var el=document.querySelector(" + sel + ");"
+                    "if(!el)return false;el.focus();el.value=" + val + ";"
+                    "el.dispatchEvent(new Event('input',{bubbles:true}));"
+                    "el.dispatchEvent(new Event('change',{bubbles:true}));return true;})()"
+                )
+                if not ok:
+                    return f"未找到输入框:{selector}"
                 return f"已在 {selector} 输入内容。"
             finally:
-                _close(p, browser)
+                cdp.close()
         except Exception as exc:  # noqa: BLE001
             logger.warning("browser_type 失败: %s", exc)
             return f"输入失败:{exc}"
@@ -180,12 +202,12 @@ def build_browser_tools(user_id: str) -> list:
     def browser_scroll(y: int = 300) -> str:
         """滚动当前页面(y>0 向下,y<0 向上)。"""
         try:
-            p, browser, ctx, page = _open_shared_page(user_id)
+            cdp = _open_cdp(user_id)
             try:
-                page.mouse.wheel(0, int(y))
+                cdp.js(f"window.scrollBy(0,{int(y)});")
                 return f"已滚动 y={y}。"
             finally:
-                _close(p, browser)
+                cdp.close()
         except Exception as exc:  # noqa: BLE001
             logger.warning("browser_scroll 失败: %s", exc)
             return f"滚动失败:{exc}"
@@ -194,12 +216,18 @@ def build_browser_tools(user_id: str) -> list:
     def browser_go_back() -> str:
         """返回上一页。"""
         try:
-            p, browser, ctx, page = _open_shared_page(user_id)
+            cdp = _open_cdp(user_id)
             try:
-                page.go_back(timeout=15000)
-                return f"已返回上一页{_title_of(page)}。"
+                cdp.js("history.back();")
+                time.sleep(_NAV_WAIT)
+                title = ""
+                try:
+                    title = (cdp.js("document.title") or "").strip()
+                except Exception:  # noqa: BLE001
+                    pass
+                return f"已返回上一页" + (f"(标题:{title})" if title else "") + "。"
             finally:
-                _close(p, browser)
+                cdp.close()
         except Exception as exc:  # noqa: BLE001
             logger.warning("browser_go_back 失败: %s", exc)
             return f"返回失败:{exc}"
@@ -208,15 +236,13 @@ def build_browser_tools(user_id: str) -> list:
     def browser_screenshot() -> str:
         """把当前页面截图保存到工作区并返回路径(仅用户要求截图/图片时使用)。"""
         try:
-            p, browser, ctx, page = _open_shared_page(user_id)
+            cdp = _open_cdp(user_id)
             try:
-                rel = _rel_screenshot_name()
-                out = ws.workspace_root(user_id) / rel
-                out.parent.mkdir(parents=True, exist_ok=True)
-                page.screenshot(path=str(out))
+                data = cdp.call("Page.captureScreenshot", {"format": "png"}).get("data")
+                rel = _save_screenshot(user_id, data)
                 return f"截图已保存为 {rel}。请用 `[结果文件] {rel}` 标记交付。"
             finally:
-                _close(p, browser)
+                cdp.close()
         except Exception as exc:  # noqa: BLE001
             logger.warning("browser_screenshot 失败: %s", exc)
             return f"截图失败:{exc}"
@@ -231,6 +257,18 @@ def build_browser_tools(user_id: str) -> list:
         browser_go_back,
         browser_screenshot,
     ]
+
+
+def _save_screenshot(user_id: str, data_b64: str | None) -> str:
+    """把 CDP 返回的 base64 PNG 写入用户工作区 browsers/,返回相对路径。"""
+    if not data_b64:
+        raise RuntimeError("截图数据为空")
+    rel = _rel_screenshot_name()
+    content = base64.b64decode(data_b64)
+    from app.aio_sandbox import get_aio_sandbox
+
+    get_aio_sandbox(user_id).upload_files([(rel, content)])
+    return rel
 
 
 __all__ = ["build_browser_tools"]

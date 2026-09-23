@@ -58,12 +58,12 @@ if not INTERNAL_TOKEN:
 
 # --- 执行沙箱 ---
 # AGENT_SANDBOX_BACKEND:
-#   docker = execute 与 /workspace 文件工具全部在 per-user 沙箱容器内执行(推荐,默认)
-#   local  = 退回 LocalShellBackend(agent-service 进程内直接跑 shell,仅限本机可信调试)
-AGENT_SANDBOX_BACKEND: str = os.environ.get("AGENT_SANDBOX_BACKEND", "docker").strip().lower()
-# 沙箱镜像(含 python3 + 文档依赖 + node/playwright/chromium + 浏览器入口;见 agent-service/Dockerfile.sandbox)
-AGENT_SANDBOX_IMAGE: str = os.environ.get("AGENT_SANDBOX_IMAGE", "ai-workbench-sandbox:latest")
-# 沙箱容器挂入的自定义网络(与网关同网,按容器名直连 CDP/MCP);compose 网络名 aiwb-agents
+#   aio   = AIO Sandbox(agent-infra/sandbox)per-user 容器,自带浏览器/VNC/VSCode/shell(推荐,默认)
+#   local = 退回 LocalShellBackend(agent-service 进程内直接跑 shell,仅限本机可信调试)
+AGENT_SANDBOX_BACKEND: str = os.environ.get("AGENT_SANDBOX_BACKEND", "aio").strip().lower()
+# AIO Sandbox 镜像(内置 Chromium + VNC + code-server + python/node 运行时)
+AGENT_SANDBOX_IMAGE: str = os.environ.get("AGENT_SANDBOX_IMAGE", "aio-sandbox:latest")
+# 沙箱容器挂入的自定义网络(与网关同网,agent-service 按容器 IP 直连 AIO HTTP API);compose 网络名 aiwb-agents
 AGENT_SANDBOX_NETWORK_NAME: str = os.environ.get("AGENT_SANDBOX_NETWORK_NAME", "aiwb-agents")
 
 
@@ -91,10 +91,10 @@ def _resolve_volume_root() -> str:
         return "/var/lib/docker/volumes/docker_workspace/_data/users"
 
 
-# 宿主(daemon 视角)workspace 卷下 users 根:用于按用户 bind 子目录到沙箱 /workspace。
+# 宿主(daemon 视角)workspace 卷下 users 根:用于按用户 bind 子目录到沙箱工作区。
 AGENT_SANDBOX_VOLUME_ROOT: str = _resolve_volume_root()
-# 沙箱内运行 uid(非 root);agent-service 会先把该用户 project 目录 chown 成此 uid。
-AGENT_SANDBOX_UID: int = _int("AGENT_SANDBOX_UID", 10001)
+# 沙箱工作区在 AIO 容器内归 gem 用户(uid 1000);agent-service 会 chown 该用户 project 目录。
+AGENT_SANDBOX_UID: int = _int("AGENT_SANDBOX_UID", 1000)
 # 是否允许沙箱访问网络(合并浏览器后需开网,execute 也随之可联网)
 AGENT_SANDBOX_NETWORK: bool = _bool("AGENT_SANDBOX_NETWORK", True)
 AGENT_SANDBOX_MEM_MB: int = _int("AGENT_SANDBOX_MEM_MB", 1024)

@@ -36,8 +36,8 @@ services:
       APP_AES_KEY: ${APP_AES_KEY:?set in .env}
       # --- agent-service 内部回调令牌(create_skill 回写技能库;两服务一致) ---
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:?set to a random secret in .env, shared with agent-service}
-      # --- MySQL(数据源:compose 内部 mysql 服务,经服务名访问) ---
-      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/ai_workbench?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8&useUnicode=true
+      # --- MySQL(数据源:宿主机 MySQL,经 host.docker.internal 访问;见 .env 的 MYSQL_HOST) ---
+      SPRING_DATASOURCE_URL: jdbc:mysql://${MYSQL_HOST:-host.docker.internal}:3306/ai_workbench?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8&useUnicode=true
       SPRING_DATASOURCE_USERNAME: aiworkbench
       SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:?set in .env}
       # 浏览器面板链路排查用 DEBUG(稳定后可删)
@@ -52,10 +52,7 @@ services:
     networks:
       - default
       - agents
-    # 数据源为 compose 内部 mysql 服务(mysql 服务名),等待其就绪后启动
-    depends_on:
-      mysql:
-        condition: service_healthy
+    # 数据源为宿主机 MySQL(host.docker.internal),不再依赖 compose 内 mysql 服务
     logging: *default-logging
     restart: unless-stopped
 
@@ -88,18 +85,20 @@ services:
       BACKEND_INTERNAL_URL: "http://app:8080"
       # --- agent-service 内部回调令牌(create_skill 回写技能库;两服务必须一致且为随机值) ---
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:?set to a random secret in .env, shared with app}
-      # 执行沙箱:execute 与 /workspace 工具在 per-user 容器内跑(docker|local);
-      # 沙箱同时承载共享浏览器(CDP/playwright-mcp),容器挂 aiwb-agents 网供网关节流面板直连
-      AGENT_SANDBOX_BACKEND: "${AGENT_SANDBOX_BACKEND:-docker}"
-      AGENT_SANDBOX_IMAGE: "${AGENT_SANDBOX_IMAGE:-ai-workbench-sandbox:latest}"
+      # 执行沙箱:execute/文件/浏览器全部在 per-user AIO 沙箱容器内(agent-infra/sandbox);
+      # AIO 自带 Chromium+VNC+code-server,前端直接 iframe 嵌入实时画面。
+      AGENT_SANDBOX_BACKEND: "${AGENT_SANDBOX_BACKEND:-aio}"
+      AGENT_SANDBOX_IMAGE: "${AGENT_SANDBOX_IMAGE:-aio-sandbox:latest}"
       AGENT_SANDBOX_NETWORK: "${AGENT_SANDBOX_NETWORK:-true}"
       AGENT_SANDBOX_NETWORK_NAME: "${AGENT_SANDBOX_NETWORK_NAME:-aiwb-agents}"
       # daemon 视角的 workspace 卷数据根(卷名 = <compose项目名>_workspace)
       AGENT_SANDBOX_VOLUME_ROOT: "${AGENT_SANDBOX_VOLUME_ROOT:-/var/lib/docker/volumes/docker_workspace/_data/users}"
-      AGENT_SANDBOX_UID: "${AGENT_SANDBOX_UID:-10001}"
-      AGENT_SANDBOX_MEM_MB: "${AGENT_SANDBOX_MEM_MB:-2048}"
-      AGENT_SANDBOX_CPUS: "${AGENT_SANDBOX_CPUS:-1.0}"
-      AGENT_SANDBOX_PIDS: "${AGENT_SANDBOX_PIDS:-256}"
+      # AIO 容器内工作区归 gem(uid 1000)
+      AGENT_SANDBOX_UID: "${AGENT_SANDBOX_UID:-1000}"
+      # 浏览器 + VNC + VSCode 需要更多内存/CPU
+      AGENT_SANDBOX_MEM_MB: "${AGENT_SANDBOX_MEM_MB:-4096}"
+      AGENT_SANDBOX_CPUS: "${AGENT_SANDBOX_CPUS:-2.0}"
+      AGENT_SANDBOX_PIDS: "${AGENT_SANDBOX_PIDS:-512}"
       AGENT_SANDBOX_IDLE_TTL: "${AGENT_SANDBOX_IDLE_TTL:-1800}"
       AGENT_SANDBOX_MAX_TIMEOUT: "${AGENT_SANDBOX_MAX_TIMEOUT:-120}"
     volumes:
@@ -128,18 +127,6 @@ services:
     logging: *default-logging
     restart: unless-stopped
 
-  # 沙箱镜像构建载体(execute + 共享浏览器合并镜像);仅用于 docker compose build 产出,
-  # up 时立即退出(restart:no)。context 取仓库根以便 COPY 中文字体/浏览器入口。
-  agent-sandbox-image:
-    build:
-      context: ..
-      dockerfile: agent-service/Dockerfile.sandbox
-      args:
-        DOCKER_REGISTRY: "${DOCKER_REGISTRY:-docker.m.daocloud.io}"
-    image: ai-workbench-sandbox
-    restart: "no"
-    command: ["true"]
-
   # deepagents 持久化:线程 checkpoint + 跨线程 store
   postgres:
     image: docker.m.daocloud.io/postgres:16-alpine
@@ -157,26 +144,26 @@ services:
     logging: *default-logging
     restart: unless-stopped
 
-  # 容器化 MySQL(2026-08-23 启用):Windows 宿主机到容器的任意端口通路不稳定
-  # (host.docker.internal 只保证已发布端口),数据库入 compose 后不再依赖该边界。
-  # 宿主机 MySQL(127.0.0.1)保留为数据源备份,未做任何改动。
-  mysql:
-    image: docker.m.daocloud.io/mysql:8.4
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set in .env}
-      MYSQL_DATABASE: ai_workbench
-      MYSQL_USER: aiworkbench
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set in .env}
-    volumes:
-      - mysql-data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
-      interval: 5s
-      timeout: 5s
-      retries: 30
-      start_period: 30s
-    logging: *default-logging
-    restart: unless-stopped
+  # 容器化 MySQL 已停用:本机使用宿主机 MySQL80(127.0.0.1:3306,库 ai_workbench,数据保留),
+  # app 经 host.docker.internal 访问(见 .env 的 MYSQL_HOST)。如需回到容器 MySQL,
+  # 注意 mysql:8.4 默认不加载 mysql_native_password,需加 command: --mysql-native-password=ON。
+  # mysql:
+  #   image: docker.m.daocloud.io/mysql:8.4
+  #   environment:
+  #     MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set in .env}
+  #     MYSQL_DATABASE: ai_workbench
+  #     MYSQL_USER: aiworkbench
+  #     MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set in .env}
+  #   volumes:
+  #     - mysql-data:/var/lib/mysql
+  #   healthcheck:
+  #     test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+  #     interval: 5s
+  #     timeout: 5s
+  #     retries: 30
+  #     start_period: 30s
+  #   logging: *default-logging
+  #   restart: unless-stopped
 
 volumes:
   workspace:
