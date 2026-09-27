@@ -1,0 +1,38 @@
+# Prometheus 抓取配置示例(AI Workbench)。
+# 用法:docker run 或独立部署时挂载本文件到 Prometheus。
+#   docker run -d -p 9090:9090 -v <abs>:/etc/prometheus/prometheus.yml:ro prom/prometheus
+#
+# 组成:
+#   - agent-service 暴露 /metrics(Prometheus 文本):stream/invoke/uptime 计数;
+#   - app(网关)健康检查 /api/health 返回 JSON,非 Prometheus 格式 —— 如需监控可用
+#     blackbox_exporter 探活(见下方 blackbox 示例,需另行部署 blackbox_exporter)。
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# 告警规则(同目录 alert.rules.yml;挂载到 /etc/prometheus 后生效)
+rule_files:
+  - /etc/prometheus/alert.rules.yml
+
+scrape_configs:
+  - job_name: agent-service
+    metrics_path: /metrics
+    static_configs:
+      # 与 app 同网(localhost 直连宿主映射端口);容器内用服务名
+      - targets: ['agent-service:8000']
+
+  # app 健康探活(blackbox_exporter;需先部署 blackbox_exporter 并打开下面的 job)
+  # - job_name: app-health
+  #   metrics_path: /probe
+  #   params:
+  #     module: [http_2xx]
+  #   static_configs:
+  #     - targets: ['http://app:80/api/health']
+  #   relabel_configs:
+  #     - source_labels: [__address__]
+  #       target_label: __param_target
+  #     - source_labels: [__param_target]
+  #       target_label: instance
+  #     - target_label: __address__
+  #       replacement: blackbox-exporter:9115

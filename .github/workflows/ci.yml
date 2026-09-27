@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Build & test (backend)
+        working-directory: backend
+        run: mvn -B -q clean package
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        working-directory: frontend
+        run: npm ci
+      - name: Typecheck
+        working-directory: frontend
+        run: npm run typecheck
+      - name: Test
+        working-directory: frontend
+        run: npm run test
+      - name: Build (frontend)
+        working-directory: frontend
+        run: npm run build
+
+  agent-service:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install deps
+        working-directory: agent-service
+        run: pip install -r requirements.txt pytest
+      - name: Tests
+        working-directory: agent-service
+        run: pytest -q
+      - name: Import check (syntax/import smoke)
+        working-directory: agent-service
+        run: python -c "import compileall,sys; sys.exit(0 if compileall.compile_dir('app', quiet=1) else 1)"
+
+  # 依赖安全审计:仅提示,不阻断(漏洞修复走 Dependabot/人工升级)。
+  # 结果见 job 日志;如需阻断,去掉 continue-on-error。
+  audit:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: npm audit (frontend)
+        working-directory: frontend
+        run: npm ci && npm audit --audit-level=high
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: pip-audit (agent-service)
+        working-directory: agent-service
+        run: pip install pip-audit && pip-audit -r requirements.txt
+

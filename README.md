@@ -1,83 +1,112 @@
 # AI Workbench
 
-基于 [OpenCode](https://opencode.ai) 内核的多用户通用 AI 对话工作台。服务端部署,浏览器访问,多用户注册与会话隔离,文件操作与沙箱执行,MySQL 存储,管理员全局配置模型,面向内网私有化部署。
+多用户通用 AI 工作台(类 Trae):**对话 + 智能体编排 + 浏览器接管 + 动态 UI 可视化 + 技能/模板体系**一体化。
+服务端部署,浏览器访问;多用户注册与会话隔离;每个用户独立工作区与沙箱容器;面向内网私有化部署。
 
 ## 架构
 
 ```
-浏览器 ──80──▶ nginx (Vue SPA + /api 反代) ──▶ Java Spring Boot 网关 (8080)
-                                                │ HTTP + Basic Auth + SSE
-                                                │ x-opencode-directory: /workspace/users/<uid>
-                                                ▼
-                                          opencode serve (127.0.0.1:4096)  ← AI 内核
-                                                │
-                                          MySQL 8 (用户/会话/消息/模型配置)
+浏览器 ──80──▶ nginx (Vue SPA + /api 反代) ──▶ Spring Boot 网关 (8080)
+                                              │  ├─ MySQL 8     用户/会话/消息/模板/技能/任务/通知(含 Flyway 迁移)
+                                              │  ├─ SSE         /api/chat/sessions/{id}/events(流式直通)
+                                              │  └─ WebClient + X-Internal-Token
+                                              ▼
+                                        agent-service (FastAPI, 8000)
+                                              │  ├─ deepagents(LangGraph)执行轨
+                                              │  └─ Postgres   线程 checkpoint / 跨线程 store
+                                              ▼
+                                        每用户 AIO 沙箱容器(Chromium + VNC + code-server + shell)
 ```
 
-- **opencode** 作为独立常驻 HTTP 服务(supervisord 拉起),Java 后端通过 WebClient + SSE 调用
-- **隔离**:每用户 `/workspace/users/<uid>/` 目录 + `x-opencode-directory` header
-- **单 app 容器**(Java 网关 + opencode + nginx)+ MySQL 兄弟容器
+- **deepagents 单轨**:对话与定时任务都由 agent-service 执行;网关只做鉴权、持久化与 SSE 中转,
+  事件(deepagents 原生 `start/delta/tool/tool_result/permission/done` …)原样转发给前端。
+- **隔离**:每用户工作区 `/workspace/users/<uid>/project`,被执行沙箱与文件树共享。
+- **沙箱**:`execute`/文件/浏览器操作全部在 per-user AIO 沙箱容器内;前端 iframe 内嵌 VNC 画面。
+- **跨副本**:定时任务用 DB 分布式锁互斥;会话事件经 `session_event` 出站表按 `seq` 增量中继,
+  多副本可并列运行(单机亦可)。
 
 ## 技术栈
 
 | 层 | 选型 |
 |---|---|
-| 后端 | Java 21 + Spring Boot 3.3 + MyBatis-Plus + Spring Security(JWT) |
-| 前端 | Vue 3 + Vite + TypeScript + Pinia + Naive UI |
-| 数据库 | MySQL 8 |
-| 引擎 | opencode(独立 HTTP 服务) |
-| 容器 | Docker multi-stage + supervisord + nginx |
-
-> 注:容器内使用 Java 21(`eclipse-temurin:21-jre`),宿主机 Java 版本不影响构建与运行。
+| 前端 | Vue 3 + Vite + TypeScript + Pinia + Naive UI(+ vue-i18n) |
+| 网关 | Java 21 + Spring Boot 3.3 + MyBatis-Plus + Spring Security(JWT) + Flyway |
+| 智能体 | Python + FastAPI + deepagents(LangGraph) |
+| 数据库 | MySQL 8(业务) + Postgres 16(agent checkpoint) |
+| 部署 | Docker multi-stage + supervisord + nginx |
 
 ## 快速开始
 
 ```bash
-cd ai-workbench/docker
+cd docker
+# 首次:复制并按需修改 .env(见 docker/.env;密钥务必替换为随机值)
 docker compose up --build
 ```
 
-- 浏览器打开 `http://localhost/`
-- 默认首个注册用户自动成为管理员
-- 管理员在「管理 → 模型配置」添加 provider/model 后点 Apply,即可开始对话
+- 浏览器打开 `http://localhost:8080/`
+- **首个注册用户自动成为管理员**
+- 管理员在「管理 → 模型配置」添加 provider/model 并 Apply 后即可对话
 
-## 本地开发与验证
-
-容器化部署是首选路径(见上)。如需本地构建/调试:
+## 本地开发
 
 ```bash
 # 后端(需 JDK 21+、Maven 3.6+)
 cd backend
-mvn clean package -DskipTests        # 产物 target/app.jar
+mvn clean package -DskipTests     # 产物 target/*.jar
 
 # 前端(需 Node 18+)
 cd frontend
 npm install
-npm run build                        # 产物 dist/
-npm run dev                          # 开发服务器,Vite 代理 /api → localhost:8080
+npm run dev                       # Vite 代理 /api → localhost:8080
 ```
 
-> **镜像坑提示**:若本机 Maven 全局 `settings.xml` 配置了华为云镜像(`repo.huaweicloud.com`),部分 artifact(如 `spring-boot-starter-parent`)可能被返回 HTML 错误页而非真实 POM,导致 `Non-parseable POM`。改用阿里云镜像(`https://maven.aliyun.com/repository/public`)即可。
+> 提示:若本机 Maven 全局 `settings.xml` 使用华为云镜像(`repo.huaweicloud.com`),个别 artifact 可能返回 HTML 错误页导致 `Non-parseable POM`,改用阿里云镜像(`https://maven.aliyun.com/repository/public`)即可。
 
-构建已验证:后端 62 个源文件编译 + 打包通过(`app.jar`),前端 `vite build` 通过。
+## 测试与检查(CI 门禁)
 
-## 配置(环境变量,见 `docker/docker-compose.yml`)
+```bash
+cd backend  && mvn test            # JUnit(令牌/变量替换/内部鉴权/SSE 中继)
+cd frontend && npm run typecheck && npm run test && npm run build
+cd agent-service && pytest -q      # 沙箱工作区 / 出站 SSRF / 入站来源白名单
+```
+
+CI 见 `.github/workflows/ci.yml`(后端 package、前端 typecheck+test+build、agent-service pytest)。
+
+## API 文档
+
+- OpenAPI JSON:`GET /v3/api-docs`
+- Swagger UI:`/swagger-ui/index.html`
+- 默认开启;如需收敛为"需登录",设 `OPENAPI_ENABLED=false`。
+- 除 `登录/注册/健康检查/内部接口` 外,均需 `Authorization: Bearer <JWT>`。
+
+## 配置(环境变量,见 `docker/docker-compose.yml` 与 `docker/.env`)
 
 | 变量 | 说明 |
 |---|---|
-| `OPENCODE_SERVER_USERNAME` / `OPENCODE_SERVER_PASSWORD` | opencode HTTP Basic 认证(网关→opencode) |
-| `JWT_SECRET` | JWT 签名密钥 |
-| `APP_REGISTRATION_ENABLED` | 是否开放注册(true/false) |
-| `MYSQL_*` | MySQL 连接 |
-| `OPENCODE_VERSION` / `OPENCODE_DOWNLOAD_URL` | opencode 二进制版本/内网镜像地址 |
+| `JWT_SECRET` | JWT 签名密钥(`openssl rand -hex 32`;缺失启动失败) |
+| `APP_AES_KEY` | AES-256 密钥(Base64 的 32 字节;加密存储 provider key 等) |
+| `APP_REGISTRATION_ENABLED` | 是否开放注册(生产默认 `false`) |
+| `INTERNAL_TOKEN` | app ⇄ agent-service 内部令牌(两服务一致;`openssl rand -hex 32`) |
+| `INTERNAL_TRUSTED_CIDRS` | 内部接口可选来源白名单(IPv4/CIDR;空=仅校验令牌) |
+| `SSE_RELAY_ENABLED` / `SSE_RELAY_POLL_MS` | 会话事件跨副本中继开关/轮询间隔 |
+| `SPRING_DATASOURCE_*` / `MYSQL_HOST` | 业务库连接(dev 默认宿主机 MySQL,经 `host.docker.internal`) |
+| `POSTGRES_PASSWORD` | agent checkpoint 库密码 |
+| `AGENT_MODEL` / `AGENT_MODEL_BASE_URL` / `AGENT_MODEL_API_KEY` | 模型与密钥 |
+| `AGENT_HITL` | 危险操作是否需人工确认(默认 `true`) |
+| `AGENT_WORKERS` / `AGENT_MAX_TURNS` | agent 并发 worker / 单请求步数上限 |
+| `AGENT_SANDBOX_*` | 沙箱镜像、网络、内存/CPU、空闲回收等 |
+| `AGENT_JOBS_*` | 定时任务并发、超时、重试、Webhook、全局暂停 |
+| `AGENT_OUTBOUND_ALLOWLIST` / `AGENT_ALLOW_PRIVATE_OUTBOUND` | 出站 SSRF 策略 |
 
 ## 目录
 
 ```
 ai-workbench/
-├── docker/        Dockerfile + compose + supervisord + nginx + opencode 配置
-├── backend/       Spring Boot 3 (Maven)
-└── frontend/      Vue 3 + Vite + TS
+├── docker/         Dockerfile + compose(dev/prod) + supervisord + nginx + prometheus 示例
+├── backend/        Spring Boot 3 网关(Maven;db/migration 为 Flyway 迁移)
+├── frontend/       Vue 3 + Vite + TS
+├── agent-service/  Python FastAPI + deepagents
+└── scripts/        备份脚本(MySQL/Postgres/工作区卷)
 ```
 
-详见 [多用户安全加固方案](.trae/documents/ai-workbench-per-user-isolation.md)。
+整改与待办清单见 [`TASKS.md`](TASKS.md)。

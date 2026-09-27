@@ -1,0 +1,48 @@
+# Prometheus 告警规则示例(AI Workbench)。在 prometheus.yml 中通过 rule_files 引入:
+#   rule_files:
+#     - /etc/prometheus/alert.rules.yml
+#
+# 覆盖:agent-service 存活、流式错误率、沙箱资源压力、约定式探活(blackbox_exporter 的 probe_success)。
+groups:
+  - name: ai-workbench
+    rules:
+      - alert: AgentServiceDown
+        expr: up{job="agent-service"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "agent-service 不可达"
+          description: "agent-service /metrics 抓取失败超过 2 分钟,对话与定时任务将不可用。"
+
+      - alert: AppHealthDown
+        expr: probe_success{job="app-health"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "app 健康检查失败"
+          description: "blackbox 探活 /api/health 失败超过 2 分钟。"
+
+      - alert: HighStreamErrorRate
+        expr: |
+          rate(aiwb_stream_error_total[5m])
+            / clamp_min(rate(aiwb_stream_total[5m]), 0.001) > 0.2
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "流式错误率偏高(>20%)"
+          description: "近 5 分钟流式错误占比过高,检查模型/沙箱/网络。"
+
+      - alert: SandboxConcurrencyRejected
+        expr: increase(aiwb_sandbox_rejected_total[10m]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "沙箱并发达到上限,出现拒绝"
+          description: "有新建沙箱被拒;如需提高并发请调整 AGENT_SANDBOX_MAX_ACTIVE / 宿主机资源。"
+
+      - alert: SandboxErrors
+        expr: increase(aiwb_sandbox_errors_total[10m]) > 3
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "沙箱创建/启动错误增多"
+          description: "检查镜像、docker.sock、网络与宿主资源。"

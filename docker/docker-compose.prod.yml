@@ -22,13 +22,22 @@ services:
       AGENT_JOBS_MAX_CONCURRENT: "${AGENT_JOBS_MAX_CONCURRENT:-1}"
       AGENT_JOBS_TIMEOUT_MINUTES: "${AGENT_JOBS_TIMEOUT_MINUTES:-30}"
       AGENT_JOBS_SWEEP_MS: "${AGENT_JOBS_SWEEP_MS:-5000}"
+      AGENT_JOBS_MAX_RETRIES: "${AGENT_JOBS_MAX_RETRIES:-2}"
+      # 任务最终失败时的告警 Webhook(可选;POST JSON)
+      AGENT_JOBS_WEBHOOK_URL: "${AGENT_JOBS_WEBHOOK_URL:-}"
+      # 定时任务全局暂停初值(运行时可经管理员接口切换)
+      AGENT_JOBS_PAUSED: "${AGENT_JOBS_PAUSED:-false}"
       # --- JWT / AES / 注册 ---
       JWT_SECRET: "${JWT_SECRET:?set in .env}"
       JWT_TTL_MINUTES: "1440"
       APP_REGISTRATION_ENABLED: "${APP_REGISTRATION_ENABLED:-false}"
+      # 每用户每日 token 配额(0=不限);超限发送消息返回 429
+      APP_QUOTA_DAILY_TOKENS: "${APP_QUOTA_DAILY_TOKENS:-0}"
       APP_AES_KEY: "${APP_AES_KEY:?set in .env}"
       # --- 内部回调令牌(与 agent-service 一致) ---
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:?set to a random secret in .env, shared with agent-service}
+      # 内部接口 ../api/internal/** 可选来源白名单(IPv4/CIDR;空=仅校验令牌)
+      INTERNAL_TRUSTED_CIDRS: ${INTERNAL_TRUSTED_CIDRS:-}
       # --- MySQL(compose 内 mysql 服务;也可按需改为外部地址) ---
       SPRING_DATASOURCE_URL: jdbc:mysql://${MYSQL_HOST:-mysql}:3306/ai_workbench?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8&useUnicode=true
       SPRING_DATASOURCE_USERNAME: aiworkbench
@@ -38,6 +47,9 @@ services:
       - app-data:/data
       - user-data:/data/users
       - /var/run/docker.sock:/var/run/docker.sock
+    # 运行期加固:禁止提权(详见 dev compose 注释 / TASKS B4)
+    security_opt:
+      - "no-new-privileges:true"
     networks:
       - default
       - agents
@@ -55,6 +67,8 @@ services:
       AGENT_MODEL_BASE_URL: "${AGENT_MODEL_BASE_URL:-}"
       AGENT_MODEL_API_KEY: "${AGENT_MODEL_API_KEY:-}"
       AGENT_WORKERS: "${AGENT_WORKERS:-4}"
+      # 单请求步数上限(recursion_limit);默认 10000 近似不限制,上下文由自动压缩管理
+      AGENT_MAX_TURNS: "${AGENT_MAX_TURNS:-10000}"
       AGENT_PG_POOL_MIN: "${AGENT_PG_POOL_MIN:-2}"
       AGENT_PG_POOL_MAX: "${AGENT_PG_POOL_MAX:-10}"
       AGENT_WS_ROOT: /shared-ws/users
@@ -63,6 +77,8 @@ services:
       AGENT_GLOBAL_SKILLS: /app/skills
       BACKEND_INTERNAL_URL: "http://app:8080"
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:?set to a random secret in .env, shared with app}
+      # 入站来源白名单(IPv4/IPv6/CIDR;空=不限制来源,仅校验令牌)
+      INTERNAL_TRUSTED_CIDRS: ${INTERNAL_TRUSTED_CIDRS:-}
       AGENT_SANDBOX_BACKEND: "${AGENT_SANDBOX_BACKEND:-aio}"
       AGENT_SANDBOX_IMAGE: "${AGENT_SANDBOX_IMAGE:-aio-sandbox:latest}"
       AGENT_SANDBOX_NETWORK: "${AGENT_SANDBOX_NETWORK:-true}"
@@ -74,6 +90,8 @@ services:
       AGENT_SANDBOX_PIDS: "${AGENT_SANDBOX_PIDS:-512}"
       AGENT_SANDBOX_IDLE_TTL: "${AGENT_SANDBOX_IDLE_TTL:-1800}"
       AGENT_SANDBOX_MAX_TIMEOUT: "${AGENT_SANDBOX_MAX_TIMEOUT:-120}"
+      # 并发沙箱上限(0=不限);超过后拒绝新建,防止资源耗尽
+      AGENT_SANDBOX_MAX_ACTIVE: "${AGENT_SANDBOX_MAX_ACTIVE:-0}"
     volumes:
       - user-data:/data/users
       - workspace:/shared-ws

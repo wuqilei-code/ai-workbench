@@ -1,0 +1,42 @@
+version: 2
+updates:
+  # 前端(npm)
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      frontend-minor:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # 后端(Maven)
+  - package-ecosystem: maven
+    directory: /backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      backend-minor:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # agent-service(pip)
+  - package-ecosystem: pip
+    directory: /agent-service
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # 容器基础镜像(Dockerfile)
+  - package-ecosystem: docker
+    directory: /docker
+    schedule:
+      interval: monthly
+
+  # CI 工作流自身
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

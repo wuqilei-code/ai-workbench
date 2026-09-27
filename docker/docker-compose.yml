@@ -27,15 +27,24 @@ services:
       AGENT_JOBS_MAX_CONCURRENT: "${AGENT_JOBS_MAX_CONCURRENT:-1}"
       AGENT_JOBS_TIMEOUT_MINUTES: "${AGENT_JOBS_TIMEOUT_MINUTES:-30}"
       AGENT_JOBS_SWEEP_MS: "${AGENT_JOBS_SWEEP_MS:-5000}"
+      AGENT_JOBS_MAX_RETRIES: "${AGENT_JOBS_MAX_RETRIES:-2}"
+      # 任务最终失败时的告警 Webhook(可选;POST JSON)
+      AGENT_JOBS_WEBHOOK_URL: "${AGENT_JOBS_WEBHOOK_URL:-}"
+      # 定时任务全局暂停初值(运行时可经管理员接口切换)
+      AGENT_JOBS_PAUSED: "${AGENT_JOBS_PAUSED:-false}"
       # --- JWT ---
       JWT_SECRET: ${JWT_SECRET:?set in .env}
       JWT_TTL_MINUTES: "1440"
       # --- 注册开关(生产默认关,防批量滥用;需要开放时设 true) ---
       APP_REGISTRATION_ENABLED: "${APP_REGISTRATION_ENABLED:-false}"
+      # 每用户每日 token 配额(0=不限);超限发送消息返回 429
+      APP_QUOTA_DAILY_TOKENS: "${APP_QUOTA_DAILY_TOKENS:-0}"
       # --- AES 加密密钥(Base64 编码 32 字节);生产务必替换为随机密钥 ---
       APP_AES_KEY: ${APP_AES_KEY:?set in .env}
       # --- agent-service 内部回调令牌(create_skill 回写技能库;两服务一致) ---
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:?set to a random secret in .env, shared with agent-service}
+      # 内部接口 /api/internal/** 可选来源白名单(IPv4/CIDR,逗号分隔;空=仅校验令牌)
+      INTERNAL_TRUSTED_CIDRS: ${INTERNAL_TRUSTED_CIDRS:-}
       # --- MySQL(数据源:宿主机 MySQL,经 host.docker.internal 访问;见 .env 的 MYSQL_HOST) ---
       SPRING_DATASOURCE_URL: jdbc:mysql://${MYSQL_HOST:-host.docker.internal}:3306/ai_workbench?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8&useUnicode=true
       SPRING_DATASOURCE_USERNAME: aiworkbench
@@ -49,6 +58,10 @@ services:
       - user-data:/data/users
       # 网关按需创建/回收每用户浏览器容器(复用旧 opencode 实施方案;适用单机管理员部署)
       - /var/run/docker.sock:/var/run/docker.sock
+    # 运行期加固:禁止提权(setuid/setgid 二进制失效),降低被攻破后的影响半径;
+    # docker.sock 仍需保留(管理沙箱容器),如需更强隔离请改用受限的容器管理边车(见 TASKS B4)。
+    security_opt:
+      - "no-new-privileges:true"
     networks:
       - default
       - agents
@@ -74,6 +87,11 @@ services:
       AGENT_MODEL_API_KEY: "${AGENT_MODEL_API_KEY:-}"
       # 并发加固:多 worker + PG checkpoint 连接池
       AGENT_WORKERS: "${AGENT_WORKERS:-4}"
+      # 单请求步数上限(recursion_limit);默认 10000 近似不限制,上下文由自动压缩管理
+      AGENT_MAX_TURNS: "${AGENT_MAX_TURNS:-10000}"
+      # 出站 SSRF 防护:默认禁止内网/回环;按需给白名单主机或整体放行(内网私有部署)
+      AGENT_OUTBOUND_ALLOWLIST: "${AGENT_OUTBOUND_ALLOWLIST:-}"
+      AGENT_ALLOW_PRIVATE_OUTBOUND: "${AGENT_ALLOW_PRIVATE_OUTBOUND:-false}"
       AGENT_PG_POOL_MIN: "${AGENT_PG_POOL_MIN:-2}"
       AGENT_PG_POOL_MAX: "${AGENT_PG_POOL_MAX:-10}"
       AGENT_WS_ROOT: /shared-ws/users
@@ -85,6 +103,8 @@ services:
       BACKEND_INTERNAL_URL: "http://app:8080"
       # --- agent-service 内部回调令牌(create_skill 回写技能库;两服务必须一致且为随机值) ---
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:?set to a random secret in .env, shared with app}
+      # 入站来源白名单(IPv4/IPv6/CIDR,逗号分隔;空=不限制来源,仅校验令牌)
+      INTERNAL_TRUSTED_CIDRS: ${INTERNAL_TRUSTED_CIDRS:-}
       # 执行沙箱:execute/文件/浏览器全部在 per-user AIO 沙箱容器内(agent-infra/sandbox);
       # AIO 自带 Chromium+VNC+code-server,前端直接 iframe 嵌入实时画面。
       AGENT_SANDBOX_BACKEND: "${AGENT_SANDBOX_BACKEND:-aio}"
@@ -101,6 +121,8 @@ services:
       AGENT_SANDBOX_PIDS: "${AGENT_SANDBOX_PIDS:-512}"
       AGENT_SANDBOX_IDLE_TTL: "${AGENT_SANDBOX_IDLE_TTL:-1800}"
       AGENT_SANDBOX_MAX_TIMEOUT: "${AGENT_SANDBOX_MAX_TIMEOUT:-120}"
+      # 并发沙箱上限(0=不限);超过后拒绝新建,防止资源耗尽
+      AGENT_SANDBOX_MAX_ACTIVE: "${AGENT_SANDBOX_MAX_ACTIVE:-0}"
     volumes:
       - user-data:/data/users
       # 与 app 共用 workspace 卷:agent 写 /shared-ws/users/<uid>/project
