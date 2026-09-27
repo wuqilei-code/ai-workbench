@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 /**
  * 图片预览增强版:
@@ -8,6 +9,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
  * - 状态栏展示 文件名 / 分辨率 / 当前缩放。
  * 图片走 blob URL,自包含的 SVG/PNG/JPG 均按纯图像渲染。
  */
+const { t } = useI18n()
 const props = defineProps<{ src: string; path?: string }>()
 
 const stageEl = ref<HTMLElement | null>(null)
@@ -165,13 +167,13 @@ onBeforeUnmount(() => ro?.disconnect())
       <span class="pi-name" :title="path">{{ path }}</span>
       <span v-if="info" class="pi-info">{{ info.nw }} × {{ info.nh }}px · {{ (scale * 100).toFixed(0) }}%</span>
       <div class="pi-spacer" />
-      <button class="pi-btn" title="缩小 (滚轮也行)" @click="zoomOut">−</button>
-      <button class="pi-btn" title="放大 (滚轮也行)" @click="zoomIn">+</button>
-      <button class="pi-btn" :class="{ on: mode === 'fit' }" title="适应窗口" @click="fit">适应</button>
-      <button class="pi-btn" :class="{ on: mode === 'actual' }" title="实际尺寸 (双击切换)" @click="actual">实际</button>
-      <button class="pi-btn" title="旋转 90°" @click="rotate">⟳</button>
-      <button class="pi-btn" title="重置" @click="reset">重置</button>
-      <button class="pi-btn" title="全屏查看" @click="toggleFull">全屏</button>
+      <button class="pi-btn" :title="t('preview.zoomOut')" @click="zoomOut">?</button>
+      <button class="pi-btn" :title="t('preview.zoomIn')" @click="zoomIn">+</button>
+      <button class="pi-btn" :class="{ on: mode === 'fit' }" :title="t('preview.fit')" @click="fit">{{ t('preview.fit') }}</button>
+      <button class="pi-btn" :class="{ on: mode === 'actual' }" :title="t('preview.actual')" @click="actual">{{ t('preview.actual') }}</button>
+      <button class="pi-btn" :title="t('preview.rotate')" @click="rotate">⟳</button>
+      <button class="pi-btn" :title="t('preview.reset')" @click="reset">{{ t('preview.reset') }}</button>
+      <button class="pi-btn" :title="t('preview.full')" @click="toggleFull">{{ t('preview.full') }}</button>
     </div>
   </div>
 </template>

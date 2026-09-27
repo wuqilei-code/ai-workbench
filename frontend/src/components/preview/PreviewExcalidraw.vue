@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import { ref, computed, watch, onMounted } from 'vue'
 
+const { t } = useI18n()
 const props = defineProps<{ content: string }>()
 
 interface ExcalidrawElement {
@@ -98,7 +100,7 @@ function roundness(el: ExcalidrawElement) {
 
 <template>
   <div v-if="!parsed.length" class="exca-empty">
-    <span>无法解析 Excalidraw 内容</span>
+      <span>{{ t('preview.excalidrawUnsupported') }}</span>
   </div>
   <svg v-else class="exca-svg" :viewBox="viewBox" xmlns="http://www.w3.org/2000/svg">
     <template v-for="(el, i) in parsed" :key="i">

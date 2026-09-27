@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useMessage } from 'naive-ui'
 
+const { t: tr } = useI18n()
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{
   (e: 'update:show', v: boolean): void
@@ -29,51 +31,51 @@ interface DocType {
 const DOC_TYPES: DocType[] = [
   {
     key: 'weekly',
-    label: '周报',
-    desc: '本周工作内容 → 成果 → 问题 → 下周计划',
+    label: tr('docgen.workType'),
+    desc: tr('docgen.workDesc'),
     fields: [
-      { key: 'work', label: '本周工作内容', type: 'textarea', placeholder: '例如:完成首页改版、上线活动页、修复 3 个线上问题…' },
-      { key: 'result', label: '本周成果/进展', type: 'textarea', placeholder: '例如:新版首页上线转化率提升 12%…' },
-      { key: 'issue', label: '遇到的问题', type: 'textarea', placeholder: '没有可留空' },
-      { key: 'plan', label: '下周计划', type: 'textarea', placeholder: '例如:推进数据看板、准备季度评审…' },
-      { key: 'tone', label: '语气风格', type: 'select', options: [{ label: '简洁', value: '简洁' }, { label: '详细', value: '详细' }, { label: '正式', value: '正式' }] },
+    { key: 'work', label: tr('docgen.workSummary'), type: 'textarea', placeholder: tr('docgen.phWork') },
+    { key: 'result', label: tr('docgen.workResult'), type: 'textarea', placeholder: tr('docgen.phResult') },
+    { key: 'issue', label: tr('docgen.workIssue'), type: 'textarea', placeholder: tr('docgen.phIssue') },
+    { key: 'plan', label: tr('docgen.workPlan'), type: 'textarea', placeholder: tr('docgen.phPlan') },
+    { key: 'tone', label: tr('docgen.toneLabel'), type: 'select', options: [{ label: tr('docgen.toneBrief'), value: tr('docgen.toneBrief') }, { label: tr('docgen.toneDetail'), value: tr('docgen.toneDetail') }, { label: tr('docgen.toneFormal'), value: tr('docgen.toneFormal') }] },
     ],
     required: ['work'],
   },
   {
     key: 'minutes',
-    label: '会议纪要',
-    desc: '主题 → 时间参会 → 讨论要点 → 决议待办',
+    label: tr('docgen.meetingTitle'),
+    desc: tr('docgen.meetingDesc'),
     fields: [
-      { key: 'topic', label: '会议主题', type: 'input', placeholder: '例如:Q3 产品路线图评审' },
-      { key: 'time', label: '会议时间/参会人', type: 'input', placeholder: '例如:8月9日 10:00 · 张三/李四/王五' },
-      { key: 'points', label: '讨论要点', type: 'textarea', placeholder: '逐条列出会上的关键讨论…' },
-      { key: 'action', label: '决议/待办事项', type: 'textarea', placeholder: '例如:8月12日前输出原型,由张三跟进…' },
+    { key: 'topic', label: tr('docgen.mTopic'), type: 'input', placeholder: tr('docgen.phMTopic') },
+    { key: 'time', label: tr('docgen.mTime'), type: 'input', placeholder: tr('docgen.phMTime') },
+    { key: 'points', label: tr('docgen.mPoints'), type: 'textarea', placeholder: tr('docgen.phMPoints') },
+    { key: 'action', label: tr('docgen.mAction'), type: 'textarea', placeholder: tr('docgen.phMAction') },
     ],
     required: ['topic'],
   },
   {
     key: 'email',
-    label: '邮件',
-    desc: '收件人 → 主题 → 目的 → 要点',
+    label: tr('docgen.emailTitle'),
+    desc: tr('docgen.emailDesc'),
     fields: [
-      { key: 'to', label: '收件人/对象', type: 'input', placeholder: '例如:市场部李经理' },
-      { key: 'subject', label: '邮件主题', type: 'input', placeholder: '留空则由 AI 拟定' },
-      { key: 'purpose', label: '邮件目的', type: 'select', options: [{ label: '通知', value: '通知' }, { label: '请求协助', value: '请求协助' }, { label: '询问信息', value: '询问信息' }, { label: '跟进催办', value: '跟进催办' }, { label: '感谢致谢', value: '感谢致谢' }] },
-      { key: 'points', label: '正文要点', type: 'textarea', placeholder: '希望邮件包含的关键信息…' },
-      { key: 'tone', label: '语气', type: 'select', options: [{ label: '正式', value: '正式' }, { label: '亲切自然', value: '亲切自然' }, { label: '简洁高效', value: '简洁高效' }] },
+    { key: 'to', label: tr('docgen.eTo'), type: 'input', placeholder: tr('docgen.phETo') },
+    { key: 'subject', label: tr('docgen.eSubject'), type: 'input', placeholder: tr('docgen.phESubject') },
+    { key: 'purpose', label: tr('docgen.ePurpose'), type: 'select', options: [{ label: tr('docgen.purposeNotify'), value: tr('docgen.purposeNotify') }, { label: tr('docgen.purposeWeekly'), value: tr('docgen.purposeWeekly') }, { label: tr('docgen.purposeInquire'), value: tr('docgen.purposeInquire') }, { label: tr('docgen.purposeApology'), value: tr('docgen.purposeApology') }, { label: tr('docgen.purposeThanks'), value: tr('docgen.purposeThanks') }] },
+    { key: 'points', label: tr('docgen.ePoints'), type: 'textarea', placeholder: tr('docgen.phEPoints') },
+    { key: 'tone', label: tr('docgen.eTone'), type: 'select', options: [{ label: tr('docgen.toneFormal'), value: tr('docgen.toneFormal') }, { label: tr('docgen.toneFriendly'), value: tr('docgen.toneFriendly') }, { label: tr('docgen.toneEfficient'), value: tr('docgen.toneEfficient') }] },
     ],
     required: ['points'],
   },
   {
     key: 'report',
-    label: '分析报告',
-    desc: '问题 → 数据依据 → 分析维度 → 结论建议',
+    label: tr('docgen.reportTitle'),
+    desc: tr('docgen.reportDesc'),
     fields: [
-      { key: 'topic', label: '主题/要分析的问题', type: 'input', placeholder: '例如:最近一个月客户流失率上升的原因' },
-      { key: 'data', label: '数据/依据', type: 'textarea', placeholder: '粘贴相关数据、图表说明或背景信息…' },
-      { key: 'dims', label: '想从哪些维度分析', type: 'textarea', placeholder: '例如:按渠道、按时间、按用户画像… 可留空由 AI 决定' },
-      { key: 'bias', label: '结论倾向/篇幅', type: 'input', placeholder: '例如:约 800 字,给出可执行的改进建议' },
+    { key: 'topic', label: tr('docgen.rTopic'), type: 'input', placeholder: tr('docgen.phRTopic') },
+    { key: 'data', label: tr('docgen.rData'), type: 'textarea', placeholder: tr('docgen.phRData') },
+    { key: 'dims', label: tr('docgen.rDims'), type: 'textarea', placeholder: tr('docgen.phRDims') },
+    { key: 'bias', label: tr('docgen.rBias'), type: 'input', placeholder: tr('docgen.phRBias') },
     ],
     required: ['topic'],
   },
@@ -103,17 +105,17 @@ function buildPrompt(): string | null {
   const emptyRequired = t.required.filter((k) => !(form.value[k] || '').trim())
   if (emptyRequired.length) {
     const label = t.fields.find((f) => f.key === emptyRequired[0])?.label || emptyRequired[0]
-    msg.warning(`请先填写「${label}」`)
+    msg.warning(tr('docgen.needField', { label }))
     return null
   }
   const get = (k: string) => (form.value[k] || '').trim()
 
   const lines: string[] = []
-  lines.push(`请帮我写一份【${t.label}】。`)
+    lines.push(tr('docgen.filledField', { label: t.label }))
 
   const body: string[] = []
   const tone = get('tone')
-  if (tone) body.push(`语气风格:${tone}`)
+    if (tone) body.push(tr('docgen.toneLine', { tone }))
 
   switch (t.key) {
     case 'weekly':
@@ -121,29 +123,29 @@ function buildPrompt(): string | null {
       if (get('result')) body.push(`本周成果/进展:${get('result')}`)
       if (get('issue')) body.push(`遇到的问题:${get('issue')}`)
       if (get('plan')) body.push(`下周计划:${get('plan')}`)
-      body.push('要求:按「本周工作/成果与进展/问题与思考/下周计划」分节,使用 Markdown 标题,内容具体、可量化。')
+    body.push(tr('docgen.ruleWork'))
       break
     case 'minutes':
       if (get('topic')) body.push(`会议主题:${get('topic')}`)
       if (get('time')) body.push(`会议时间与参会人:${get('time')}`)
       if (get('points')) body.push(`讨论要点:${get('points')}`)
       if (get('action')) body.push(`决议与待办:${get('action')}`)
-      body.push('要求:整理成规范的会议纪要,包含会议信息、讨论要点、决议事项与负责人/截止时间,使用 Markdown 标题与列表。')
+    body.push(tr('docgen.ruleMeeting'))
       break
     case 'email':
       if (get('to')) body.push(`收件人:${get('to')}`)
       if (get('subject')) body.push(`邮件主题:${get('subject')}`)
       if (get('purpose')) body.push(`邮件目的:${get('purpose')}`)
       if (get('points')) body.push(`正文要点:${get('points')}`)
-      if (tone) body.push(`语气:${tone}`)
-      body.push('要求:开头有称呼问候,正文条理清晰、要点突出,结尾有署名占位(如「此致敬礼,XX」),直接给出邮件正文。')
+    if (tone) body.push(tr('docgen.toneLine', { tone }))
+    body.push(tr('docgen.ruleEmail'))
       break
     case 'report':
       if (get('topic')) body.push(`分析主题:${get('topic')}`)
       if (get('data')) body.push(`数据与依据:${get('data')}`)
       if (get('dims')) body.push(`分析维度:${get('dims')}`)
       if (get('bias')) body.push(`篇幅与结论倾向:${get('bias')}`)
-      body.push('要求:按「背景、数据/现状、分析、结论与建议」组织,结论要有依据,建议要可落地,使用 Markdown 标题。')
+    body.push(tr('docgen.ruleReport'))
       break
   }
 
@@ -163,7 +165,7 @@ function onSubmit() {
   <n-modal
     :show="show"
     preset="card"
-    title="一键生成文档"
+    title="tr('docgen.modalTitle')"
     style="width: 640px; max-width: 94vw"
     :bordered="false"
     @update:show="(v: boolean) => emit('update:show', v)"
@@ -212,10 +214,10 @@ function onSubmit() {
 
     <template #footer>
       <div class="dg-footer">
-        <span class="dg-hint">已填写 {{ filledCount }}/{{ activeType.fields.length }} 项,生成后填入输入框供你确认</span>
+      <span class="dg-hint">{{ tr('docgen.fillHint', { filled: filledCount, total: activeType.fields.length }) }}</span>
         <div style="display: flex; gap: 8px">
           <n-button @click="emit('update:show', false)">取消</n-button>
-          <n-button type="primary" @click="onSubmit">生成提示词</n-button>
+      <n-button type="primary" @click="onSubmit">{{ tr('docgen.generate') }}</n-button>
         </div>
       </div>
     </template>

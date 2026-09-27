@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 import { summarizeToolCall } from '@/utils/turns'
 import { highlightToolOutput } from '@/utils/highlight'
 import type { ToolCall } from '@/types'
@@ -8,6 +9,7 @@ import type { ToolCall } from '@/types'
 const props = defineProps<{ tc: ToolCall }>()
 const emit = defineEmits<{ download: [path: string] }>()
 const msg = useMessage()
+const { t } = useI18n()
 
 /** 工具输出(可能为空 → 不渲染输出框) */
 const output = computed(() => props.tc.output ?? '')
@@ -73,9 +75,9 @@ async function copyOutput() {
   if (running.value) return
   try {
     await navigator.clipboard.writeText(props.tc.output ?? '')
-    msg.success('已复制工具输出')
+    msg.success(t('toolCall.copied'))
   } catch (e: any) {
-    msg.error(e?.message || '复制失败')
+    msg.error(e?.message || t('toolCall.copyFailed'))
   }
 }
 
@@ -108,19 +110,19 @@ function downloadOutput() {
       <svg v-else class="t-ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
       <span class="chip-name">{{ tc.name }}</span>
       <span class="chip-arg">{{ summarizeToolCall(tc) }}</span>
-      <span v-if="output && lineCount" class="chip-lines">{{ expanded ? '收起' : lineCount + ' 行' }}</span>
+      <span v-if="output && lineCount" class="chip-lines">{{ expanded ? t('toolCall.collapse') : t('toolCall.lines', { n: lineCount }) }}</span>
       <span class="chip-status">{{ statusIcon }}</span>
     </span>
 
     <transition name="toolout">
       <div v-if="expanded && output" class="tool-output-wrap">
         <div class="tool-output-bar">
-          <span>输出</span>
+          <span>{{ t('toolCall.output') }}</span>
           <span class="output-actions" @click.stop>
-            <a class="output-act" title="复制工具输出" @click="copyOutput">
+            <a class="output-act" :title="t('toolCall.copyTitle')" @click="copyOutput">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
             </a>
-            <a class="output-act" title="下载为文本文件" @click="downloadOutput">
+            <a class="output-act" :title="t('toolCall.downloadTitle')" @click="downloadOutput">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             </a>
           </span>

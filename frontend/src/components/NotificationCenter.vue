@@ -4,12 +4,14 @@
  * 点击消息 → 标记已读 + 打开详情弹窗(展示完整内容,link 为报告时渲染报告 markdown)。
  */
 import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useMessage } from 'naive-ui'
 import MarkdownIt from 'markdown-it'
 import { notificationApi } from '@/api/notifications'
 import { fileApi } from '@/api/files'
 import type { NotificationInfo } from '@/types'
 
+const { t } = useI18n()
 const msg = useMessage()
 const list = ref<NotificationInfo[]>([])
 const unread = ref(0)
@@ -99,9 +101,9 @@ async function onReadAll() {
     list.value.forEach((n) => (n.read = true))
     unread.value = 0
     await refresh()
-    msg.success('已全部标记为已读')
+    msg.success(t('notif.allRead'))
   } catch (e: any) {
-    msg.error(e?.message || '操作失败')
+    msg.error(e?.message || t('notif.actionFailed'))
   }
 }
 
@@ -130,7 +132,7 @@ onBeforeUnmount(stopPolling)
   <n-popover v-model:show="popoverShow" trigger="click" placement="bottom-end" :width="380" @update:show="onShow">
     <template #trigger>
       <n-badge :value="unread" :max="99" :offset="[-2, 2]">
-        <n-button size="small" quaternary circle title="消息中心">
+      <n-button size="small" quaternary circle :title="t('notif.center')">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
             <path d="M13.73 21a2 2 0 0 1-3.46 0" />
@@ -141,11 +143,11 @@ onBeforeUnmount(stopPolling)
 
     <div class="notif-panel">
       <div class="notif-head">
-        <span class="notif-title">消息中心</span>
-        <n-button v-if="unread > 0" size="tiny" quaternary @click="onReadAll">全部已读</n-button>
+      <span class="notif-title">{{ t('notif.center') }}</span>
+      <n-button v-if="unread > 0" size="tiny" quaternary @click="onReadAll">{{ t('notif.readAll') }}</n-button>
       </div>
-      <div v-if="loading" class="notif-loading">加载中…</div>
-      <div v-else-if="!list.length" class="notif-empty">暂无消息</div>
+      <div v-if="loading" class="notif-loading">{{ t('notif.loading') }}</div>
+      <div v-else-if="!list.length" class="notif-empty">{{ t('notif.empty') }}</div>
       <div v-else class="notif-list">
         <div
           v-for="n in list"
@@ -162,22 +164,22 @@ onBeforeUnmount(stopPolling)
           <div v-if="n.content" class="notif-content">{{ n.content }}</div>
         </div>
         <div v-if="!showAll" class="notif-more">
-          <n-button size="tiny" quaternary @click="onShowAll">查看全部消息</n-button>
+      <n-button size="tiny" quaternary @click="onShowAll">{{ t('notif.showAll') }}</n-button>
         </div>
       </div>
     </div>
   </n-popover>
 
-  <n-modal v-model:show="detailShow" preset="card" :title="detail?.title || '消息详情'" style="width: 720px; max-width: 94vw" :bordered="false">
+    <n-modal v-model:show="detailShow" preset="card" :title="detail?.title || t('notif.detailFallback')" style="width: 720px; max-width: 94vw" :bordered="false">
     <div class="detail-panel">
       <div class="detail-meta">
-        <span>类型: {{ detail?.type === 'task' ? '定时任务' : '系统' }}</span>
-        <span>时间: {{ formatTimeFull(detail?.createdAt) }}</span>
-        <span v-if="detail?.link">报告: {{ detail.link }}</span>
+        <span>{{ t('notif.type') }}: {{ detail?.type === 'task' ? t('notif.typeTask') : t('notif.typeSystem') }}</span>
+        <span>{{ t('notif.time') }}: {{ formatTimeFull(detail?.createdAt) }}</span>
+        <span v-if="detail?.link">{{ t('notif.link') }}: {{ detail.link }}</span>
       </div>
-      <div v-if="detailLoading" class="detail-loading">加载报告…</div>
+      <div v-if="detailLoading" class="detail-loading">{{ t('notif.detailLoading') }}</div>
       <div v-else-if="detailRenderedHtml" class="detail-body markdown-body" v-html="detailRenderedHtml"></div>
-      <div v-else class="detail-empty">(无内容)</div>
+      <div v-else class="detail-empty">({{ t('notif.noContent') }})</div>
     </div>
   </n-modal>
 </template>

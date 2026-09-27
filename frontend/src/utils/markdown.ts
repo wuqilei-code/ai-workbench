@@ -1,6 +1,9 @@
 import MarkdownIt from 'markdown-it'
 import hljs from 'highlight.js'
+import { i18n } from '@/i18n'
 
+type _T = (key: string, named?: Record<string, string | number>) => string
+const t = (k: string, p?: Record<string, string | number>): string => (i18n.global.t as unknown as _T)(k, p)
 /** 渲染后的代码块原文登记表:按钮 data-idx → 源码文本。
  *  供全局事件委托(./codeCopy.ts)在点击复制按钮时取原文。 */
 const codeBlocks = new Map<number, string>()
@@ -39,10 +42,10 @@ const md = new MarkdownIt({
             }
           })()
         : md.utils.escapeHtml(str)
-    const label = langName ? `复制 · ${langName}` : '复制'
+    const label = langName ? t('copyBtn.copyLang', { lang: langName }) : t('copyBtn.copy')
     return [
       `<div class="code-block">`,
-      `<button class="code-copy-btn" data-idx="${idx}" title="复制代码">${label}</button>`,
+      `<button class="code-copy-btn" data-idx="${idx}" title="${t('copyBtn.copyCode')}">${label}</button>`,
       `<pre class="hljs"><code>${body}</code></pre>`,
       `</div>`,
     ].join('')
@@ -87,8 +90,8 @@ export function previewLinks(state: any) {
       token.href = previewHref(token.href)
       token.attrs = [['target', '_blank'], ['rel', 'noreferrer noopener'], ['class', 'preview-link']]
       if (token.children && token.children.length === 1 && token.children[0].type === 'text') {
-        token.children[0].content = '🖥 打开预览'
-        token.children[0].raw = '🖥 打开预览'
+        token.children[0].content = t('tail.openPreview')
+        token.children[0].raw = t('tail.openPreview')
       }
     }
     // 第一遍:重写 linkify 已生成的 localhost 链接(<a href="http://localhost:8012">…</a>)
@@ -106,7 +109,7 @@ export function previewLinks(state: any) {
       for (let j = i + 1; j < children.length; j++) {
         const inner = children[j]
         if (inner.type === 'text' || inner.type === 'code_inline') {
-          inner.content = '🖥 打开预览'
+          inner.content = t('tail.openPreview')
           break
         }
         if (inner.type === 'link_close') break
@@ -140,7 +143,7 @@ export function previewLinks(state: any) {
         ]
         newChildren.push(link)
         const inner = newToken(state, 'text', '', 0)
-        inner.content = '🖥 打开预览'
+        inner.content = t('tail.openPreview')
         newChildren.push(inner)
         const close = newToken(state, 'link_close', 'a', -1)
         newChildren.push(close)

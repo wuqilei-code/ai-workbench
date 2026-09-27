@@ -4,9 +4,11 @@
  * 点击某次可展开/收起该次运行日志。
  */
 import { ref, watch, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { jobApi } from '@/api/jobs'
 import type { JobTaskRunInfo } from '@/types'
 
+const { t } = useI18n()
 const props = defineProps<{ show: boolean; jobId: number; jobName: string }>()
 const emit = defineEmits<{ (e: 'update:show', v: boolean): void }>()
 
@@ -33,7 +35,7 @@ async function load(force = true) {
     const maxPage = Math.max(1, Math.ceil(runs.value.length / pageSize))
     if (page.value > maxPage) page.value = maxPage
   } catch (e: any) {
-    error.value = e?.message || '加载执行记录失败'
+    error.value = e?.message || t('jobRuns.loadFailed')
   } finally {
     loading.value = false
   }
@@ -64,7 +66,7 @@ async function toggleLog(runId: number) {
   try {
     runLogs.value[key] = await jobApi.runLog(props.jobId, runId, 12000)
   } catch (e: any) {
-    runLogs.value[key] = '(读取日志失败: ' + (e?.message || 'unknown') + ')'
+    runLogs.value[key] = t('jobRuns.logFailed', { msg: e?.message || 'unknown' })
   } finally {
     delete runLogLoading.value[key]
   }
@@ -125,19 +127,19 @@ function resultFirstLine(r: JobTaskRunInfo): string {
   <n-modal
     v-model:show="props.show"
     preset="card"
-    :title="`执行记录 · ${jobName}`"
+    :title="t('jobRuns.title', { name: jobName })"
     style="width: 760px; max-width: 94vw"
     :bordered="false"
     @update:show="emit('update:show', $event)"
   >
     <div class="runs-modal">
       <div class="rm-job-bar">
-        <span class="rm-job-label">任务</span>
+      <span class="rm-job-label">{{ t('jobRuns.job') }}</span>
         <span class="rm-job-name" :title="jobName">{{ jobName }}</span>
       </div>
-      <div v-if="loading" class="rm-loading">加载中…</div>
+    <div v-if="loading" class="rm-loading">{{ t('jobRuns.loading') }}</div>
       <div v-else-if="error" class="rm-error">{{ error }}</div>
-      <div v-else-if="!runs.length" class="rm-empty">该任务还没有执行记录</div>
+    <div v-else-if="!runs.length" class="rm-empty">{{ t('jobRuns.empty') }}</div>
       <div v-else class="rm-list">
         <div v-for="r in pagedRuns" :key="r.id" class="rm-item">
           <div class="rm-main" @click="toggleLog(r.id)">
@@ -145,13 +147,13 @@ function resultFirstLine(r: JobTaskRunInfo): string {
             <n-tag size="tiny" :type="runStatusType(r)" :bordered="false">{{ r.statusText }}</n-tag>
             <span class="rm-time" :title="formatTimeFull(r.startedAt)">{{ formatTimeShort(r.startedAt) }}</span>
             <span class="rm-dur">{{ formatDuration(r.runningSeconds) }}</span>
-            <span v-if="r.changedFiles != null" class="rm-files">回写 {{ r.changedFiles }}</span>
-            <span v-if="r.exitCode != null" class="rm-exit">码 {{ r.exitCode }}</span>
+      <span v-if="r.changedFiles != null" class="rm-files">{{ t('jobRuns.files', { n: r.changedFiles }) }}</span>
+      <span v-if="r.exitCode != null" class="rm-exit">{{ t('jobRuns.exit', { n: r.exitCode }) }}</span>
             <span class="rm-caret">{{ runLogs[String(r.id)] !== undefined ? '▾' : '▸' }}</span>
           </div>
-          <div v-if="resultFirstLine(r)" class="rm-summary" :title="r.result">{{ resultFirstLine(r) }}</div>
-          <div v-if="runLogLoading[String(r.id)]" class="rm-log-loading">加载日志…</div>
-          <pre v-else-if="runLogs[String(r.id)] !== undefined" class="rm-log">{{ runLogs[String(r.id)] || '(日志为空)' }}</pre>
+          <div v-if="resultFirstLine(r)" class="rm-summary" :title="r.result || ''">{{ resultFirstLine(r) }}</div>
+      <div v-if="runLogLoading[String(r.id)]" class="rm-log-loading">{{ t('jobRuns.logLoading') }}</div>
+      <pre v-else-if="runLogs[String(r.id)] !== undefined" class="rm-log">{{ runLogs[String(r.id)] || t('jobRuns.logEmpty') }}</pre>
         </div>
       </div>
       <div v-if="runs.length > pageSize" class="rm-pager">

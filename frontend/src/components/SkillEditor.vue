@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useThemeStore } from '@/stores/theme'
 import { useMessage, useDialog } from 'naive-ui'
 import CodeEditor from './CodeEditor.vue'
@@ -24,6 +25,7 @@ interface Props {
   readonly?: boolean
 }
 
+const { t: tr } = useI18n()
 const props = withDefaults(defineProps<Props>(), {
   content: '',
   files: () => [],
@@ -210,10 +212,10 @@ function closeTab(path: string) {
   const t = tabs.value.find((x) => x.path === path)
   if (t && t.dirty) {
     dialog.warning({
-      title: '未保存的修改',
-      content: `「${path}」有未保存的改动,确定关闭吗?`,
-      positiveText: '关闭',
-      negativeText: '取消',
+      title: tr('skillEditor.unsavedTitle'),
+      content: tr('skillEditor.unsavedContent', { path }),
+      positiveText: tr('skillEditor.close'),
+      negativeText: tr('skillEditor.cancel'),
       onPositiveClick: () => {
         tabs.value = tabs.value.filter((x) => x.path !== path)
         if (activeTab.value === path) activeTab.value = tabs.value[0]?.path ?? ''
@@ -255,7 +257,7 @@ let promptResolver: ((v: string | null) => void) | null = null
 function askPrompt(cfg: { title: string; placeholder?: string; initial?: string; allowEmpty?: boolean; tip?: string }): Promise<string | null> {
   promptCfg.value = {
     title: cfg.title,
-    placeholder: cfg.placeholder || '请输入',
+        placeholder: cfg.placeholder || tr('skillEditor.defaultPlaceholder'),
     initial: cfg.initial || '',
     allowEmpty: !!cfg.allowEmpty,
     tip: cfg.tip || '',
@@ -281,17 +283,17 @@ function cleanRelPath(p: string): string {
 // 新建文件
 async function createFile(defaultPath: string) {
   const p = await askPrompt({
-    title: '新建文件',
-    placeholder: '输入文件相对路径(如 scripts/clean.py、data/schema.json)',
+    title: tr('skillEditor.newFileTitle'),
+    placeholder: tr('skillEditor.filePlaceholder'),
     initial: defaultPath,
-    tip: '可用 / 放到子目录(目录不存在会自动创建)',
+    tip: tr('skillEditor.fileTip'),
   })
   if (!p) return
   const clean = cleanRelPath(p)
   if (!clean) return
-  if (clean.includes('..')) { msg.error('路径不能包含 ..'); return }
+    if (clean.includes('..')) { msg.error(tr('skillEditor.dotdotForbidden')); return }
   if (props.files.some((f) => f.path === clean) || clean === 'SKILL.md') {
-    msg.warning(`文件 ${clean} 已存在`)
+    msg.warning(tr('skillEditor.existsWarn', { path: clean }))
     return
   }
   const vo: SkillFileVo = { path: clean, content: '', encoding: '' }
@@ -300,7 +302,7 @@ async function createFile(defaultPath: string) {
     const root = buildTree(props.files)
     const found = findNode(root, clean)
     if (found) openFile(found)
-    else msg.error('创建文件失败,请重试')
+    else msg.error(tr('skillEditor.createFailedRetry'))
   })
 }
 
@@ -314,10 +316,10 @@ async function triggerUpload(dirPath = '') {
   } else {
     // 顶层上传时弹 UI 输入框让用户填目标子目录,避免"文件上传了但没有归属目录"
     const target = await askPrompt({
-      title: '上传到哪个子目录?',
-      placeholder: '例如 scripts;留空则放在根目录',
+    title: tr('skillEditor.uploadToDirTitle'),
+    placeholder: tr('skillEditor.uploadToDirPlaceholder'),
       allowEmpty: true,
-      tip: '文件会放到 输入目录/文件名 下,目录不存在会自动创建。',
+    tip: tr('skillEditor.uploadToDirTip'),
     })
     if (target === null) return // 用户取消
     uploadDir = target.replace(/^\/+|\/+$/g, '').trim()
@@ -350,7 +352,7 @@ async function onUploadPick(ev: Event) {
       }
     }
     if (props.files.some((f) => f.path === vo.path)) {
-      msg.warning(`文件 ${vo.path} 已存在,请重命名后上传`)
+    msg.warning(tr('skillEditor.existsWarn', { path: vo.path }))
       return
     }
     emit('update:files', [...props.files, vo])
@@ -359,9 +361,9 @@ async function onUploadPick(ev: Event) {
       const found = findNode(root, vo.path)
       if (found) openFile(found)
     })
-    msg.success(`已上传 ${vo.path}`)
+    msg.success(tr('skillEditor.uploadedTo', { path: vo.path }))
   } catch (e: unknown) {
-    msg.error(e instanceof Error ? e.message : '上传失败')
+    msg.error(e instanceof Error ? e.message : tr('skillEditor.uploadFailed'))
   }
 }
 
@@ -406,18 +408,18 @@ function downloadFile(node: SkillNode) {
 // 重命名：就地改 path(同时迁移打开的开缓冲)
 async function renameFile(node: SkillNode, oldPath: string) {
   const next = await askPrompt({
-    title: '重命名/移动',
-    placeholder: '输入新的相对路径',
+    title: tr('skillEditor.renameMoveTitle'),
+    placeholder: tr('skillEditor.renamePlaceholder'),
     initial: oldPath,
-    tip: '可含 / 选择放到子目录,修改即生效。',
+    tip: tr('skillEditor.renameTip'),
   })
   if (!next) return
   const clean = cleanRelPath(next)
   if (!clean) return
   if (clean === oldPath) return
-  if (clean.includes('..')) { msg.error('路径不能包含 ..'); return }
+    if (clean.includes('..')) { msg.error(tr('skillEditor.dotdotForbidden')); return }
   if (props.files.some((f) => f.path === clean) || clean === 'SKILL.md') {
-    msg.warning(`文件 ${clean} 已存在`)
+    msg.warning(tr('skillEditor.existsWarn', { path: clean }))
     return
   }
   const vo = props.files.find((f) => f.path === oldPath)
@@ -435,17 +437,17 @@ async function renameFile(node: SkillNode, oldPath: string) {
     t.path = clean
     if (activeTab.value === oldPath) activeTab.value = clean
   }
-  msg.success(`已重命名为 ${clean}`)
+    msg.success(tr('skillEditor.renamed', { path: clean }))
 }
 
 // 删除(弹框确认)
 function removeNode(node: SkillNode) {
   const label = node.path === 'SKILL.md' ? 'SKILL.md' : node.path
   dialog.warning({
-    title: node.dir ? '删除目录' : '删除文件',
-    content: node.dir ? `确定删除目录「${label}」及其全部内容吗?` : `确定删除文件「${label}」吗?`,
-    positiveText: '删除',
-    negativeText: '取消',
+    title: node.dir ? tr('skillEditor.delDirTitle') : tr('skillEditor.delFileTitle'),
+    content: node.dir ? tr('skillEditor.delDirContent', { name: label }) : tr('skillEditor.delFileContent', { name: label }),
+    positiveText: tr('skillEditor.delete'),
+    negativeText: tr('skillEditor.cancel'),
     onPositiveClick: () => {
       if (node.dir) {
         const prefix = node.path
@@ -462,7 +464,7 @@ function removeNode(node: SkillNode) {
         tabs.value = tabs.value.filter((t) => t.path !== node.path)
         if (activeTab.value === node.path) activeTab.value = tabs.value[0]?.path ?? ''
       }
-      msg.success('已删除')
+    msg.success(tr('skillEditor.deleted'))
     },
   })
 }
@@ -502,7 +504,7 @@ watch(() => props.name, () => {
 function seedFrontmatterIfEmpty() {
   const cur = fileVoMap.value.get('SKILL.md') || ''
   if (!props.readonly && props.name && !cur.trim().startsWith('---')) {
-    const desc = props.description?.trim() || '用户自定义技能。'
+  const desc = props.description?.trim() || tr('skillEditor.noDescFallback')
     const seed = `---\nname: ${props.name}\ndescription: ${desc} \n---\n\n# ${props.name}\n\n> 技能功能说明(何时使用、如何使用、注意事项)。\n`
     fileVoMap.value.set('SKILL.md', seed)
     emit('update:content', seed)
@@ -549,11 +551,11 @@ function fileIcon(name: string): string {
     <div class="se-tree-pane">
       <div class="se-tree-head">
         <span class="se-tree-title">{{ name }}</span>
-        <span v-if="readonly" class="se-ro-tag">只读</span>
+        <span v-if="readonly" class="se-ro-tag">{{ tr('skillEditor.roTag') }}</span>
       </div>
       <div class="se-tree-actions" v-if="!readonly">
-        <button class="se-act" title="新建文件" @click="createFile('scripts/tool.py')">＋ 文件</button>
-        <button class="se-act" title="上传文件(支持二进制)" @click="triggerUpload()">⇪ 上传</button>
+        <button class="se-act" :title="tr('skillEditor.newFile')" @click="createFile('scripts/tool.py')">{{ tr('skillEditor.newFile') }}</button>
+        <button class="se-act" :title="tr('skillEditor.uploadFile')" @click="triggerUpload()">{{ tr('skillEditor.uploadFile') }}</button>
       </div>
       <div class="se-tree-body" v-if="fileTree.length || content">
         <div class="se-node se-node-root">
@@ -578,24 +580,24 @@ function fileIcon(name: string): string {
               <span v-if="!readonly" class="se-node-x" @click.stop="removeNode(ch)">🗑</span>
             </div>
             <div v-if="!readonly" class="se-node se-node-ind se-add-dir">
-              <button class="se-mini" @click="triggerUpload(node.path)">⇪ 上传到此</button>
+            <button class="se-mini" @click="triggerUpload(node.path)">{{ tr('skillEditor.uploadHere') }}</button>
             </div>
           </template>
         </template>
         <div v-if="!readonly && !fileTree.length" class="se-tree-empty">
-          <p style="margin:0 0 8px">技能包为空</p>
-          <button class="se-upload-big" @click="triggerUpload()">⇪ 上传文件</button>
-          <p style="margin:8px 0 0;font-size:11px;opacity:.6">或用「＋ 文件」创建空文件</p>
+        <p style="margin:0 0 8px">{{ tr('skillEditor.emptyFolder') }}</p>
+        <button class="se-upload-big" @click="triggerUpload()">{{ tr('skillEditor.uploadFile') }}</button>
+        <p style="margin:8px 0 0;font-size:11px;opacity:.6">{{ tr('market.zipTip') }}</p>
         </div>
       </div>
-      <div v-else class="se-tree-body se-tree-empty">技能包为空</div>
+      <div v-else class="se-tree-body se-tree-empty">{{ tr('skillEditor.emptyFolder') }}</div>
     </div>
 
     <!-- 右:标签页 + 编辑器 -->
     <div class="se-edit-pane">
       <div class="se-tabs">
         <div v-for="t in tabs" :key="t.path" class="se-tab" :class="{ active: activeTab === t.path }" @click="activeTab = t.path">
-          <span class="se-tab-dot" v-if="t.dirty && !readonly" title="未保存">●</span>
+        <span class="se-tab-dot" v-if="t.dirty && !readonly" :title="tr('skillEditor.dirty')">●</span>
           <span class="se-tab-ico">{{ t.isMarkdown ? '📄' : '📎' }}</span>
           <span class="se-tab-name">{{ t.path }}</span>
           <span v-if="!readonly" class="se-tab-x" @click.stop="closeTab(t.path)">×</span>
@@ -606,10 +608,10 @@ function fileIcon(name: string): string {
         <div v-if="isActiveBinary() && activeTab !== 'SKILL.md'" class="se-binary-view">
           <div class="se-binary-ico">🖼️</div>
           <p class="se-binary-name">{{ activeFilename() }}</p>
-          <p class="se-binary-hint">二进制文件(图片/数据等),不支持文本编辑</p>
+      <p class="se-binary-hint">{{ tr('skillEditor.binaryHint') }}</p>
           <div class="se-binary-actions">
-            <button class="se-mini" @click="downloadFile(findNode(fileTree, activeTab)!)">⬇ 下载</button>
-            <button v-if="!readonly" class="se-mini" @click="triggerUpload(activeTab.includes('/') ? activeTab.replace(/\/[^/]+$/, '') : '')">⇪ 替换文件</button>
+        <button class="se-mini" @click="downloadFile(findNode(fileTree, activeTab)!)">{{ tr('skillEditor.download') }}</button>
+        <button v-if="!readonly" class="se-mini" @click="triggerUpload(activeTab.includes('/') ? activeTab.replace(/\/[^/]+$/, '') : '')">{{ tr('skillEditor.replace') }}</button>
           </div>
         </div>
         <!-- 文本编辑器(只读技能同样走 CodeEditor,read-only 渲染内容) -->

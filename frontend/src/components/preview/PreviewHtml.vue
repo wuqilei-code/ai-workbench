@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, computed, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { fileApi } from '@/api/files'
 import { extToLang } from './ext'
 import { injectSvgLineFillFix } from '@/utils/svgFix'
@@ -14,6 +15,7 @@ import { injectSvgLineFillFix } from '@/utils/svgFix'
  * 安全:iframe 用 sandbox="allow-scripts allow-popups"(无 allow-same-origin),
  * 脚本运行在无源孤立环境,无法访问宿主应用同源数据。
  */
+const { t } = useI18n()
 const props = defineProps<{ path: string }>()
 
 const mode = ref<'page' | 'code'>('page')
@@ -111,7 +113,7 @@ async function load() {
     const resolved = await resolveResources(html)
     pageDoc.value = injectSvgLineFillFix(injectCharset(resolved))
   } catch (e: any) {
-    error.value = e?.message || '加载失败'
+    error.value = e?.message || t('preview.loadFailed')
   } finally {
     loading.value = false
   }
@@ -143,19 +145,19 @@ function toggleMode() {
       <button
         class="ph-tool"
         :class="{ on: scriptsOff }"
-        :title="scriptsOff ? '已禁用脚本,点击恢复' : '禁用页面脚本'"
+        :title="scriptsOff ? t('preview.scriptsOffTitle') : t('preview.scriptsOnTitle')"
         @click="scriptsOff = !scriptsOff"
-      >脚本{{ scriptsOff ? '关' : '开' }}</button>
-      <button class="ph-tool" title="刷新页面" @click="reload">刷新</button>
+      >{{ t('preview.scriptsLabel') }}{{ scriptsOff ? t('preview.stateOff') : t('preview.stateOn') }}</button>
+      <button class="ph-tool" :title="t('preview.reload')" @click="reload">{{ t('preview.reload') }}</button>
       <div class="ph-bps">
-        <button class="ph-bp" :class="{ on: bp === null }" @click="bp = null">自适应</button>
-        <button class="ph-bp" :class="{ on: bp === 1280 }" @click="bp = 1280">桌面</button>
-        <button class="ph-bp" :class="{ on: bp === 768 }" @click="bp = 768">平板</button>
-        <button class="ph-bp" :class="{ on: bp === 390 }" @click="bp = 390">手机</button>
+        <button class="ph-bp" :class="{ on: bp === null }" @click="bp = null">{{ t('preview.bpAuto') }}</button>
+        <button class="ph-bp" :class="{ on: bp === 1280 }" @click="bp = 1280">{{ t('preview.bpDesktop') }}</button>
+        <button class="ph-bp" :class="{ on: bp === 768 }" @click="bp = 768">{{ t('preview.bpTablet') }}</button>
+        <button class="ph-bp" :class="{ on: bp === 390 }" @click="bp = 390">{{ t('preview.bpMobile') }}</button>
       </div>
       <div class="ph-modes">
-        <button class="ph-mode" :class="{ on: mode === 'page' }" @click="mode = 'page'">页面</button>
-        <button class="ph-mode" :class="{ on: mode === 'code' }" @click="mode = 'code'">代码</button>
+        <button class="ph-mode" :class="{ on: mode === 'page' }" @click="mode = 'page'">{{ t('preview.modePage') }}</button>
+      <button class="ph-mode" :class="{ on: mode === 'code' }" @click="mode = 'code'">{{ t('preview.modeCode') }}</button>
       </div>
     </div>
     <div class="ph-body">
@@ -166,13 +168,13 @@ function toggleMode() {
           :srcdoc="pageDoc"
           :sandbox="sandboxAttr"
           :style="{ width: holderW, height: '100%' }"
-          title="HTML 页面预览"
+          :title="t('preview.htmlPreviewTitle')"
         />
       </div>
       <n-spin v-else :show="loading">
         <div v-if="error" class="ph-error">{{ error }}</div>
         <PreviewCode v-else-if="raw !== ''" :content="raw" :lang="codeLang" />
-        <div v-else class="ph-empty">加载中…</div>
+        <div v-else class="ph-empty">{{ t('preview.htmlEmpty') }}</div>
       </n-spin>
     </div>
   </div>

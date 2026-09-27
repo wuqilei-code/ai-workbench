@@ -1,5 +1,7 @@
 import type { MessageVo, Step, StepParts, ToolCall, Turn } from '@/types'
+import { i18n } from '@/i18n'
 
+const t = (k: string) => i18n.global.t(k)
 /**
  * 把扁平的消息列表按"连续分组"规则聚合成 Turn 列表。
  * <p>
@@ -48,59 +50,12 @@ export function buildTurns(messages: MessageVo[]): Turn[] {
   return turns
 }
 
-/** 渲染流条目:一轮对话(turn)或一张 AI 变更总结卡片(summary),按时间顺序交错。 */
-export type FlowItem =
-  | { kind: 'turn'; turn: Turn }
-  | { kind: 'summary'; summary: {
-      summary: string
-      files: { status: string; path: string }[]
-      at?: string
-      sha?: string
-      parentSha?: string
-    }; _insertBefore?: number }
+/** 渲染流条目:一轮对话(turn)。(原「AI 变更总结」卡片随 deepagents 轨道一并移除) */
+export type FlowItem = { kind: 'turn'; turn: Turn }
 
-/** summary 条目形状(与 chat store 的 summaries 元素对齐) */
-export interface SummaryItem {
-  summary: string
-  files: { status: string; path: string }[]
-  at?: string
-  sha?: string
-  parentSha?: string
-}
-
-/**
- * 把"轮 + 总结"按时间交错成有序渲染流。
- * deepagents 轨道 summaries 恒为空,本函数退化为纯轮次列表(保留形状兼容)。
- */
-export function buildFlow(turns: Turn[], summaries: SummaryItem[]): FlowItem[] {
-  const turnStart = (t: Turn): number => {
-    const ts = t.userMessage?.createdAt
-    return ts ? new Date(ts).getTime() : 0
-  }
-  const summaryAt = (s: SummaryItem): number => (s.at ? new Date(s.at).getTime() : 0)
-
-  const items: FlowItem[] = []
-  for (const s of summaries) {
-    let insertAt = turns.length
-    for (let k = 0; k < turns.length; k++) {
-      if (turnStart(turns[k]) > summaryAt(s)) {
-        insertAt = k
-        break
-      }
-    }
-    items.push({ kind: 'summary', summary: s, _insertBefore: insertAt })
-  }
-  items.sort((a, b) => (a._insertBefore ?? 0) - (b._insertBefore ?? 0))
-  const merged: FlowItem[] = []
-  let si = 0
-  for (let t = 0; t < turns.length; t++) {
-    while (si < items.length && (items[si] as any)._insertBefore === t) {
-      merged.push(items[si++])
-    }
-    merged.push({ kind: 'turn', turn: turns[t] })
-  }
-  while (si < items.length) merged.push(items[si++])
-  return merged
+/** 渲染流:deepagents 轨道只有轮次列表,按顺序展开。 */
+export function buildFlow(turns: Turn[]): FlowItem[] {
+  return turns.map((turn) => ({ kind: 'turn', turn }))
 }
 
 /** 把 turn 内最后一段"正文"步提为 finalAnswer(推理/工具步留在思考区按序展示) */
@@ -211,7 +166,7 @@ export function summarizePath(raw: string): string {
   let p = raw.replace(/\\/g, '/').trim()
   p = p.replace(/^\/workspace\/?/i, '')
   const skill = p.match(/^\/?skills\/([^/]+)(\/.+)?$/i)
-  if (skill) return `技能 ${skill[1]}${skill[2] || ''}`
+  if (skill) return `${t('turns2.skill')} ${skill[1]}${skill[2] || ''}`
   const segs = p.split('/').filter(Boolean)
   return segs.slice(-2).join('/') || p
 }

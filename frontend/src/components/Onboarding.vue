@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 const LS_KEY = 'aiw.onboarded.v1'
 
 /** 首次登录(未看过引导)时展示 3 步引导 */
 const steps = [
-  { title: '直接提问', desc: '像聊天一样直接说需求即可,比如「帮我写一份本周工作周报」。也可以点右上角「生成文档」「模板库」快速开始。', icon: '💬' },
-  { title: '上传文件一起分析', desc: '点击输入框旁的「+」上传 Excel / CSV / 文档,上传数据文件后会给出数据分析的示例提问。', icon: '📎' },
-  { title: '重要内容随手收藏', desc: '鼠标悬停任意 AI 回答,点 ☆ 收藏;之后可在右侧「收藏」面板随时回来查看,并一键跳回原会话。', icon: '⭐' },
+  { title: t('onboarding.f1'), desc: t('onboarding.f1Desc'), icon: '💬' },
+  { title: t('onboarding.f2'), desc: t('onboarding.f2Desc'), icon: '📎' },
+  { title: t('onboarding.f3'), desc: t('onboarding.f3Desc'), icon: '⭐' },
 ]
 
 const show = ref(false)
@@ -58,7 +60,7 @@ function close() {
     :show-close="false"
     style="width: 460px; max-width: 92vw"
     :bordered="false"
-    title="欢迎使用 AI Workbench 👋"
+    :title="t('onboarding.title')"
   >
     <div class="ob-body">
       <n-progress
@@ -86,11 +88,11 @@ function close() {
     </div>
     <template #footer>
       <div class="ob-footer">
-        <span v-if="current > 0" class="ob-skip" @click="close">跳过</span>
+        <span v-if="current > 0" class="ob-skip" @click="close">{{ t('onboarding.skip') }}</span>
         <span v-else class="ob-skip" />
         <div style="display: flex; gap: 8px">
-          <n-button v-if="current > 0" quaternary @click="prev">上一步</n-button>
-          <n-button type="primary" @click="next">{{ isLast ? '开始使用' : '下一步' }}</n-button>
+          <n-button v-if="current > 0" quaternary @click="prev">{{ t('onboarding.prev') }}</n-button>
+          <n-button type="primary" @click="next">{{ isLast ? t('onboarding.start') : t('onboarding.next') }}</n-button>
         </div>
       </div>
     </template>

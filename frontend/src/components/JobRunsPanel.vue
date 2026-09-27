@@ -6,8 +6,10 @@ import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import { jobApi } from '@/api/jobs'
 import type { JobTaskInfo } from '@/types'
 import JobRunsModal from '@/components/JobRunsModal.vue'
+import { useI18n } from 'vue-i18n'
 
 const jobs = ref<JobTaskInfo[]>([])
+const { t } = useI18n()
 const loading = ref(false)
 const error = ref('')
 
@@ -39,7 +41,7 @@ async function refresh() {
     const maxPage = Math.max(1, Math.ceil(jobs.value.length / pageSize))
     if (page.value > maxPage) page.value = maxPage
   } catch (e: any) {
-    error.value = e?.message || '加载失败'
+    error.value = e?.message || t('jobRuns2.loadFailed')
   } finally {
     loading.value = false
   }
@@ -105,15 +107,15 @@ onBeforeUnmount(stopPolling)
 <template>
   <div class="runs-panel">
     <div class="panel-head">
-      <span class="hint">{{ hasActive ? '有任务运行/排队,自动刷新' : '空闲' }}</span>
-      <n-button size="tiny" quaternary circle title="刷新" @click="refresh">↻</n-button>
+      <span class="hint">{{ hasActive ? t('jobRuns2.activeHint') : t('jobRuns2.idle') }}</span>
+      <n-button size="tiny" quaternary circle :title="t('jobRuns2.refreshTitle')" @click="refresh">↻</n-button>
     </div>
 
     <n-spin :show="loading" size="small" style="display: block; margin: 24px auto">
       <div v-if="error" class="runs-error">{{ error }}</div>
       <div v-else-if="!jobs.length" class="runs-empty">
-        暂无定时任务<br />
-        <span class="runs-empty-sub">点击左侧侧边栏「自动化」创建任务。</span>
+        {{ t('jobRuns2.emptyTitle') }}<br />
+        <span class="runs-empty-sub">{{ t('jobRuns2.emptySub') }}</span>
       </div>
       <div v-else class="task-list">
         <div v-for="j in pagedJobs" :key="j.id" class="task-item" :class="{ disabled: !j.enabled }">
@@ -126,15 +128,15 @@ onBeforeUnmount(stopPolling)
                 {{ j.statusText }}
               </n-tag>
             </div>
-            <div class="task-content" :title="j.prompt">{{ j.prompt || '(空提示词)' }}</div>
+            <div class="task-content" :title="j.prompt">{{ j.prompt || t('jobRuns2.emptyPrompt') }}</div>
             <div class="task-sub">
-              <span v-if="j.nextRunAt" class="t-next">下次 {{ formatTime(j.nextRunAt) }}</span>
-              <span v-else-if="j.finishedAt" class="t-time">上次 {{ formatTime(j.finishedAt) }}</span>
-              <span v-if="j.runningSeconds != null" class="t-dur">耗时 {{ formatDuration(j.runningSeconds) }}</span>
+              <span v-if="j.nextRunAt" class="t-next">{{ t('jobRuns2.next', { t: formatTime(j.nextRunAt) }) }}</span>
+              <span v-else-if="j.finishedAt" class="t-time">{{ t('jobRuns2.last', { t: formatTime(j.finishedAt) }) }}</span>
+              <span v-if="j.runningSeconds != null" class="t-dur">{{ t('jobRuns2.cost', { d: formatDuration(j.runningSeconds) }) }}</span>
             </div>
           </div>
           <div class="task-actions">
-            <n-button size="tiny" quaternary @click="openRuns(j)">执行记录</n-button>
+            <n-button size="tiny" quaternary @click="openRuns(j)">{{ t('jobRuns2.runs') }}</n-button>
           </div>
         </div>
       </div>

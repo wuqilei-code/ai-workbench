@@ -90,6 +90,8 @@ export interface PendingPermission {
 /** 消息的 parts JSON 容器(对齐后端落库结构) */
 export interface StepParts {
   toolCalls?: ToolCall[]
+  /** 实时时间线条目(reason/text/tool/system),流式期间前端本地维护 */
+  timeline?: { k: string; v?: string; id?: string }[]
   /** 待确认的权限请求(危险操作 HITL) */
   pendingPermission?: PendingPermission | null
   /** 本轮生成耗时(秒,后端自流开始计时落库),刷新后前端据此展示"已完成 Xs" */
@@ -165,12 +167,34 @@ export interface TemplateVo {
   id: number
   title: string
   category: string
+  /** 模板介绍(文档型模板详情页展示) */
+  description?: string
+  /** 标签(逗号分隔文本) */
+  tags?: string
   content: string
+  /** prompt=提示词模板;html=HTML 文档样板 */
+  format?: string
+  /** 关联技能名 */
+  skill?: string
+  /** 是否精选 */
+  featured?: boolean
+  /** 缩略图 URL(空则前端 live 渲染) */
+  thumb?: string
   /** emoji 图标 */
   icon?: string
   builtin: boolean
+  /** self=自建;installed=市场安装(只读,仅可查看/使用) */
+  source?: string
   /** 当前用户是否已启用(首页展示) */
   enabled: boolean
+  /** 当前用户是否已收藏 */
+  favorited?: boolean
+  /** 当前用户是否已置顶 */
+  pinned?: boolean
+  /** 置顶顺序(越小越靠前) */
+  pinOrder?: number
+  /** 置顶时间 */
+  pinnedAt?: string
   updatedAt: string
 }
 
@@ -189,15 +213,6 @@ export interface Turn {
   userMessage: MessageVo | null
   steps: Step[]
   finalAnswer: Step | null
-}
-
-/** AI 变更总结卡片(deepagents 轨道不再产生,保留形状供 flow 渲染空数组) */
-export interface ChangeSummary {
-  summary: string
-  files: { status: string; path: string }[]
-  at?: string
-  sha?: string
-  parentSha?: string
 }
 
 export interface ModelVo {
@@ -268,6 +283,8 @@ export interface JobTaskInfo {
   agent: string
   autoApprove: boolean
   enabled: boolean
+  /** 任务变量(键→值):运行时替换 prompt 中的 ${key} 占位符 */
+  variables?: Record<string, string>
   status: 'pending' | 'queued' | 'running' | 'success' | 'failed' | 'timeout' | 'cancelled'
   statusText: string
   nextRunAt?: string | null

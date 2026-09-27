@@ -2,10 +2,13 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { myApi, type MyStats } from '@/api/my'
 import { useMessage } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 
 const emit = defineEmits<{ (e: 'close'): void }>()
+const props = defineProps<{ page?: boolean }>()
 
 const msg = useMessage()
+const { t } = useI18n()
 const days = ref(14)
 const loading = ref(false)
 const data = ref<MyStats | null>(null)
@@ -25,7 +28,7 @@ async function load() {
   try {
     data.value = await myApi.stats(days.value)
   } catch (e: any) {
-    msg.error(e.message || '加载驾驶舱数据失败')
+    msg.error(e.message || t('dashboard.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -57,8 +60,8 @@ function dayLabel(date: string): string {
   const d = new Date(date + 'T00:00:00')
   const today = new Date()
   const diff = Math.round((today.getTime() - d.getTime()) / 86400000)
-  if (diff === 0) return '今天'
-  if (diff === 1) return '昨天'
+  if (diff === 0) return t('dashboard.today')
+  if (diff === 1) return t('dashboard.yesterday')
   return `${d.getMonth() + 1}/${d.getDate()}`
 }
 
@@ -85,22 +88,27 @@ const maxAgent = computed(() => Math.max(1, ...(data.value?.agents.map((a) => a.
 </script>
 
 <template>
-  <div class="dash-mask" @click.self="emit('close')">
+  <div :class="page ? 'dash-page' : 'dash-mask'" @click.self="!page && emit('close')">
+    <div v-if="page" class="manage-crumb">
+      <button class="crumb-link" @click="emit('close')">首页</button>
+      <span class="crumb-sep">/</span>
+      <span class="crumb-cur">{{ t('dashboard.crumb') }}</span>
+    </div>
     <div class="dash">
       <div class="dash-head">
       <div>
-        <h2>驾驶舱</h2>
-        <p class="sub">你的个人使用统计</p>
+        <h2>{{ t('dashboard.crumb') }}</h2>
+        <p class="sub">{{ t('dashboard.sub') }}</p>
       </div>
       <div class="head-ops">
         <n-select
           v-model:value="days"
-          :options="[7, 14, 30, 90].map((d) => ({ label: `近 ${d} 天`, value: d }))"
+          :options="[7, 14, 30, 90].map((d) => ({ label: t('dashboard.lastDays', { d }), value: d }))"
           style="width: 116px"
           @update:value="load"
         />
-        <n-button type="primary" :loading="loading" @click="load">刷新</n-button>
-        <n-button quaternary title="关闭驾驶舱" @click="emit('close')">
+        <n-button type="primary" :loading="loading" @click="load">{{ t('dashboard.refresh') }}</n-button>
+        <n-button quaternary title="关闭驾驶舱" @click="emit('close')" v-if="!page">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </n-button>
       </div>
@@ -111,38 +119,38 @@ const maxAgent = computed(() => Math.max(1, ...(data.value?.agents.map((a) => a.
         <!-- 核心指标 -->
         <div class="cards">
           <div class="stat">
-            <span class="stat-label">会话</span>
+            <span class="stat-label">{{ t('dashboard.statSessions') }}</span>
             <span class="stat-value">{{ fmtNum(ov?.totalSessions) }}</span>
           </div>
           <div class="stat">
-            <span class="stat-label">消息</span>
+            <span class="stat-label">{{ t('dashboard.statMessages') }}</span>
             <span class="stat-value">{{ fmtNum(ov?.totalMessages) }}</span>
-            <span class="stat-sub">我 {{ fmtNum(ov?.userMessages) }} · AI {{ fmtNum(ov?.assistantMessages) }}</span>
+            <span class="stat-sub">{{ t('dashboard.statMsgSub', { u: fmtNum(ov?.userMessages), a: fmtNum(ov?.assistantMessages) }) }}</span>
           </div>
           <div class="stat">
-            <span class="stat-label">输出 Token</span>
+            <span class="stat-label">{{ t('dashboard.statOutputToken') }}</span>
             <span class="stat-value">{{ fmtTokens(ov?.outputTokens) }}</span>
-            <span class="stat-sub">输入 {{ fmtTokens(ov?.inputTokens) }}</span>
+            <span class="stat-sub">{{ t('dashboard.statTokenSub', { v: fmtTokens(ov?.inputTokens) }) }}</span>
           </div>
           <div class="stat">
-            <span class="stat-label">工具调用</span>
+            <span class="stat-label">{{ t('dashboard.statToolCalls') }}</span>
             <span class="stat-value">{{ fmtNum(ov?.toolCalls) }}</span>
           </div>
           <div class="stat">
-            <span class="stat-label">文件变动</span>
+            <span class="stat-label">{{ t('dashboard.statFileChanges') }}</span>
             <span class="stat-value">{{ fmtNum(ov?.filesChanged) }}</span>
           </div>
           <div class="stat accent">
-            <span class="stat-label">估算成本</span>
+            <span class="stat-label">{{ t('dashboard.statCost') }}</span>
             <span class="stat-value">{{ fmtMoney(ov?.totalEstimatedCost) }}</span>
           </div>
           <div class="stat">
-            <span class="stat-label">任务成功率</span>
+            <span class="stat-label">{{ t('dashboard.statSuccessRate') }}</span>
             <span class="stat-value">{{ jobSuccessRate }}%</span>
-            <span class="stat-sub">{{ fmtNum(ov?.successRuns) }}/{{ fmtNum(ov?.totalRuns) }} 次运行</span>
+            <span class="stat-sub">{{ t('dashboard.statRunsSub', { ok: fmtNum(ov?.successRuns), total: fmtNum(ov?.totalRuns) }) }}</span>
           </div>
           <div class="stat">
-            <span class="stat-label">未读通知</span>
+            <span class="stat-label">{{ t('dashboard.statUnread') }}</span>
             <span class="stat-value">{{ fmtNum(ov?.unreadNotifications) }}</span>
           </div>
         </div>
@@ -150,38 +158,38 @@ const maxAgent = computed(() => Math.max(1, ...(data.value?.agents.map((a) => a.
         <!-- 环比 -->
         <div class="wow-row">
           <div class="wow-item">
-            <span class="wow-label">本周消息</span>
+            <span class="wow-label">{{ t('dashboard.wowMessages') }}</span>
             <span class="wow-value">{{ fmtNum(ov?.weekMessages) }}</span>
             <span class="wow-pct" :class="{ up: pct(ov?.weekMessages || 0, ov?.prevWeekMessages || 0).up, down: !pct(ov?.weekMessages || 0, ov?.prevWeekMessages || 0).up }">
               {{ pct(ov?.weekMessages || 0, ov?.prevWeekMessages || 0).text }}
             </span>
-            <span class="wow-base">上周 {{ fmtNum(ov?.prevWeekMessages) }}</span>
+            <span class="wow-base">{{ t('dashboard.wowPrevMessages', { v: fmtNum(ov?.prevWeekMessages) }) }}</span>
           </div>
           <div class="wow-item">
-            <span class="wow-label">本周输出 Token</span>
+            <span class="wow-label">{{ t('dashboard.wowOutputToken') }}</span>
             <span class="wow-value">{{ fmtTokens(ov?.weekOutputTokens) }}</span>
             <span class="wow-pct" :class="{ up: pct(ov?.weekOutputTokens || 0, ov?.prevWeekOutputTokens || 0).up, down: !pct(ov?.weekOutputTokens || 0, ov?.prevWeekOutputTokens || 0).up }">
               {{ pct(ov?.weekOutputTokens || 0, ov?.prevWeekOutputTokens || 0).text }}
             </span>
-            <span class="wow-base">上周 {{ fmtTokens(ov?.prevWeekOutputTokens) }}</span>
+            <span class="wow-base">{{ t('dashboard.wowPrevToken', { v: fmtTokens(ov?.prevWeekOutputTokens) }) }}</span>
           </div>
           <div class="wow-item">
-            <span class="wow-label">缓存命中率</span>
+            <span class="wow-label">{{ t('dashboard.wowCache') }}</span>
             <span class="wow-value">{{ cacheHitRate }}%</span>
-            <span class="wow-base">读 {{ fmtTokens(ov?.cacheReadTokens) }} · 写 {{ fmtTokens(ov?.cacheWriteTokens) }}</span>
+            <span class="wow-base">{{ t('dashboard.wowCacheSub', { r: fmtTokens(ov?.cacheReadTokens), w: fmtTokens(ov?.cacheWriteTokens) }) }}</span>
           </div>
           <div class="wow-item">
-            <span class="wow-label">连续活跃</span>
-            <span class="wow-value">{{ ov?.currentStreak }} 天</span>
-            <span class="wow-base">累计活跃 {{ ov?.activeDays }} 天</span>
+            <span class="wow-label">{{ t('dashboard.wowStreak') }}</span>
+            <span class="wow-value">{{ t('dashboard.streakDays', { d: ov?.currentStreak }) }}</span>
+            <span class="wow-base">{{ t('dashboard.streakTotal', { d: ov?.activeDays }) }}</span>
           </div>
         </div>
 
         <!-- 每日趋势 -->
         <div class="grid-2">
-          <n-card size="small" title="每日消息量" class="block">
+          <n-card size="small" :title="t('dashboard.dailyMessages')" class="block">
             <div v-if="data.daily.length" class="bars">
-              <div v-for="d in data.daily" :key="d.date" class="bar-col" :title="`${d.date} · ${d.messages} 条消息`">
+              <div v-for="d in data.daily" :key="d.date" class="bar-col" :title="t('dashboard.barTitle', { date: d.date, n: d.messages })">
                 <div class="bar-val">{{ d.messages }}</div>
                 <div class="bar-track">
                   <div class="bar-fill" :style="{ height: Math.round((d.messages / maxDailyMessages) * 100) + '%' }" />
@@ -189,10 +197,10 @@ const maxAgent = computed(() => Math.max(1, ...(data.value?.agents.map((a) => a.
                 <div class="bar-label">{{ dayLabel(d.date) }}</div>
               </div>
             </div>
-            <n-empty v-else description="暂无消息" size="small" />
+            <n-empty v-else :description="t('dashboard.emptyMessages')" size="small" />
           </n-card>
 
-          <n-card size="small" title="每日输出 Token" class="block">
+          <n-card size="small" :title="t('dashboard.dailyToken')" class="block">
             <div v-if="data.daily.length" class="bars">
               <div v-for="d in data.daily" :key="d.date" class="bar-col" :title="`${d.date} · ${fmtTokens(d.outputTokens)} tokens`">
                 <div class="bar-val">{{ fmtTokens(d.outputTokens) }}</div>
@@ -202,15 +210,15 @@ const maxAgent = computed(() => Math.max(1, ...(data.value?.agents.map((a) => a.
                 <div class="bar-label">{{ dayLabel(d.date) }}</div>
               </div>
             </div>
-            <n-empty v-else description="暂无 token 数据" size="small" />
+            <n-empty v-else :description="t('dashboard.emptyToken')" size="small" />
           </n-card>
         </div>
 
         <!-- 模型维度 -->
-        <n-card size="small" title="模型使用明细" class="block">
+        <n-card size="small" :title="t('dashboard.modelTable')" class="block">
           <n-table size="small" :bordered="false" v-if="data.models.length">
             <thead>
-              <tr><th>模型</th><th>会话</th><th>输入 Token</th><th>输出 Token</th><th>估算成本</th></tr>
+              <tr><th>{{ t('dashboard.thModel') }}</th><th>{{ t('dashboard.thSessions') }}</th><th>{{ t('dashboard.thInput') }}</th><th>{{ t('dashboard.thOutput') }}</th><th>{{ t('dashboard.thCost') }}</th></tr>
             </thead>
             <tbody>
               <tr v-for="m in data.models" :key="m.model">
@@ -222,12 +230,12 @@ const maxAgent = computed(() => Math.max(1, ...(data.value?.agents.map((a) => a.
               </tr>
             </tbody>
           </n-table>
-          <n-empty v-else description="暂无模型数据" size="small" />
+          <n-empty v-else :description="t('dashboard.emptyModel')" size="small" />
         </n-card>
 
         <div class="grid-2">
           <!-- agent 分布 -->
-          <n-card size="small" title="Agent 分布" class="block">
+          <n-card size="small" :title="t('dashboard.agentDist')" class="block">
             <div v-if="data.agents.length" class="dist-list">
               <div v-for="a in data.agents" :key="a.name" class="dist-row">
                 <span class="dist-name">{{ a.name }}</span>
@@ -237,23 +245,23 @@ const maxAgent = computed(() => Math.max(1, ...(data.value?.agents.map((a) => a.
                 <span class="dist-count">{{ a.count }}</span>
               </div>
             </div>
-            <n-empty v-else description="暂无 agent 数据" size="small" />
+            <n-empty v-else :description="t('dashboard.emptyAgent')" size="small" />
           </n-card>
 
           <!-- 资产 -->
-          <n-card size="small" title="资产" class="block">
+          <n-card size="small" :title="t('dashboard.assets')" class="block">
             <div class="asset-grid">
-              <div class="asset"><span class="asset-num">{{ ov?.installedSkills }}</span><span class="asset-label">已装技能</span></div>
-              <div class="asset"><span class="asset-num">{{ ov?.publishedSkills }}</span><span class="asset-label">发布技能</span></div>
-              <div class="asset"><span class="asset-num">{{ ov?.privateMcps }}</span><span class="asset-label">私有 MCP</span></div>
-              <div class="asset"><span class="asset-num">{{ ov?.myTemplates }}</span><span class="asset-label">自建模板</span></div>
-              <div class="asset"><span class="asset-num">{{ ov?.favorites }}</span><span class="asset-label">收藏</span></div>
-              <div class="asset"><span class="asset-num">{{ ov?.compactionCount }}</span><span class="asset-label">压缩次数</span></div>
+              <div class="asset"><span class="asset-num">{{ ov?.installedSkills }}</span><span class="asset-label">{{ t('dashboard.assetSkills') }}</span></div>
+              <div class="asset"><span class="asset-num">{{ ov?.publishedSkills }}</span><span class="asset-label">{{ t('dashboard.assetPublished') }}</span></div>
+              <div class="asset"><span class="asset-num">{{ ov?.privateMcps }}</span><span class="asset-label">{{ t('dashboard.assetMcp') }}</span></div>
+              <div class="asset"><span class="asset-num">{{ ov?.myTemplates }}</span><span class="asset-label">{{ t('dashboard.assetTemplates') }}</span></div>
+              <div class="asset"><span class="asset-num">{{ ov?.favorites }}</span><span class="asset-label">{{ t('dashboard.assetFav') }}</span></div>
+              <div class="asset"><span class="asset-num">{{ ov?.compactionCount }}</span><span class="asset-label">{{ t('dashboard.assetCompact') }}</span></div>
             </div>
           </n-card>
         </div>
       </template>
-      <n-empty v-else-if="!loading" description="暂无统计数据" style="margin-top: 60px" />
+      <n-empty v-else-if="!loading" :description="t('dashboard.emptyAll')" style="margin-top: 60px" />
     </n-spin>
       </div>
   </div>
@@ -378,4 +386,20 @@ const maxAgent = computed(() => Math.max(1, ...(data.value?.agents.map((a) => a.
 .asset { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px; background: var(--bg); border-radius: var(--radius-sm); }
 .asset-num { font-size: 20px; font-weight: 700; color: var(--text); }
 .asset-label { font-size: 11px; color: var(--text-3); }
+
+/* 整页模式:面包屑 + 内容区滚动 */
+.dash-page { flex: 1; min-width: 0; display: flex; flex-direction: column; height: 100%; min-height: 0; overflow-y: auto; padding: 18px 24px 28px; background: var(--bg); box-sizing: border-box; }
+.manage-crumb { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); margin-bottom: 12px; }
+.crumb-link { background: none; border: none; padding: 0; color: var(--text-3); cursor: pointer; font-size: 12px; }
+.crumb-link:hover { color: var(--accent-text); }
+.crumb-sep { color: var(--text-4); }
+.crumb-cur { color: var(--text-2); }
+/* 整页模式下 .dash 去掉浮层盒子样式,铺满内容区 */
+.dash-page .dash {
+  width: 100%; max-width: none; max-height: none; overflow: visible;
+  background: transparent; border: none; border-radius: 0; box-shadow: none; padding: 0;
+}
+.dash-page .cards { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+.dash-page .grid-2 { grid-template-columns: 1fr 1fr; }
+@media (max-width: 900px) { .dash-page .grid-2 { grid-template-columns: 1fr; } }
 </style>

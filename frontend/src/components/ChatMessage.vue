@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, nextTick } from 'vue'
 import { useMessage } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 import { renderMarkdown } from '@/utils/markdown'
 import { downloadMarkdown } from '@/utils/exportMarkdown'
 import { useFavoritesStore } from '@/stores/favorites'
@@ -22,6 +23,7 @@ const props = defineProps<{
 const msg = useMessage()
 const fav = useFavoritesStore()
 const chat = useChatStore()
+const { t } = useI18n()
 
 const isUser = computed(() => props.message.role === 'user')
 
@@ -44,7 +46,7 @@ function toggleStar() {
     turnId: props.turnId || '',
     sessionTitle: '',
   })
-  msg.success(added ? '已收藏' : '已取消收藏')
+  msg.success(added ? t('turn.msgFavorited') : t('turn.msgUnfavorited'))
 }
 
 /** 用户消息中可能含 [附件] path 标记、[技能: name] 行标记 和 [skill:name] 内联标记。
@@ -90,7 +92,7 @@ async function downloadAttachment(path: string) {
     await fileApi.download(path)
   } catch (e: any) {
     console.error('[ChatMessage] download attachment failed', e)
-    msg.error('附件下载失败,请重试')
+    msg.error(t('turn.attachDownloadFailed'))
   } finally {
     downloading.value = null
   }
@@ -101,9 +103,9 @@ async function copyContent() {
   if (!text) return
   try {
     await navigator.clipboard.writeText(text)
-    msg.success('已复制')
+    msg.success(t('turn.msgCopied'))
   } catch {
-    msg.error('复制失败')
+    msg.error(t('turn.msgCopyFailed'))
   }
 }
 
@@ -140,11 +142,11 @@ function cancelEdit() {
 async function submitEdit() {
   const text = editText.value.trim()
   if (!text) {
-    msg.warning('内容不能为空')
+    msg.warning(t('turn.editEmpty'))
     return
   }
   if (chat.isStreaming) {
-    msg.info('AI 正在处理中,请稍后再试')
+    msg.info(t('turn.editBusy'))
     return
   }
   editing.value = false
@@ -152,7 +154,7 @@ async function submitEdit() {
   try {
     await chat.sendMessage(text)
   } catch (e: any) {
-    msg.error(e?.message || '发送失败')
+    msg.error(e?.message || t('turn.editFailed'))
   }
 }
 </script>
@@ -165,25 +167,25 @@ async function submitEdit() {
     </div>
     <div class="msg-body">
       <div class="msg-head">
-        <span class="author">{{ isUser ? '你' : 'AI' }}</span>
+        <span class="author">{{ isUser ? t('turn.authorUser') : 'AI' }}</span>
         <span v-if="messageTime" class="msg-time">{{ messageTime }}</span>
         <div class="bubble-tools">
-          <button v-if="starable" class="copy-btn star-btn" :class="{ on: isStarred }" :title="isStarred ? '取消收藏' : '收藏该消息'" @click="toggleStar">
+          <button v-if="starable" class="copy-btn star-btn" :class="{ on: isStarred }" :title="isStarred ? t('turn.unfavoriteTitle') : t('turn.favoriteTitle')" @click="toggleStar">
             <svg width="14" height="14" viewBox="0 0 24 24" :fill="isStarred ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
           </button>
-          <button v-if="editable" class="copy-btn edit-btn" title="编辑并重新发送" @click="startEdit">
+          <button v-if="editable" class="copy-btn edit-btn" :title="t('turn.editTitle')" @click="startEdit">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           </button>
-          <button class="copy-btn" title="复制内容" @click="copyContent">
+          <button class="copy-btn" :title="t('turn.copyTitle')" @click="copyContent">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
           </button>
-          <button v-if="!isUser" class="copy-btn export-btn" title="导出为 Markdown 文件" @click="exportAsMarkdown">
+          <button v-if="!isUser" class="copy-btn export-btn" :title="t('turn.exportMdTitle')" @click="exportAsMarkdown">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           </button>
         </div>
       </div>
-      <div v-if="message._pending" class="status">发送中…</div>
-      <div v-else-if="message.status === 'error'" class="status err">{{ message.error || '发送失败' }}</div>
+      <div v-if="message._pending" class="status">{{ t('turn.statusPending') }}</div>
+      <div v-else-if="message.status === 'error'" class="status err">{{ message.error || t('turn.statusErrorFallback') }}</div>
       <template v-if="editing">
         <textarea
           ref="editInputRef"
@@ -194,9 +196,9 @@ async function submitEdit() {
           @keydown.esc.prevent="cancelEdit"
         />
         <div class="edit-actions">
-          <span class="edit-hint">Enter 发送 · Esc 取消</span>
-          <n-button size="tiny" quaternary @click="cancelEdit">取消</n-button>
-          <n-button size="tiny" type="primary" :disabled="!editText.trim()" @click="submitEdit">发送</n-button>
+          <span class="edit-hint">{{ t('turn.editHint') }}</span>
+          <n-button size="tiny" quaternary @click="cancelEdit">{{ t('turn.editCancel') }}</n-button>
+          <n-button size="tiny" type="primary" :disabled="!editText.trim()" @click="submitEdit">{{ t('turn.editSubmit') }}</n-button>
         </div>
       </template>
       <template v-else>
@@ -214,7 +216,7 @@ async function submitEdit() {
               :key="a.path"
               class="att-link"
               :class="{ busy: downloading !== null }"
-              :title="`下载 ${a.path}`"
+              :title="t('turn.attachmentTitle', { path: a.path })"
               @click="downloadAttachment(a.path)"
             >{{ downloading === a.path ? '⏳ ' : '📎 ' }}{{ a.name }}</a>
           </div>
@@ -283,17 +285,15 @@ async function submitEdit() {
 .msg.user .content-area { max-width: 78%; }
 .msg.assistant .content-area { max-width: 96%; }
 .content-area.card {
-  background: var(--user-bubble-bg);
-  border: 1px solid var(--border-soft);
+  background: linear-gradient(135deg, var(--accent), var(--accent-text));
+  border: none;
   border-radius: 16px 16px 4px 16px;
-  padding: 11px 16px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  transition: background var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard);
+  padding: 12px 16px;
+  box-shadow: 0 6px 18px rgba(79, 110, 247, .28);
+  transition: box-shadow var(--motion-fast) var(--ease-standard);
 }
-.msg.user .content-area.card:hover {
-  border-color: var(--border);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-}
+.msg.user .content-area.card:hover { box-shadow: 0 8px 24px rgba(79, 110, 247, .36); }
+.msg.user .content-area.card .content { color: var(--accent-contrast); }
 .content { font-size: 14px; line-height: 1.8; letter-spacing: 0.01em; color: var(--text); }
 .edit-box {
   width: 100%; box-sizing: border-box;

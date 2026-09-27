@@ -2,27 +2,29 @@
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
 const auth = useAuthStore()
 const msg = useMessage()
+const { t } = useI18n()
 
 const form = reactive({ username: '', email: '', password: '' })
 const loading = ref(false)
 
 async function onSubmit() {
   if (!form.username || !form.email || !form.password) {
-    msg.warning('请填写完整')
+    msg.warning(t('auth.needFields'))
     return
   }
   loading.value = true
   try {
     const res = await auth.register(form.username, form.email, form.password)
-    msg.success(`注册成功${res.user.role === 'admin' ? '(管理员)' : ''}`)
+    msg.success(t('auth.registerOk', { role: res.user.role === 'admin' ? t('auth.roleAdmin') : '' }))
     router.push('/')
   } catch (e: any) {
-    msg.error(e.message || '注册失败')
+    msg.error(e.message || t('auth.registerFailed'))
   } finally {
     loading.value = false
   }
@@ -30,12 +32,12 @@ async function onSubmit() {
 
 /** 项目功能展示 */
 const features = [
-  { icon: '💬', title: '智能对话', desc: '多模型 AI 助手，上下文感知，支持文档/代码/数据分析' },
-  { icon: '🧩', title: '技能市场', desc: '一键安装/发布技能，SKILL.md 驱动的工作流扩展' },
-  { icon: '📚', title: '模板库', desc: '周报、会议纪要、数据分析等常用提示词模板' },
-  { icon: '⏰', title: '定时自动化', desc: '可视化 cron 定时任务，结果自动生成执行报告' },
-  { icon: '📁', title: '文件工作区', desc: '内置代码编辑器、预览与 AI 联动' },
-  { icon: '🔌', title: 'MCP 集成', desc: '连接外部数据源与工具，扩展 AI 能力边界' },
+  { icon: '💬', title: t('auth.fChat'), desc: t('auth.fChatDesc') },
+  { icon: '🧩', title: t('auth.fSkill'), desc: t('auth.fSkillDesc') },
+  { icon: '📄', title: t('auth.fTemplate'), desc: t('auth.fTemplateDesc') },
+  { icon: '⏰', title: t('auth.fJob'), desc: t('auth.fJobDesc') },
+  { icon: '🛡️', title: t('auth.fSandbox'), desc: t('auth.fSandboxDesc') },
+  { icon: '🔌', title: t('auth.fMcp'), desc: t('auth.fMcpDesc') },
 ]
 </script>
 
@@ -54,7 +56,7 @@ const features = [
           </div>
           <span class="brand-name">AI Workbench</span>
         </div>
-        <p class="brand-slogan">一站式 AI 工作台，开启你的高效协作之旅</p>
+    <p class="brand-slogan">{{ t('auth.sloganRegister') }}</p>
 
         <div class="feature-grid">
           <div v-for="f in features" :key="f.title" class="feature-card">
@@ -70,35 +72,35 @@ const features = [
       <!-- 右侧注册表单 -->
       <div class="form-panel">
         <div class="form-card">
-          <h2 class="form-title">创建账号</h2>
-          <p class="form-sub">加入 AI Workbench，探索更多可能</p>
+    <h2 class="form-title">{{ t('auth.titleRegister') }}</h2>
+    <p class="form-sub">{{ t('auth.subRegister') }}</p>
           <n-form @keyup.enter="onSubmit">
-            <n-form-item label="用户名">
-              <n-input v-model:value="form.username" placeholder="3-32 字符" size="large">
+      <n-form-item :label="t('auth.labelUsername')">
+      <n-input v-model:value="form.username" :placeholder="t('auth.phUsername')" size="large">
                 <template #prefix>
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                 </template>
               </n-input>
             </n-form-item>
-            <n-form-item label="邮箱">
+      <n-form-item :label="t('auth.labelPass')">
               <n-input v-model:value="form.email" placeholder="email@example.com" size="large">
                 <template #prefix>
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>
                 </template>
               </n-input>
             </n-form-item>
-            <n-form-item label="密码">
-              <n-input v-model:value="form.password" type="password" show-password-on="click" placeholder="至少 6 位" size="large">
+      <n-form-item :label="t('auth.labelEmail')">
+      <n-input v-model:value="form.password" type="password" show-password-on="click" :placeholder="t('auth.phPassword')" size="large">
                 <template #prefix>
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                 </template>
               </n-input>
             </n-form-item>
-            <n-button type="primary" block :loading="loading" @click="onSubmit" size="large">注册</n-button>
+      <n-button type="primary" block :loading="loading" @click="onSubmit" size="large">{{ t('auth.register') }}</n-button>
           </n-form>
           <div class="form-footer">
-            <span class="footer-text">已有账号？</span>
-            <n-button text type="primary" @click="router.push('/login')">去登录</n-button>
+    <span class="footer-text">{{ t('auth.haveAccount') }}</span>
+    <n-button text type="primary" @click="router.push('/login')">{{ t('auth.goLogin') }}</n-button>
           </div>
         </div>
       </div>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 import { useChatStore } from '@/stores/chat'
 import { useFavoritesStore } from '@/stores/favorites'
 import { renderMarkdown } from '@/utils/markdown'
@@ -26,6 +27,7 @@ const props = defineProps<{
 const chat = useChatStore()
 const msg = useMessage()
 const fav = useFavoritesStore()
+const { t } = useI18n()
 
 // ---------- 流式 / 活跃判定 ----------
 
@@ -71,11 +73,11 @@ const pendingHint = computed(() => {
   const act = chat.runningActivity
   if (act?.kind === 'tool') {
     if (isFileProducingTool({ name: act.tool } as ToolCall)) {
-      return act.arg ? `正在生成/写入内容:${act.arg},请稍候…` : '正在生成/写入内容,请稍候…'
+      return act.arg ? t('turn.writing', { arg: act.arg }) : t('turn.writingNoArg')
     }
-    return act.arg ? `正在执行 ${act.tool}(${act.arg}),请稍候…` : `正在执行 ${act.tool},请稍候…`
+    return act.arg ? t('turn.running', { tool: act.tool, arg: act.arg }) : t('turn.runningNoArg', { tool: act.tool })
   }
-  return 'AI 正在处理中,请稍候…'
+  return t('turn.thinking')
 })
 
 /** 某个 step 是否正在流式接收文本(仅时间线最后一步算活跃) */
@@ -216,9 +218,9 @@ async function copyFinalAnswer() {
   if (!text) return
   try {
     await navigator.clipboard.writeText(text)
-    msg.success('已复制')
+    msg.success(t('turn.copied'))
   } catch {
-    msg.error('复制失败')
+    msg.error(t('turn.copyFailed'))
   }
 }
 
@@ -237,6 +239,60 @@ const faMessageId = computed(() => props.turn.finalAnswer?.message.id ?? 0)
 
 /** 最终答案消息时间(多步气泡顶部) */
 const faTime = computed(() => props.turn.finalAnswer?.message.createdAt || '')
+
+/** 本轮全部工具调用(各步骤 + 最终答案),按调用 id 去重避免重复计数 */
+const allToolCalls = computed(() => {
+  const seen = new Set<string>()
+  const out: any[] = []
+  const add = (list: any[]) => {
+    for (const tc of list || []) {
+      const key = String(tc?.id || `${tc?.name}|${JSON.stringify(tc?.args || {})}`)
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(tc)
+    }
+  }
+  for (const s of props.turn.steps) add(s.message.parts?.toolCalls || [])
+  if (props.turn.finalAnswer) add(props.turn.finalAnswer.toolCalls || [])
+  return out
+})
+
+/** 工具分类定义:按前缀/名称归入不同类别,未知归入「其它」 */
+const TOOL_CATEGORIES: { key: string; label: () => string; icon: string; match: (n: string) => boolean }[] = [
+  { key: 'file', label: () => t('turn.catFile'), icon: 'file', match: (n) => /^(ls|read_file|read|write_file|write|edit_file|edit|delete|glob|grep|execute|bash)$/.test(n) },
+  { key: 'browser', label: () => t('turn.catBrowser'), icon: 'globe', match: (n) => /browser|chrom|cdp|aiwb/i.test(n) },
+  { key: 'viz', label: () => t('turn.catViz'), icon: 'chart', match: (n) => /widget|mermaid|excalidraw|docx|pptx|xlsx|pdf|html|chart|report|doc/i.test(n) },
+  { key: 'skill', label: () => t('turn.catSkill'), icon: 'skill', match: (n) => /skill|todo|plan|ask_user|memory/i.test(n) },
+]
+
+/** 工具调用按类别聚合(每类数量 + 代表工具名),仅保留非空类别 */
+const toolSummary = computed(() => {
+  const byKey = new Map<string, { key: string; label: string; icon: string; calls: any[] }>()
+  for (const tc of allToolCalls.value) {
+    const name = String(tc?.name || 'tool')
+    const cat = TOOL_CATEGORIES.find((c) => c.match(name)) || { key: 'other', label: () => t('turn.catOther'), icon: 'tool' }
+    if (!byKey.has(cat.key)) byKey.set(cat.key, { key: cat.key, label: cat.label(), icon: cat.icon, calls: [] })
+    byKey.get(cat.key)!.calls.push(tc)
+  }
+  return Array.from(byKey.values()).map((g) => {
+    const counter = new Map<string, number>()
+    for (const c of g.calls) {
+      const n = String(c?.name || 'tool')
+      counter.set(n, (counter.get(n) || 0) + 1)
+    }
+    const running = g.calls.some((c) => c?.status === 'running')
+    const error = g.calls.some((c) => c?.status === 'error' || c?.status === 'failed')
+    return {
+      key: g.key,
+      label: g.label,
+      icon: g.icon,
+      total: g.calls.length,
+      tools: Array.from(counter.entries()).map(([name, count]) => ({ name, count })),
+      running,
+      error,
+    }
+  })
+})
 
 /** 本轮生成耗时(秒)。
  *  1) 当前会话内:store 在流式结束时按 assistant 消息 id 记录(从发送时刻精确计时)
@@ -276,7 +332,7 @@ function toggleFaStar() {
     turnId: props.turn.id,
     sessionTitle: '',
   })
-  msg.success(added ? '已收藏' : '已取消收藏')
+  msg.success(added ? t('turn.favorited') : t('turn.unfavorited'))
 }
 
 // ---------- 建议追问(回答定稿后展示可点击的继续提问) ----------/** 基于用户原始问题 + 回答内容,启发式生成 2-3 个继续提问的示例。 */
@@ -290,11 +346,11 @@ const followUpQuestions = computed<string[]>(() => {
   const asksHow = /怎么|如何|怎么做|步骤/.test(q)
   const asksWhat = /是什么|区别|对比|哪个/.test(q)
   const out: string[] = []
-  if (asksWhy) out.push('那背后的原理是什么,能用大白话解释吗?')
-  else if (asksHow) out.push('可以给一个完整的操作步骤/示例吗?')
-  if (asksWhat) out.push('那它们对比起来有哪些关键区别?')
-  out.push('能不能举个具体的例子?')
-  out.push('帮我用更简单的说法总结一下要点')
+  if (asksWhy) out.push(t('turn.followWhy'))
+  else if (asksHow) out.push(t('turn.followHow'))
+  if (asksWhat) out.push(t('turn.followWhat'))
+  out.push(t('turn.followExample'))
+  out.push(t('turn.followSummary'))
   return out.slice(0, 3)
 })
 
@@ -308,17 +364,17 @@ function askFollowUp(text: string) {
 async function regenerateAnswer() {
   const userText = props.turn.userMessage?.content
   if (!userText || !chat.currentSessionId) {
-    msg.warning('缺少可重新生成的问题')
+    msg.warning(t('turn.regenNoQuestion'))
     return
   }
   if (chat.isStreaming) {
-    msg.info('AI 正在处理中,请稍后再试')
+    msg.info(t('turn.regenBusy'))
     return
   }
   try {
     await chat.sendMessage(userText)
   } catch (e: any) {
-    msg.error(e?.message || '重新生成失败')
+    msg.error(e?.message || t('turn.regenFailed'))
   }
 }
 
@@ -377,20 +433,28 @@ function stepWidgetPaths(step: Step | null): string[] {
     .filter((p) => /^widgets\/[^/]+\.html$/i.test(p))
 }
 
-/** 已完成/出错且输出为空的工具 → 视为无内容记录,时间线不展示 */
+/** 已完成/出错且「完全没有可展示内容」的工具 → 时间线不展示。
+ *  判定比原先宽:除 output 外,`args`(会以 chip-arg 摘要展示)与 `outputs` 也算内容。
+ *  原规则只看 output,把「生成式 UI」类工具整条隐藏了 —— 例如 baidu_chatCompletions
+ *  的结果不在 output 里(恒为空串),但 args 里有 model/query/instruction,是真实操作。 */
 function isBlankToolOutput(tc: ToolCall): boolean {
-  return (tc.status === 'completed' || tc.status === 'error') && !(tc.output ?? '').trim()
+  if (tc.status !== 'completed' && tc.status !== 'error') return false
+  if ((tc.output ?? '').trim()) return false
+  if (tc.outputs && tc.outputs.length) return false
+  const a = tc.args as Record<string, unknown> | undefined
+  return !(a && Object.keys(a).length > 0)
 }
 
 /** chip 展示过滤:pure_show_widget 已完成的不再显示原始 chip(避免 [WIDGET_FILE] 噪声);
- *  write_todos 的清单已在任务规划卡片渲染,chip 不重复展示;
+ *  write_todos 的清单在**流式期间**由任务规划卡片承载,那时不重复展示;
+ *  但卡片只在生成中存在,turn 结束后就没了 —— 所以定稿后必须在时间线里把记录还回来;
  *  空输出的已定稿工具也不展示(时间线里一堆没内容的命令行记录) */
 function displayToolCalls(step: Step | null): ToolCall[] {
   if (!step) return []
   return (step.toolCalls ?? []).filter(
     (tc) =>
       !(tc.name === 'pure_show_widget' && tc.outputs?.length) &&
-      tc.name !== 'write_todos' &&
+      !(tc.name === 'write_todos' && turnInProgress.value) &&
       !isBlankToolOutput(tc),
   )
 }
@@ -469,7 +533,11 @@ const turnPending = computed(() => {
 const permSubmitting = ref(false)
 const questionAnswer = ref('')
 const selectedOptions = ref<string[]>([])
-const OTHER_LABEL = '其他(自由输入)'
+const OTHER_LABEL = computed(() => t('turn.otherOption'))
+/** 「其他」判定:AI 可能直接给出"其他 xx"中文原样选项,前端追加的标签则随语言变化 */
+function isOtherOption(o: string): boolean {
+  return o === OTHER_LABEL.value || o.startsWith('其他')
+}
 const rawOptions = computed<string[]>(() => {
   const raw = turnPending.value?.tool?.args?.options
   if (!raw) return []
@@ -479,8 +547,8 @@ const rawOptions = computed<string[]>(() => {
 })
 const questionOptions = computed<string[]>(() => {
   if (!rawOptions.value.length) return []
-  if (rawOptions.value.some(o => o.startsWith('其他'))) return rawOptions.value
-  return [...rawOptions.value, OTHER_LABEL]
+  if (rawOptions.value.some(isOtherOption)) return rawOptions.value
+  return [...rawOptions.value, OTHER_LABEL.value]
 })
 const questionMultiple = computed(() => {
   const v = turnPending.value?.tool?.args?.multiple
@@ -488,8 +556,8 @@ const questionMultiple = computed(() => {
   return v === true || v === 1 || v === 'true' || v === '1' || Boolean(v)
 })
 // 是否命中"其他"自由输入:AI 可能直接传"其他 xx"原样选项(此时 questionOptions 不再追加标签),
-// 也可能用前端追加的"其他(自由输入)"标签,统一按「以'其他'开头」判定
-const isOtherSelected = computed(() => selectedOptions.value.some(o => o.startsWith('其他')))
+// 也可能用前端追加的"其他(自由输入)"标签,统一按 isOtherOption 判定
+const isOtherSelected = computed(() => selectedOptions.value.some(isOtherOption))
 
 function toggleOption(opt: string) {
   if (questionMultiple.value) {
@@ -503,7 +571,7 @@ function toggleOption(opt: string) {
 
 function buildAnswer(): string {
   if (questionOptions.value.length) {
-    const opts = selectedOptions.value.filter(o => !o.startsWith('其他'))
+    const opts = selectedOptions.value.filter(o => !isOtherOption(o))
     if (isOtherSelected.value && questionAnswer.value.trim()) opts.push(questionAnswer.value.trim())
     return opts.join(',')
   }
@@ -514,16 +582,16 @@ async function onPerm(decision: 'approve' | 'reject' | 'reply', answer?: string)
   const pp = turnPending.value
   if (!pp || permSubmitting.value) return
   if (!props.sessionId) {
-    msg.error('会话未就绪,请刷新后重试')
+    msg.error(t('turn.notReady'))
     return
   }
   const finalAnswer = answer ?? buildAnswer()
   permSubmitting.value = true
   try {
     const ok = await chat.replyPermission(pp.requestId, decision, finalAnswer)
-    if (!ok) msg.warning('确认已失效或生成已中断,可能需要重新发送')
+    if (!ok) msg.warning(t('turn.permissionStale'))
   } catch (e: any) {
-    msg.error(e?.response?.data?.message || e?.message || '提交确认失败,请重试')
+    msg.error(e?.response?.data?.message || e?.message || t('turn.permissionFailed'))
   } finally {
     permSubmitting.value = false
     questionAnswer.value = ''
@@ -606,7 +674,7 @@ async function downloadFile(path: string) {
   try {
     await fileApi.download(path)
   } catch (e: any) {
-    msg.error(e?.message || '下载失败')
+    msg.error(e?.message || t('turn.downloadFailed'))
   } finally {
     downloadingPath.value = null
   }
@@ -640,11 +708,11 @@ async function downloadAllFiles() {
         zip.file(zipPath, blob)
       } catch (e: any) {
         failed++
-        msg.error(`${item.name} 获取失败: ${e?.message || ''}`)
+        msg.error(t('turn.readFailed', { name: item.name, msg: e?.message || '' }))
       }
     }
     if (failed === items.length) {
-      msg.error('全部文件获取失败,无法打包')
+      msg.error(t('turn.readAllFailed'))
       return
     }
     const zipBlob = await zip.generateAsync({ type: 'blob' })
@@ -652,50 +720,65 @@ async function downloadAllFiles() {
     const a = document.createElement('a')
     a.href = url
     const ts = new Date().toISOString().slice(0, 16).replace(/[-T:]/g, '')
-    a.download = `结果文件_${ts}.zip`
+    a.download = t('turn.zipName', { ts })
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
     if (failed === 0) {
-      msg.success(`已打包下载 ${items.length} 个文件`)
+      msg.success(t('turn.exported', { n: items.length }))
     } else {
-      msg.warning(`已打包 ${items.length - failed}/${items.length} 个文件,${failed} 个失败`)
+      msg.warning(t('turn.exportedPartial', { ok: items.length - failed, total: items.length, failed }))
     }
   } catch (e: any) {
-    msg.error(`打包失败: ${e?.message || ''}`)
+    msg.error(t('turn.exportFailed', { msg: e?.message || '' }))
   } finally {
     downloadingAll.value = false
   }
 }
 
-/** 步数 = 全部工具调用次数 + 有解说的思考段数(deepagents 一轮一条消息挂全部工具,不能按消息数算) */
-const thinkingStepCount = computed(() => {
+/**
+ * 步数 = 本轮**去重后的工具调用次数**,与上方工具分类卡各卡片的合计数严格相等。
+ *
+ * 原实现有两个口径不一致的来源,导致标题里的「N 步操作」和卡片合计对不上:
+ * 1. 额外把「有解说的思考段」也算作一步(解说是文字,不是操作,也不出现在任何卡片里);
+ * 2. 直接累加各 step 的 toolCalls.length,没有像 allToolCalls 那样按调用 id 去重
+ *    (deepagents 一轮一条消息挂全部工具,流式重放时同一调用会出现在多个 step)。
+ * 现统一取 allToolCalls 的长度,保证「卡片合计 = 标题步数」。
+ */
+const thinkingStepCount = computed(() => allToolCalls.value.length)
+
+/**
+ * 时间线上「不是工具调用」的额外行数(解说文字 / 推理段 / 系统提示)。
+ * 折叠头只报工具操作数(与卡片合计一致),这些行会在下方时间线里出现,
+ * 因此额外标一句「含 N 段解说」,避免用户以为漏算了。
+ */
+const extraTimelineRows = computed(() => {
   let n = 0
   for (const s of props.turn.steps) {
-    if (s.kind === 'system') continue // 系统提示(会话压缩)不计入步数
-    n += s.toolCalls?.length ?? 0
-    if ((s.narration || '').trim()) n += 1
+    if (s.kind === 'system') continue // 系统提示不是解说
+    if ((s.narration || '').trim()) n++
+    else if (s.kind === 'reason' && (s.message?.content || '').trim()) n++
   }
-  const fa = props.turn.finalAnswer
-  if (fa) n += fa.toolCalls?.length ?? 0
-  return Math.max(n, 1)
+  return n
 })
 
 const thinkingHeader = computed(() => {
   const n = thinkingStepCount.value
+  const extra = extraTimelineRows.value
   if (turnInProgress.value) {
     // 占位壳阶段(尚无任何真实思考/工具内容):只显示"思考中…"
-    return n > 1 || props.turn.steps.some((s) => stepDisplayText(s).trim())
-      ? `思考中… 已执行 ${n} 步`
-      : '思考中…'
+    const hasContent = n > 0 || props.turn.steps.some((s) => stepDisplayText(s).trim())
+    if (!hasContent) return t('turn.thinkingOnly')
+    return n > 0 ? t('turn.thinkingRunning', { n }) : t('turn.thinkingOnly')
   }
-  // 定稿:耗时与步数合并为一行(不再用"已折叠"字样——展开后文案会与状态矛盾);
-  // 展开/收起状态由右侧 chevron 方向表达。
+  // 定稿:耗时 + 工具步数(与分类卡合计相等)+ 解说段数,合并为一行
+  // (不再用"已折叠"字样——展开后文案会与状态矛盾;展开/收起由右侧 chevron 表达)
   const parts: string[] = []
-  if (elapsedText.value) parts.push(`已完成 ${elapsedText.value}`)
-  if (n > 0) parts.push(`${n} 步操作`)
-  return parts.join(' · ') || '执行过程'
+  if (elapsedText.value) parts.push(t('turn.elapsedDone', { t: elapsedText.value }))
+  if (n > 0) parts.push(t('turn.stepCount', { n }))
+  if (extra > 0) parts.push(t('turn.narrationCount', { n: extra }))
+  return parts.join(' · ') || t('turn.process')
 })
 
 function stepHtml(step: Step): string {
@@ -734,6 +817,30 @@ function stepHtml(step: Step): string {
       <span v-if="faTime" class="msg-time">{{ fmtMessageTime(faTime) }}</span>
     </div>
     <div class="turn-body">
+      <!-- 工具分类卡:本轮调用的工具按类聚合为卡片(参考主视图设计) -->
+      <div v-if="toolSummary.length" class="tool-cats">
+        <div v-for="g in toolSummary" :key="g.key" class="tool-cat">
+          <div class="cat-head">
+            <span class="c-ic" :class="g.key">
+              <svg v-if="g.icon === 'file'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+              <svg v-else-if="g.icon === 'globe'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a15 15 0 0 1 4 9 15 15 0 0 1-4 9 15 15 0 0 1-4-9 15 15 0 0 1 4-9z"/></svg>
+              <svg v-else-if="g.icon === 'chart'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="5" width="3" height="13"/></svg>
+              <svg v-else-if="g.icon === 'skill'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+              <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4.5 4.5 0 0 0-6.4 6.4l-5 5a2 2 0 0 0 2.8 2.8l5-5a4.5 4.5 0 0 0 6.4-6.4L14 11.4 12.6 10z"/></svg>
+            </span>
+            <span class="cat-title">{{ g.label }}</span>
+            <span class="cat-count">{{ g.total }}</span>
+            <span v-if="g.running" class="cat-status run">{{ t('turn.statusRunning') }}</span>
+            <span v-else-if="g.error" class="cat-status err">{{ t('turn.statusError') }}</span>
+          </div>
+          <div class="tools">
+            <div v-for="t in g.tools" :key="t.name" class="tool-row">
+              <code class="t-name">{{ t.name }}</code>
+              <span v-if="t.count > 1" class="t-count">×{{ t.count }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
       <!-- 思考过程:自定义折叠头 + v-show 时间线(常驻 DOM,无挂载延迟,思考内容即时可见) -->
       <div v-if="turn.steps.length > 0 || (turn.finalAnswer && turn.finalAnswer.toolCalls.length)">
         <div class="think-header" :class="{ active: turnInProgress }" @click="toggleSteps">
@@ -749,13 +856,13 @@ function stepHtml(step: Step): string {
             <div class="tstep-body">
               <!-- 系统提示(会话压缩等):独立样式行,与思考/正文区分 -->
               <div v-if="b.step.kind === 'system'" class="system-note">
-                <span class="system-tag">系统</span>
+                <span class="system-tag">{{ t('turn.tagSystem') }}</span>
                 <span class="system-text">{{ stepDisplayText(b.step) }}</span>
               </div>
               <!-- 推理段:可折叠"思考"行,流式时限高滚动吸底,结束自动折叠,可点开回看 -->
               <div v-else-if="b.step.kind === 'reason' && displayContent(b.step)" class="reason-box">
                 <div class="reason-head" @click.stop="toggleReason(b.index)">
-                  <span class="rc-tag">思考</span>
+                  <span class="rc-tag">{{ t('turn.tagReasoning') }}</span>
                   <svg
                     class="rc-chev"
                     :class="{ open: isReasonOpen(b.step, b.index) }"
@@ -852,21 +959,21 @@ function stepHtml(step: Step): string {
           <button
             class="copy-btn star-btn"
             :class="{ on: faStarred }"
-            :title="faStarred ? '取消收藏' : '收藏该回答'"
+            :title="faStarred ? t('turn.unfavoriteTitle') : t('turn.favoriteTitle')"
             @click="toggleFaStar"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" :fill="faStarred ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
           </button>
           <button
             class="copy-btn"
-            title="复制回答"
+            :title="t('turn.copyAnswer')"
             @click="copyFinalAnswer"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2-2v1"/></svg>
           </button>
           <button
             class="copy-btn export-btn"
-            title="导出为 Markdown 文件"
+            :title="t('turn.exportMd')"
             @click="exportFinalAnswerAsMarkdown"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -874,7 +981,7 @@ function stepHtml(step: Step): string {
           <button
             v-if="canRegenerate"
             class="copy-btn regen-btn"
-            title="重新生成回答"
+            :title="t('turn.regenTitle')"
             @click="regenerateAnswer"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
@@ -883,7 +990,7 @@ function stepHtml(step: Step): string {
         <StreamMarkdown v-if="answerContent" :content="answerContent" :final="!answerStreaming" />
       </div>
       <div v-if="followUpQuestions.length" class="followups">
-        <span class="fu-label">继续问:</span>
+        <span class="fu-label">{{ t('turn.followLabel') }}</span>
         <span
           v-for="(fu, i) in followUpQuestions"
           :key="i"
@@ -893,10 +1000,10 @@ function stepHtml(step: Step): string {
       </div>
       <div v-else-if="showWorkingHint" class="pending">
         <n-spin size="small" />
-        <span v-if="chat.streamingStuckSeconds > 60">仍未收到响应,可点「停止」后重试</span>
+        <span v-if="chat.streamingStuckSeconds > 60">{{ t('turn.stuckHint') }}</span>
         <template v-else>
           <span>{{ pendingHint }}</span>
-          <span v-if="runningSeconds > 0" class="pending-elapsed">已运行 {{ runningSeconds }}s</span>
+          <span v-if="runningSeconds > 0" class="pending-elapsed">{{ t('turn.runningFor', { s: runningSeconds }) }}</span>
         </template>
       </div>
 
@@ -905,11 +1012,11 @@ function stepHtml(step: Step): string {
         <div class="perm-head">
           <svg v-if="!isQuestion" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>
           <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
-          <span class="perm-title">{{ isQuestion ? 'AI 向您提问' : '需要您的允许' }}</span>
+          <span class="perm-title">{{ isQuestion ? t('turn.permAskTitle') : t('turn.permNeedTitle') }}</span>
         </div>
         <div class="perm-body">
           <div class="perm-tool">
-            <span v-if="isQuestion" class="perm-question">{{ turnPending.tool?.args?.question || '请提供更多信息' }}</span>
+            <span v-if="isQuestion" class="perm-question">{{ turnPending.tool?.args?.question || t('turn.permQuestionFallback') }}</span>
             <template v-else>
               <span class="perm-tool-name">{{ turnPending.tool?.name || 'tool' }}</span>
               <span v-if="turnPending.tool?.description" class="perm-desc">{{ turnPending.tool.description }}</span>
@@ -941,7 +1048,7 @@ function stepHtml(step: Step): string {
                 <n-input
                   v-model:value="questionAnswer"
                   type="textarea"
-                  placeholder="请输入您的回答…"
+                  :placeholder="t('turn.permAnswerPlaceholder')"
                   :autosize="{ minRows: 2, maxRows: 6 }"
                   @keydown.enter.ctrl="onPerm('reply')"
                 />
@@ -951,7 +1058,7 @@ function stepHtml(step: Step): string {
               <n-input
                 v-model:value="questionAnswer"
                 type="textarea"
-                placeholder="请输入您的回答…"
+                :placeholder="t('turn.permAnswerPlaceholder')"
                 :autosize="{ minRows: 2, maxRows: 6 }"
                 @keydown.enter.ctrl="onPerm('reply', questionAnswer)"
               />
@@ -960,15 +1067,15 @@ function stepHtml(step: Step): string {
           <div class="perm-actions">
             <template v-if="isQuestion">
               <n-button size="small" :loading="permSubmitting" :disabled="permSubmitting || (!questionOptions.length && !questionAnswer.trim()) || (questionOptions.length && !selectedOptions.length) || (isOtherSelected && !questionAnswer.trim())" type="primary" @click="onPerm('reply')">
-                提交回答
+                {{ t('turn.permSubmit') }}
               </n-button>
             </template>
             <template v-else>
               <n-button size="small" :loading="permSubmitting" :disabled="permSubmitting" @click="onPerm('reject')">
-                拒绝
+                {{ t('turn.permReject') }}
               </n-button>
               <n-button size="small" type="primary" :loading="permSubmitting" :disabled="permSubmitting" @click="onPerm('approve')">
-                允许执行
+                {{ t('turn.permApprove') }}
               </n-button>
             </template>
           </div>
@@ -991,11 +1098,11 @@ function stepHtml(step: Step): string {
   <n-modal
     :show="!!previewPath"
     preset="card"
-    :title="previewPath ? previewPath.split(/[\\/]/).pop() : '预览'"
+    :title="previewPath ? previewPath.split(/[\\/]/).pop() : t('turn.previewTitle')"
     :style="{ width: '86vw', maxWidth: '1280px' }"
     :mask-closable="true"
     :bordered="false"
-    @update:show="(v) => { if (!v) closePreview() }"
+            @update:show="(v: boolean) => { if (!v) closePreview() }"
   >
     <FilePreview
       v-if="previewPath"
@@ -1034,25 +1141,27 @@ function stepHtml(step: Step): string {
 .perm-block {
   max-width: 80%;
   margin-top: 10px;
-  border: 1px solid rgba(245, 158, 11, 0.35);
-  border-radius: var(--radius-sm);
-  background: rgba(245, 158, 11, 0.06);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
   overflow: hidden;
 }
 .perm-head {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  background: rgba(245, 158, 11, 0.12);
-  color: var(--warn);
+  gap: 7px;
+  padding: 9px 13px;
+  background: var(--fill-0);
+  color: var(--text-2);
   font-size: 13px;
   font-weight: 600;
+  border-bottom: 1px solid var(--border-soft);
 }
+.perm-head svg { color: var(--accent); flex-shrink: 0; }
 .perm-title { display: inline-flex; align-items: center; gap: 6px; }
-.perm-body { padding: 8px 12px; }
-.perm-tool { display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--text); }
-.perm-tool-name { font-family: ui-monospace, monospace; font-weight: 600; color: var(--accent); }
+.perm-body { padding: 10px 13px; }
+.perm-tool { display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: var(--text); }
+.perm-tool-name { font-family: ui-monospace, monospace; font-weight: 600; color: var(--accent-text); }
 .perm-desc { color: var(--text-2); font-size: 12px; }
 .perm-args {
   margin: 6px 0 0;
@@ -1299,76 +1408,39 @@ function stepHtml(step: Step): string {
 .pending { display: flex; align-items: center; gap: 8px; color: var(--text-3); font-size: 13px; padding: 4px 0; }
 .pending-elapsed { color: var(--text-2); font-size: 12px; }
 
-/* ========== pending block (custom, replaces n-alert) ========== */
-.pending-block {
-  margin-top: 12px;
-  border-radius: var(--radius);
-  border: 1px solid rgba(245, 158, 11, 0.3);
-  background: rgba(245, 158, 11, 0.05);
-  overflow: hidden;
-  width: 100%;
-  min-width: 0;
-  box-sizing: border-box;
-}
-.pending-block-header {
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 12px;
-  background: rgba(245, 158, 11, 0.08);
-  color: var(--warn);
-  font-size: 14px;
-  font-weight: 600;
-  border-bottom: 1px solid rgba(245, 158, 11, 0.15);
-}
-.pending-block-body {
-  padding: 12px;
-  width: 100%;
-  overflow: hidden;
-  box-sizing: border-box;
-}
-.pending-icon {
-  font-size: 16px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--accent);
-}
-.pending-title { font-weight: 600; }
-
-.question-block { border-color: rgba(245, 158, 11, 0.3); }
-.question-block .pending-block-header { background: rgba(245, 158, 11, 0.08); color: var(--warn); }
-.perm-question { font-size: 15px; line-height: 1.6; color: var(--text-1); white-space: pre-wrap; }
+.question-block .perm-head { color: var(--text-2); }
+.perm-question { font-size: 15px; line-height: 1.6; color: var(--text); white-space: pre-wrap; }
 .perm-question-input { margin-top: 10px; }
 .perm-options { display: flex; flex-wrap: wrap; gap: 8px; }
 .perm-option-card {
   display: flex; align-items: center; gap: 8px;
   padding: 10px 14px; border-radius: 8px;
-  border: 1.5px solid var(--border-soft, #e0e0e6);
-  background: var(--surface, #fff); cursor: pointer;
-  transition: all 0.15s ease; flex: 1 1 calc(50% - 4px); min-width: 140px;
+  border: 1px solid var(--border);
+  background: var(--surface); cursor: pointer;
+  transition: border-color var(--motion-fast) var(--ease-standard), background-color var(--motion-fast) var(--ease-standard);
+  flex: 1 1 calc(50% - 4px); min-width: 140px;
 }
 .perm-option-card:hover { border-color: var(--accent); background: var(--fill-0); }
-.perm-option-card.selected { border-color: var(--accent); background: var(--fill-0); }
+.perm-option-card.selected { border-color: var(--accent); background: var(--accent-soft); }
 .perm-option-check { flex-shrink: 0; }
 .perm-checkbox {
   width: 16px; height: 16px; border-radius: 4px;
-  border: 1.5px solid var(--border-soft, #c0c0c8);
+  border: 1.5px solid var(--border);
   display: flex; align-items: center; justify-content: center;
-  transition: all 0.15s ease; color: var(--accent-contrast, #fff);
+  transition: all 0.15s ease; color: var(--accent-contrast);
 }
 .perm-checkbox.checked { background: var(--accent); border-color: var(--accent); }
 .perm-checkbox svg { width: 11px; height: 11px; }
 .perm-radio {
   width: 16px; height: 16px; border-radius: 50%;
-  border: 1.5px solid var(--border-soft, #c0c0c8);
+  border: 1.5px solid var(--border);
   display: flex; align-items: center; justify-content: center;
   transition: all 0.15s ease;
 }
 .perm-radio.checked { border-color: var(--accent); }
 .perm-radio-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
-.perm-option-text { font-size: 14px; color: var(--text-1); line-height: 1.4; }
+.perm-option-text { font-size: 14px; color: var(--text); line-height: 1.4; }
 .perm-other-input { margin-top: 8px; width: 100%; }
-.permission-block { border-color: var(--border); }
-.permission-block .pending-block-header { background: var(--fill-0); color: var(--accent-text); }
 
 .question-item {
   margin-bottom: 14px;
@@ -1411,15 +1483,6 @@ function stepHtml(step: Step): string {
   width: 100%;
 }
 
-.perm-title {
-  font-size: 14px;
-  margin-bottom: 8px;
-  line-height: 1.6;
-  color: var(--accent);
-  word-break: break-word;
-  overflow-wrap: anywhere;
-}
-
 .perm-list {
   margin: 6px 0 8px 20px;
   padding: 0;
@@ -1446,8 +1509,39 @@ function stepHtml(step: Step): string {
 
 /* 移动端:消息布局收紧 */
 @media (max-width: 768px) {
-  .msg { gap: 8px; margin-bottom: 18px; padding: 0 2px; }
-  .avatar { width: 26px; height: 26px; border-radius: 8px; }
-  .msg-head { min-height: 18px; margin-bottom: 4px; }
+  /* 触摸设备:悬浮工具条常态显示,按钮放大到可点尺寸(无 hover 态依赖) */
+  .fa-tools { opacity: 1; }
+  .fa-tools .copy-btn { width: 34px; height: 34px; }
+  /* 授权/追问选项:窄屏改为单列,避免两张卡片挤成两列不可读 */
+  .perm-options { flex-direction: column; }
+  .perm-option-card { flex: 1 1 auto; min-width: 0; width: 100%; }
+  /* 时间线在小屏上更矮,把纵向空间留给正文 */
+  .timeline { max-height: 300px; }
+  .turn { margin-bottom: 18px; }
+  .turn-widgets { gap: 8px; }
 }
+
+/* ===== 工具分类卡(本轮工具调用聚合) ===== */
+.tool-cats { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.tool-cat { border: 1px solid var(--border-soft); border-radius: 12px; background: var(--surface); overflow: hidden; }
+.cat-head { display: flex; align-items: center; gap: 9px; padding: 10px 14px; border-bottom: 1px solid var(--border-soft); }
+.c-ic {
+  width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.c-ic.file { background: var(--accent-soft); color: var(--accent-text); }
+.c-ic.browser { background: rgba(59, 130, 246, .14); color: var(--accent-text); }
+.c-ic.viz { background: rgba(88, 196, 155, .16); color: var(--ok); }
+.c-ic.skill { background: rgba(232, 178, 107, .16); color: var(--warn); }
+.c-ic.other, .c-ic.tool { background: var(--fill-1); color: var(--text-3); }
+.cat-title { font-size: 13.5px; font-weight: 600; color: var(--text); }
+.cat-count { font-size: 11px; font-weight: 600; color: var(--text-3); background: var(--fill-1); padding: 0 7px; border-radius: 999px; line-height: 1.7; }
+.cat-status { font-size: 11px; margin-left: auto; }
+.cat-status.run { color: var(--accent-text); }
+.cat-status.err { color: var(--err); }
+.tools { padding: 6px 8px; }
+.tool-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid var(--border-soft); }
+.tool-row:last-child { border-bottom: none; }
+.t-name { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12.5px; font-weight: 600; color: var(--accent-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.t-count { font-size: 11px; color: var(--text-3); }
 </style>

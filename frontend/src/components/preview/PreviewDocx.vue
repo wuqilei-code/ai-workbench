@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, watch, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { renderAsync } from 'docx-preview'
 
+const { t } = useI18n()
 const props = defineProps<{ blob: Blob }>()
 const container = ref<HTMLElement | null>(null)
 const error = ref<string | null>(null)
@@ -24,7 +26,7 @@ async function render(blob: Blob) {
       useBase64URL: true,
     })
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '文档渲染失败'
+    error.value = e instanceof Error ? e.message : t('preview.docxFailed')
   } finally {
     rendering.value = false
   }
@@ -39,9 +41,9 @@ onBeforeUnmount(() => { if (container.value) container.value.innerHTML = '' })
     <div ref="container" class="docx-container" />
     <div v-if="rendering" class="docx-rendering">
       <span class="spinner"></span>
-      <span>正在渲染文档…</span>
+      <span>{{ t('tail.docxRendering') }}</span>
     </div>
-    <div v-if="error && !rendering" class="docx-error">docx 渲染失败:{{ error }}</div>
+    <div v-if="error && !rendering" class="docx-error">{{ t('preview.docxFailed') }}:{{ error }}</div>
   </div>
 </template>
 

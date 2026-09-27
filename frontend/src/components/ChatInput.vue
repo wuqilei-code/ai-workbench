@@ -5,11 +5,14 @@ import { useChatStore } from '@/stores/chat'
 import { fileApi } from '@/api/files'
 import { chatApi } from '@/api/chat'
 import { useMessage, useDialog } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
+import SlashSkillMenu from '@/components/SlashSkillMenu.vue'
 
 const chat = useChatStore()
 const msg = useMessage()
 const dialog = useDialog()
 const router = useRouter()
+const { t } = useI18n()
 const text = ref('')
 const inputRef = ref<HTMLDivElement | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -20,8 +23,6 @@ const slashMenuOpen = ref(false)
 const slashFilter = ref('')
 const slashSelectedIdx = ref(0)
 const allSkills = ref<SkillInfo[]>([])
-const slashMenuRef = ref<HTMLDivElement | null>(null)
-const slashItemEl = ref<HTMLElement | null>(null)
 /** 已选择的技能标签(用于去重和同步显示) */
 const selectedSkills = ref<SkillInfo[]>([])
 
@@ -204,9 +205,13 @@ function fill(prompt: string) {
   })
 }
 
-/** 把工作区已有的文件作为附件挂到输入框(不重复上传;如已挂载则不重复)。 */
-function attachFilePath(path: string) {
+/** 把工作区已有的文件作为附件挂到输入框(不重复上传;如已挂载则不重复)。
+ *  replacePrefix 非空时,先移除同前缀的旧附件(「做同款」重复点击只保留最新模板)。 */
+function attachFilePath(path: string, replacePrefix = '') {
   if (!path) return
+  if (replacePrefix) {
+    attachments.value = attachments.value.filter((a) => !a.path.startsWith(replacePrefix))
+  }
   const name = path.split(/[\\/]/).filter(Boolean).pop() || path
   if (attachments.value.some((a) => a.path === path)) return
   attachments.value.push({ name, path })
@@ -221,16 +226,37 @@ watch(() => chat.pendingFill, (v) => {
   chat.pendingFill = ''
 })
 
-/** 监听 chat.pendingAttachPath:文件树右键「问 AI」等把文件挂到附件(消费一次后清空) */
-watch(() => chat.pendingAttachPath, (v) => {
-  if (!v) return
-  attachFilePath(v)
+/** 消费一次待挂附件:挂到附件区;若带提示词则回填,否则用默认文件提示词 */
+function applyPendingAttach(path: string) {
+  const replacePrefix = chat.pendingAttachReplace
+  attachFilePath(path, replacePrefix)
   chat.pendingAttachPath = ''
-  // 提示词汇总当前已挂载的全部文件,而不是只提最新一个
+  chat.pendingAttachReplace = ''
+  const prompt = chat.pendingAttachPrompt
+  chat.pendingAttachPrompt = ''
+  if (prompt) {
+    fill(prompt)
+    return
+  }
   const paths = attachments.value.map((a) => a.path)
   const list = paths.map((p) => `- ${p}`).join('\n')
   const header = paths.length === 1 ? `请看看工作区里的这个文件:${paths[0]}\n\n我需要你:` : `请看看工作区里的这些文件:\n${list}\n\n我需要你:`
   fill(header)
+}
+
+/** 监听 chat.pendingAttachPath:文件树右键「问 AI」/模板「做同款」把文件挂到附件 */
+watch(() => chat.pendingAttachPath, (v) => {
+  if (!v) return
+  applyPendingAttach(v)
+})
+
+/** 首次挂载时若已有待填/待挂(整页操作时输入框被卸载),消费一次 */
+onMounted(() => {
+  if (chat.pendingAttachPath) applyPendingAttach(chat.pendingAttachPath)
+  if (chat.pendingFill) {
+    fill(chat.pendingFill)
+    chat.pendingFill = ''
+  }
 })
 
 /** ---- slash 命令菜单(deepagents 无命令,已移除) ---- */
@@ -409,7 +435,7 @@ async function uploadFiles(fileList: File[]) {
           const count = await fileApi.uploadZip(dir, f, (pct) => { uploadProgress.value = pct })
           uploadProgress.value = null
           attachments.value.push({ name: f.name, path: dir })
-          msg.success(`已解压 ${count} 个项目文件到工作区 ${dir}/`)
+      msg.success(t('input2.compressDone', { count, dir: UPLOAD_DIR }))
         } else {
           await fileApi.upload(UPLOAD_DIR, f)
           attachments.value.push({ name: f.name, path: `${UPLOAD_DIR}/${f.name}` })
@@ -419,9 +445,9 @@ async function uploadFiles(fileList: File[]) {
         fail++
       }
     }
-    if (fail === 0 && ok > 0) msg.success(`已上传 ${ok} 个文件到工作区 ${UPLOAD_DIR}/`)
-    else if (ok > 0) msg.warning(`上传完成:${ok} 成功,${fail} 失败`)
-    else msg.error('上传失败,请重试')
+      if (fail === 0 && ok > 0) msg.success(t('input2.uploaded', { ok, dir: UPLOAD_DIR }))
+      else if (ok > 0) msg.warning(t('input2.uploadPartial', { ok, fail }))
+      else msg.error(t('input2.uploadFailed'))
   } finally {
     uploading.value = false
     uploadProgress.value = null
@@ -531,7 +557,7 @@ async function onSend() {
     if (chat.streamingStuckSeconds > 0) {
       await chat.forceReleaseStreaming()
     } else {
-      msg.info('AI 正在处理中,可点「停止」中断后再发送')
+    msg.info(t('input2.busyHint'))
       return
     }
   }
@@ -549,7 +575,7 @@ async function onSend() {
     text.value = lastText
     attachments.value = lastAttachments
     if (inputRef.value) inputRef.value.innerText = lastText
-    msg.error(e?.message || '发送失败,已为你保留输入内容')
+    msg.error(e?.message || t('input2.sendFailed'))
     await nextTick()
     resizeInput()
     inputRef.value?.focus()
@@ -587,24 +613,19 @@ function onEditorClick(e: MouseEvent) {
   }
 }
 
-/** 文本框自适应高度:内容变化(含 programmatic 清空)后重算,保证清空/发送后恢复默认一行高度 */
+/** 文本框自适应高度:内容变化(含 programmatic 清空)后重算,保证清空/发送后恢复默认一行高度。
+ *  上限与 CSS 的 .textarea max-height 保持一致(MAX_INPUT_H),否则会出现"内容被裁掉但仍可滚动"的错位。 */
+const MAX_INPUT_H = 260
 function resizeInput() {
   const el = inputRef.value
   if (!el) return
   el.style.height = 'auto'
-  el.style.height = Math.min(el.scrollHeight, 200) + 'px'
+  el.style.height = Math.min(el.scrollHeight, MAX_INPUT_H) + 'px'
 }
 
 /** 兜底:任何方式改变 text(模板填充/粘贴/发送清空/命令清空)都触发高度重算 */
 watch(text, () => {
   nextTick().then(resizeInput)
-})
-
-/** 上下键切换时,让选中项滚动到可视区 */
-watch(slashSelectedIdx, () => {
-  nextTick(() => {
-    slashItemEl.value?.scrollIntoView({ block: 'nearest' })
-  })
 })
 
 async function onAbort() {
@@ -613,10 +634,10 @@ async function onAbort() {
     return
   }
   dialog.warning({
-    title: '停止本轮生成',
-    content: '停止后 AI 将立即中断。已执行的变更仍会保存在工作区,结束后仍可查看这次的变更总结。确定停止？',
-    positiveText: '停止',
-    negativeText: '继续生成',
+      title: t('input2.stopTitle'),
+      content: t('input2.stopContent'),
+      positiveText: t('input2.stop'),
+      negativeText: t('input2.keepGoing'),
     onPositiveClick: () => chat.abort(),
   })
 }
@@ -645,7 +666,7 @@ const modelValue = computed({
     const [pid, mid] = v.split('::')
     chat.selectModel(pid, mid)
     const label = modelOptions.value.find((o) => o.value === v)?.label
-    msg.success(`已切换模型:${label || mid}`)
+    msg.success(t('input2.copiedToChat', { label: label || mid }))
   },
 })
 
@@ -714,7 +735,7 @@ async function startNewChat() {
     const s = await chat.createSession('New Chat')
     await router.push(`/session/${s.id}`)
   } catch (e: any) {
-    msg.error(e.message || '新建会话失败')
+      msg.error(e.message || t('input2.newSessionFailed'))
   }
 }
 </script>
@@ -727,8 +748,8 @@ async function startNewChat() {
   >
     <!-- 上传进度(zip 大文件或普通文件上传时显示) -->
     <div v-if="uploading || uploadProgress !== null" class="upload-progress">
-      <span v-if="uploadProgress !== null" class="up-label">正在上传项目包… {{ uploadProgress }}%</span>
-      <span v-else class="up-label">正在上传文件…</span>
+        <span v-if="uploadProgress !== null" class="up-label">{{ t('input2.uploading', { p: uploadProgress }) }}</span>
+        <span v-else class="up-label">{{ t('input2.uploadEntry') }}</span>
       <n-progress v-if="uploadProgress !== null" :percentage="uploadProgress" :show-indicator="false" :height="6" />
       <div v-else class="up-indeterminate"><span class="up-bar"></span></div>
     </div>
@@ -743,7 +764,7 @@ async function startNewChat() {
 
     <!-- 数据问答引导卡片:上传数据文件(CSV/Excel/JSON)后出现,示例提问一键填入 -->
     <div v-if="dataFiles.length" class="data-guide">
-      <div class="dg-title">📊 已识别 {{ dataFiles.length }} 个数据文件,可以这样问:</div>
+      <div class="dg-title">📊 {{ t('input2.dataFound', { n: dataFiles.length }) }}</div>
       <div class="dg-samples">
         <span
           v-for="s in dataSamples"
@@ -763,8 +784,8 @@ async function startNewChat() {
         class="textarea contenteditable"
         contenteditable="true"
         :data-placeholder="chat.isStreaming
-          ? (hasPending ? '上方有待答问题,作答后发送;或直接输入以继续…' : 'AI 正在处理中,可点「停止」中断…')
-          : '今天帮你做些什么? @ 引用文件, / 调用技能'"
+          ? (hasPending ? t('input.placeholderPending') : t('input.placeholderStreaming'))
+          : t('input.placeholder')"
         @keydown="onKeydown"
         @input="onInput"
         @paste="onPaste"
@@ -776,19 +797,19 @@ async function startNewChat() {
       <div class="toolbar">
         <div class="toolbar-left">
           <!-- 附件按钮 -->
-          <button class="tool-btn" title="选择附件" @click="pickFile" :disabled="uploading">
+        <button class="tool-btn" :title="t('input2.pickFile')" :aria-label="t('input2.pickFile')" @click="pickFile" :disabled="uploading">
             <span v-if="uploading" class="tool-spinner"></span>
             <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
           </button>
 
           <!-- 会话技能 / MCP 工具选择 -->
-          <button class="tool-btn tool-btn-text tool-quick" title="会话内置/自定义技能(自定义按会话勾选加载)" @click="emit('openSkills')">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 12 2c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg>
-            技能
+          <button class="tool-btn tool-btn-text tool-quick" :title="t('input2.skillBtnTitle')" :aria-label="t('input2.skillBtn')" @click="emit('openSkills')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 2.001c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg>
+          {{ t('input2.skillBtn') }}
           </button>
-          <button class="tool-btn tool-btn-text tool-quick" title="会话级启用 MCP Server(按会话勾选加载,默认全部已启用)" @click="emit('openMcp')">
+          <button class="tool-btn tool-btn-text tool-quick" :title="t('input2.toolBtnTitle')" :aria-label="t('input2.toolBtn')" @click="emit('openMcp')">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
-            工具
+          {{ t('input2.toolBtn') }}
           </button>
         </div>
 
@@ -797,7 +818,7 @@ async function startNewChat() {
           <button
             class="token-ring-btn"
             :class="{ full: ringNearFull }"
-            :title="`${ring.real ? '会话上下文' : '会话约'} ${ring.tokens.toLocaleString()} token / ${ring.limit.toLocaleString()},点击查看详情${ringNearFull ? ';建议新开会话' : ''}`"
+            :title="t('input2.ringTitle', { kind: ring.real ? t('input2.ctxReal') : t('input2.ctxEst'), tokens: ring.tokens.toLocaleString(), limit: ring.limit.toLocaleString(), near: ringNearFull ? t('input2.ringSuggest') : '' })"
             @click="statsOpen = true"
           >
             <svg class="token-ring" width="30" height="30" viewBox="0 0 36 36">
@@ -819,18 +840,18 @@ async function startNewChat() {
           <n-select
             v-model:value="modelValue"
             :options="modelOptions"
-            placeholder="选择模型"
+        placeholder="t('input2.modelTitle')"
             size="tiny"
             class="toolbar-select"
             :disabled="!modelOptions.length"
           />
 
           <template v-if="chat.isStreaming">
-            <button class="send-btn send-btn-stop" title="停止" @click="onAbort">
+            <button class="send-btn send-btn-stop" :title="t('input.stop')" :aria-label="t('input.stop')" @click="onAbort">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
             </button>
           </template>
-          <button v-else class="send-btn" :class="{ disabled: !canSend }" :disabled="!canSend" title="发送 (Enter)" @click="onSend">
+          <button v-else class="send-btn" :class="{ disabled: !canSend }" :disabled="!canSend" :title="t('input.send')" :aria-label="t('input.send')" @click="onSend">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
           </button>
         </div>
@@ -838,63 +859,42 @@ async function startNewChat() {
     </div>
 
     <!-- slash 命令菜单 -->
-    <div v-if="slashMenuOpen && filteredSkills.length" ref="slashMenuRef" class="slash-menu">
-      <div class="slash-menu-header">
-        <span class="slash-menu-icon">/</span>
-        <span>选择技能</span>
-        <span class="slash-menu-count">{{ filteredSkills.length }}</span>
-      </div>
-      <div class="slash-menu-list">
-        <div
-          v-for="(skill, idx) in filteredSkills"
-          :key="skill.name"
-          :ref="(el) => { if (el && idx === slashSelectedIdx) slashItemEl = el as HTMLElement }"
-          class="slash-menu-item"
-          :class="{ active: idx === slashSelectedIdx }"
-          @mouseenter="slashSelectedIdx = idx"
-          @mousedown.prevent
-          @click.stop="selectSkill(skill)"
-        >
-          <svg class="slash-menu-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-          <span class="slash-menu-name">{{ skill.name }}</span>
-          <span class="slash-menu-desc">{{ skill.description }}</span>
-        </div>
-      </div>
-      <div class="slash-menu-footer">
-        <span>↑↓ 导航</span>
-        <span>Enter 选择</span>
-        <span>Esc 关闭</span>
-      </div>
-    </div>
+    <SlashSkillMenu
+      :open="slashMenuOpen"
+      :skills="filteredSkills"
+      :selected-idx="slashSelectedIdx"
+      @select="selectSkill"
+      @hover="slashSelectedIdx = $event"
+    />
 
     <!-- 会话统计详情 -->
     <n-modal
       v-model:show="statsOpen"
       preset="card"
-      title="会话统计"
+      title="t('input2.statsTitle')"
       :style="{ width: '440px', maxWidth: '92vw' }"
       :bordered="false"
     >
       <div class="stats-grid">
-        <div class="stat"><span class="k">总消息数</span><span class="v">{{ stats.total }}</span></div>
-        <div class="stat"><span class="k">用户消息</span><span class="v">{{ stats.user }}</span></div>
-        <div class="stat"><span class="k">AI 消息</span><span class="v">{{ stats.assistant }}</span></div>
-        <div class="stat"><span class="k">工具消息</span><span class="v">{{ stats.tool }}</span></div>
-        <div class="stat"><span class="k">工具调用次数</span><span class="v">{{ stats.toolCalls }}</span></div>
-        <div class="stat"><span class="k">总字符数</span><span class="v">{{ stats.chars }}</span></div>
-        <div class="stat"><span class="k">上下文 token</span><span class="v">{{ ring.tokens }}</span></div>
-        <div class="stat"><span class="k">压缩阈值</span><span class="v">{{ ring.limit }}</span></div>
-        <div class="stat"><span class="k">token 进度</span><span class="v">{{ Math.round(tokenRatio * 100) }}%</span></div>
+      <div class="stat"><span class="k">{{ t('input2.stTotal') }}</span><span class="v">{{ stats.total }}</span></div>
+      <div class="stat"><span class="k">{{ t('input2.stUser') }}</span><span class="v">{{ stats.user }}</span></div>
+      <div class="stat"><span class="k">{{ t('input2.stAssistant') }}</span><span class="v">{{ stats.assistant }}</span></div>
+      <div class="stat"><span class="k">{{ t('input2.stTool') }}</span><span class="v">{{ stats.tool }}</span></div>
+      <div class="stat"><span class="k">{{ t('input2.stToolCalls') }}</span><span class="v">{{ stats.toolCalls }}</span></div>
+      <div class="stat"><span class="k">{{ t('input2.stChars') }}</span><span class="v">{{ stats.chars }}</span></div>
+      <div class="stat"><span class="k">{{ t('input2.stTokens') }}</span><span class="v">{{ ring.tokens }}</span></div>
+      <div class="stat"><span class="k">{{ t('input2.stLimit') }}</span><span class="v">{{ ring.limit }}</span></div>
+      <div class="stat"><span class="k">{{ t('input2.stRatio') }}</span><span class="v">{{ Math.round(tokenRatio * 100) }}%</span></div>
       </div>
       <p class="stats-note">
         {{ ring.real
-          ? '上下文 token 与压缩阈值由后端按 deepagents 压缩判断同口径统计。'
-          : '本轮尚未经过模型调用,数值为粗略估算(字符数 / 4),发送消息后自动校准。' }}
+          ? t('input2.noteReal')
+          : t('input2.noteEst') }}
       </p>
       <div class="stats-warn" :class="{ alert: ringNearFull }">
-        <span>{{ ringNearFull ? '会话上下文已接近上限，可新开会话。' : '上下文占用过高时，可新开会话。' }}</span>
+        <span>{{ ringNearFull ? t('input2.warnNear') : t('input2.warnHigh') }}</span>
         <div class="stats-actions">
-          <n-button size="small" type="primary" @click="startNewChat">新开会话</n-button>
+          <n-button size="small" type="primary" @click="startNewChat">{{ t('input2.newChat') }}</n-button>
         </div>
       </div>
     </n-modal>
@@ -1151,95 +1151,5 @@ async function startNewChat() {
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
   /* iOS 聚焦 <16px 输入框会自动放大页面,移动端提到 16px 避免 */
   .textarea { font-size: 16px; }
-}
-
-/* slash 命令菜单 */
-.slash-menu {
-  position: absolute;
-  bottom: 100%;
-  left: 20px;
-  right: 20px;
-  max-height: 360px;
-  background: var(--surface);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius);
-  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.12);
-  z-index: 100;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  margin-bottom: 6px;
-}
-.slash-menu-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-2);
-  border-bottom: 1px solid var(--border-soft);
-}
-.slash-menu-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-radius: 4px;
-  font-size: 13px;
-  font-weight: 700;
-}
-.slash-menu-count {
-  margin-left: auto;
-  font-weight: 400;
-  color: var(--text-3);
-}
-.slash-menu-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 4px;
-}
-.slash-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background .1s;
-}
-.slash-menu-item:hover,
-.slash-menu-item.active {
-  background: var(--accent-soft);
-}
-.slash-menu-icon {
-  flex-shrink: 0;
-  opacity: .5;
-}
-.slash-menu-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-1);
-  flex-shrink: 0;
-}
-.slash-menu-desc {
-  font-size: 12px;
-  color: var(--text-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-.slash-menu-footer {
-  display: flex;
-  gap: 12px;
-  padding: 6px 12px;
-  font-size: 11px;
-  color: var(--text-3);
-  border-top: 1px solid var(--border-soft);
-  background: var(--surface-hover);
 }
 </style>

@@ -4,7 +4,9 @@ import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import { useFavoritesStore } from '@/stores/favorites'
 import { useChatStore } from '@/stores/chat'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 const emit = defineEmits<{
   (e: 'open-session', target: { sessionId: number; turnId?: string }): void
 }>()
@@ -27,7 +29,7 @@ async function openFavorite(item: (typeof fav.list)[number]) {
 
 function remove(item: (typeof fav.list)[number]) {
   fav.remove(item.sessionId, item.messageId)
-  msg.success('已取消收藏')
+  msg.success(t('favPanel2.removed'))
 }
 
 function fmtTime(ts: number): string {
@@ -41,21 +43,21 @@ function fmtTime(ts: number): string {
   <div class="fav-panel">
     <div v-if="!list.length" class="fav-empty">
       <div class="fav-empty-icon">☆</div>
-      <div>还没有收藏</div>
-      <div class="fav-empty-sub">在消息上点 ☆ 收藏,重要内容随时回来查看</div>
+      <div>{{ t('favPanel2.empty') }}</div>
+      <div class="fav-empty-sub">{{ t('favPanel2.emptySub') }}</div>
     </div>
     <div v-else class="fav-list">
       <div v-for="it in list" :key="`${it.sessionId}:${it.messageId}`" class="fav-item">
         <div class="fav-main" :title="it.content" @click="openFavorite(it)">
           <div class="fav-row">
-            <span class="fav-role" :class="it.role">{{ it.role === 'user' ? '我' : 'AI' }}</span>
-            <span class="fav-session">{{ it.sessionTitle || `会话 #${it.sessionId}` }}</span>
+            <span class="fav-role" :class="it.role">{{ it.role === 'user' ? t('favPanel2.me') : 'AI' }}</span>
+            <span class="fav-session">{{ it.sessionTitle || t('favPanel2.sessionNo', { id: it.sessionId }) }}</span>
             <span class="fav-time">{{ fmtTime(it.createdAt) }}</span>
           </div>
           <div class="fav-content">{{ it.content }}</div>
         </div>
         <div class="fav-actions">
-          <span class="fav-remove" title="取消收藏" @click="remove(it)">✕</span>
+          <span class="fav-remove" :title="t('favPanel2.cancelTitle')" @click="remove(it)">✕</span>
         </div>
       </div>
     </div>

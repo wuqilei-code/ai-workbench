@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 /**
  * 流式打字效果:
  * - 已写完的行:整行柔和淡入
@@ -74,7 +76,7 @@ watch(() => props.active, (a) => {
 
 <template>
   <span class="ty-reveal" :class="{ 'ty-static': !active, 'ty-thinking': thinking }">
-    <span v-if="hiddenCount > 0 && !active" class="ty-omitted">…前面 {{ hiddenCount }} 字已折叠</span>
+    <span v-if="hiddenCount > 0 && !active" class="ty-omitted">{{ t('typeReveal2.collapsed', { n: hiddenCount }) }}</span>
     <template v-for="(ln, i) in completed" :key="i">
       <span class="ty-line">{{ ln }}</span>
     </template>

@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { adminApi } from '@/api/admin'
 import { useMessage, useDialog } from 'naive-ui'
 import type { AdminUserVo } from '@/types'
 
 const router = useRouter()
+const { t } = useI18n()
 const msg = useMessage()
 const dialog = useDialog()
 const loading = ref(false)
@@ -34,18 +36,18 @@ async function load() {
 async function toggleStatus(u: AdminUserVo) {
   if (rowBusyId.value !== null) return
   const target = u.status === 1 ? 0 : 1
-  const action = target === 0 ? '禁用' : '启用'
+  const action = target === 0 ? t('admin.user.disable') : t('admin.user.enable')
   if (target === 0) {
     dialog.warning({
-      title: '禁用用户',
-      content: `确定禁用用户「${u.username}」?禁用后其 agent 实例将被停止,无法登录。`,
-      positiveText: '禁用',
-      negativeText: '取消',
+      title: t('admin.user.disableTitle'),
+      content: t('admin.user.disableContent', { name: u.username }),
+      positiveText: t('admin.user.disable'),
+      negativeText: t('common.cancel'),
       onPositiveClick: async () => {
         rowBusyId.value = u.id
         try {
           await adminApi.updateUserStatus(u.id, target)
-          msg.success(`已${action}「${u.username}」`)
+          msg.success(t('admin.user.toggled', { action, name: u.username }))
           await load()
         } catch (e: any) {
           msg.error(e.message)
@@ -60,7 +62,7 @@ async function toggleStatus(u: AdminUserVo) {
   rowBusyId.value = u.id
   try {
     await adminApi.updateUserStatus(u.id, target)
-    msg.success(`已${action}「${u.username}」`)
+    msg.success(t('admin.user.toggled', { action, name: u.username }))
     await load()
   } catch (e: any) {
     msg.error(e.message)
@@ -73,18 +75,18 @@ async function toggleStatus(u: AdminUserVo) {
 async function toggleRole(u: AdminUserVo) {
   if (rowBusyId.value !== null) return
   const target = u.role === 'admin' ? 'user' : 'admin'
-  const action = target === 'admin' ? '设为管理员' : '降为普通用户'
+  const action = target === 'admin' ? t('admin.user.promoteTo') : t('admin.user.demoteTo')
   if (target === 'user') {
     dialog.warning({
-      title: '权限变更确认',
-      content: `确定将「${u.username}」降为普通用户?`,
-      positiveText: '降级',
-      negativeText: '取消',
+      title: t('admin.user.roleTitle'),
+      content: t('admin.user.roleContent', { name: u.username }),
+      positiveText: t('admin.user.demote'),
+      negativeText: t('common.cancel'),
       onPositiveClick: async () => {
         rowBusyId.value = u.id
         try {
           await adminApi.updateUserRole(u.id, target)
-          msg.success(`已将「${u.username}」${action}`)
+          msg.success(t('admin.user.roleChanged', { name: u.username, action }))
           await load()
         } catch (e: any) {
           msg.error(e.message)
@@ -99,7 +101,7 @@ async function toggleRole(u: AdminUserVo) {
   rowBusyId.value = u.id
   try {
     await adminApi.updateUserRole(u.id, target)
-    msg.success(`已将「${u.username}」${action}`)
+    msg.success(t('admin.user.roleChanged', { name: u.username, action }))
     await load()
   } catch (e: any) {
     msg.error(e.message)
@@ -118,13 +120,13 @@ function openReset(u: AdminUserVo) {
 async function submitReset() {
   if (!resetUser.value) return
   if (!resetPwd.value || resetPwd.value.length < 6) {
-    msg.warning('新密码至少 6 位')
+    msg.warning(t('admin.user.pwdTooShort'))
     return
   }
   resetting.value = true
   try {
     await adminApi.resetUserPassword(resetUser.value.id, resetPwd.value)
-    msg.success(`已重置「${resetUser.value.username}」的密码`)
+    msg.success(t('admin.user.resetDone', { name: resetUser.value.username }))
     resetVisible.value = false
   } catch (e: any) {
     msg.error(e.message)
@@ -146,19 +148,19 @@ onMounted(load)
 <template>
   <div class="admin-view">
     <div class="admin-head">
-      <n-button @click="router.push('/')">← 返回</n-button>
-      <h2>用户管理</h2>
+      <n-button @click="router.push('/')">{{ t('common.back') }}</n-button>
+      <h2>{{ t('admin.user.title') }}</h2>
       <div class="spacer" />
       <n-input
         v-model:value="keyword"
-        placeholder="搜索用户名 / 邮箱"
+        :placeholder="t('admin.user.searchPlaceholder')"
         clearable
         style="width: 220px"
         @keyup.enter="load"
       />
-      <n-button type="primary" :loading="loading" @click="load">搜索</n-button>
-      <n-button @click="router.push('/admin/providers')">模型配置</n-button>
-      <n-button @click="router.push('/admin/usage')">用量统计</n-button>
+      <n-button type="primary" :loading="loading" @click="load">{{ t('admin.user.search') }}</n-button>
+      <n-button @click="router.push('/admin/providers')">{{ t('admin.user.modelConfig') }}</n-button>
+      <n-button @click="router.push('/admin/usage')">{{ t('admin.user.usage') }}</n-button>
     </div>
 
     <n-spin :show="loading">
@@ -166,14 +168,14 @@ onMounted(load)
         <n-table :bordered="false" size="small">
           <thead>
             <tr>
-              <th>ID</th>
-              <th>用户名</th>
-              <th>邮箱</th>
-              <th>角色</th>
-              <th>状态</th>
-              <th>UID</th>
-              <th>注册时间</th>
-              <th style="width: 200px">操作</th>
+              <th>{{ t('admin.user.id') }}</th>
+              <th>{{ t('admin.user.username') }}</th>
+              <th>{{ t('admin.user.email') }}</th>
+              <th>{{ t('admin.user.role') }}</th>
+              <th>{{ t('admin.user.status') }}</th>
+              <th>{{ t('admin.user.uid') }}</th>
+              <th>{{ t('admin.user.createdAt') }}</th>
+              <th style="width: 200px">{{ t('admin.user.operator') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -183,7 +185,7 @@ onMounted(load)
               <td>{{ u.email }}</td>
               <td>
                 <n-tag :type="u.role === 'admin' ? 'warning' : 'default'" size="small">
-                  {{ u.role === 'admin' ? '管理员' : '普通用户' }}
+                  {{ u.role === 'admin' ? t('admin.user.roleAdmin') : t('admin.user.roleUser') }}
                 </n-tag>
               </td>
               <td>
@@ -199,9 +201,9 @@ onMounted(load)
               <td>
                 <n-space size="small">
                   <n-button size="tiny" quaternary :loading="rowBusyId === u.id" :disabled="rowBusyId !== null" @click="toggleRole(u)">
-                    {{ u.role === 'admin' ? '取消管理' : '设为管理' }}
+                    {{ u.role === 'admin' ? t('admin.user.unsetAdmin') : t('admin.user.setAdmin') }}
                   </n-button>
-                  <n-button size="tiny" quaternary type="error" :disabled="rowBusyId !== null" @click="openReset(u)">重置密码</n-button>
+                  <n-button size="tiny" quaternary type="error" :disabled="rowBusyId !== null" @click="openReset(u)">{{ t('admin.user.resetPwd') }}</n-button>
                 </n-space>
               </td>
             </tr>
@@ -209,7 +211,7 @@ onMounted(load)
         </n-table>
         <n-empty
           v-if="!users.length && !loading"
-          description="暂无用户"
+          :description="t('admin.user.empty')"
           style="margin-top: 30px"
         />
       </n-card>
@@ -218,17 +220,17 @@ onMounted(load)
     <n-modal
       v-model:show="resetVisible"
       preset="card"
-      title="重置密码"
+      :title="t('admin.user.resetTitle')"
       style="width: 380px"
       :mask-closable="false"
       :bordered="false"
     >
-      <div class="reset-tip">为用户「{{ resetUser?.username }}」设置新密码</div>
-      <n-input v-model:value="resetPwd" type="password" placeholder="输入新密码（至少 6 位）" show-password-on="click" />
+      <div class="reset-tip">{{ t('admin.user.resetTip', { name: resetUser?.username }) }}</div>
+      <n-input v-model:value="resetPwd" type="password" :placeholder="t('admin.user.resetPlaceholder')" show-password-on="click" />
       <template #footer>
         <div style="display: flex; justify-content: flex-end; gap: 8px">
-          <n-button @click="resetVisible = false">取消</n-button>
-          <n-button type="primary" :loading="resetting" :disabled="resetting" @click="submitReset">确认重置</n-button>
+          <n-button @click="resetVisible = false">{{ t('common.cancel') }}</n-button>
+          <n-button type="primary" :loading="resetting" :disabled="resetting" @click="submitReset">{{ t('admin.user.resetConfirm') }}</n-button>
         </div>
       </template>
     </n-modal>

@@ -5,7 +5,9 @@ import { useChatStore } from '@/stores/chat'
 import { useFavoritesStore } from '@/stores/favorites'
 import Sidebar from '@/components/Sidebar.vue'
 import Onboarding from '@/components/Onboarding.vue'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 const chat = useChatStore()
 const fav = useFavoritesStore()
 const router = useRouter()
@@ -28,6 +30,9 @@ const sidebarEvents = ref({
   openAutomation: false,
   openFind: false,
   openDashboard: false,
+  closeManage: false,
+  /** 当前打开的整页管理视图(技能/工具/模板/驾驶舱/自动化),用于侧边栏高亮 */
+  managePage: '' as '' | 'skills' | 'tools' | 'templates' | 'dashboard' | 'automation',
 })
 provide('sidebarEvents', sidebarEvents)
 
@@ -45,10 +50,10 @@ function toggleSidebar() {
 }
 provide('toggleSidebar', toggleSidebar)
 
-function triggerSidebarEvent(key: keyof typeof sidebarEvents.value) {
-  sidebarEvents.value[key] = true
+function triggerSidebarEvent(key: Exclude<keyof typeof sidebarEvents.value, 'managePage'>) {
+  ;(sidebarEvents.value as Record<string, unknown>)[key] = true
   // 重置以便重复触发
-  setTimeout(() => { sidebarEvents.value[key] = false }, 100)
+  setTimeout(() => { (sidebarEvents.value as Record<string, unknown>)[key] = false }, 100)
 }
 
 function applyBreakpoints() {
@@ -85,9 +90,8 @@ onMounted(() => {
           await router.replace(`/session/${latest.id}`)
         }
       } else {
-        // 首次登录/无任何会话:默认创建一个新会话并跳转到它,避免空列表无从下手
-        const s = await chat.createSession('新对话')
-        if (s) router.replace(`/session/${s.id}`)
+        // 无任何会话:进入草稿态(欢迎页),首次发送消息时才创建会话
+        chat.startDraft()
       }
       initLoading.value = false
       nextTick(() => onboardingRef.value?.tryShowOnboarding())
@@ -105,7 +109,7 @@ onBeforeUnmount(() => {
       <n-layout-content content-style="height:100vh; height:100dvh; overflow:hidden">
         <div v-if="initLoading" class="layout-loading">
           <n-spin size="small" />
-          <span>正在加载工作区…</span>
+          <span>{{ t('tail.wsLoading') }}</span>
         </div>
         <router-view v-else />
       </n-layout-content>
@@ -120,9 +124,10 @@ onBeforeUnmount(() => {
         @open-template-lib="mobileSidebarOpen = false; triggerSidebarEvent('openTemplateLib')"
         @open-mcp="mobileSidebarOpen = false; triggerSidebarEvent('openMcp')"
         @open-my-files="mobileSidebarOpen = false; triggerSidebarEvent('openMyFiles')"
-        @open-automation="mobileSidebarOpen = false; triggerSidebarEvent('openAutomation')"
-        @open-find="mobileSidebarOpen = false; triggerSidebarEvent('openFind')"
-        @open-dashboard="mobileSidebarOpen = false; triggerSidebarEvent('openDashboard')"
+            @open-automation="mobileSidebarOpen = false; triggerSidebarEvent('openAutomation')"
+            @open-find="mobileSidebarOpen = false; triggerSidebarEvent('openFind')"
+            @open-dashboard="mobileSidebarOpen = false; triggerSidebarEvent('openDashboard')"
+            @close-manage="triggerSidebarEvent('closeManage')"
       />
       </div>
     </n-drawer>
@@ -137,15 +142,16 @@ onBeforeUnmount(() => {
         @open-template-lib="triggerSidebarEvent('openTemplateLib')"
         @open-mcp="triggerSidebarEvent('openMcp')"
         @open-my-files="triggerSidebarEvent('openMyFiles')"
-        @open-automation="triggerSidebarEvent('openAutomation')"
-        @open-find="triggerSidebarEvent('openFind')"
-        @open-dashboard="triggerSidebarEvent('openDashboard')"
+          @open-automation="triggerSidebarEvent('openAutomation')"
+          @open-find="triggerSidebarEvent('openFind')"
+          @open-dashboard="triggerSidebarEvent('openDashboard')"
+          @close-manage="triggerSidebarEvent('closeManage')"
       />
       <n-layout>
         <n-layout-content content-style="height:100vh; height:100dvh; overflow:hidden">
           <div v-if="initLoading" class="layout-loading">
             <n-spin size="small" />
-            <span>正在加载工作区…</span>
+            <span>{{ t('tail.wsLoading') }}</span>
           </div>
           <router-view v-else />
         </n-layout-content>

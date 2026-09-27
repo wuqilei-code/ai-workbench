@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useMessage } from 'naive-ui'
 
+const { t } = useI18n()
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{
   (e: 'update:show', v: boolean): void
@@ -12,24 +14,24 @@ const msg = useMessage()
 
 const errorText = ref('')
 const lang = ref('auto')
-const focus = ref('分析原因')
+const focus = ref(t('diagnose.focusRoot'))
 const context = ref('')
 
 const LANG_OPTIONS = [
-  { label: '自动识别语言', value: 'auto' },
+  { label: t('diagnose.auto'), value: 'auto' },
   { label: 'JavaScript/TypeScript', value: 'JavaScript/TypeScript' },
   { label: 'Python', value: 'Python' },
   { label: 'Java', value: 'Java' },
   { label: 'Go', value: 'Go' },
-  { label: 'Shell/命令行', value: 'Shell/命令行' },
-  { label: 'SQL/数据库', value: 'SQL/数据库' },
-  { label: '其他', value: '其他' },
+  { label: t('diagnose.focusShell'), value: t('diagnose.focusShell') },
+  { label: t('diagnose.focusSql'), value: t('diagnose.focusSql') },
+  { label: t('diagnose.focusOther'), value: t('diagnose.focusOther') },
 ]
 const FOCUS_OPTIONS = [
-  { label: '分析报错原因', value: '分析报错原因' },
-  { label: '给出修复方案', value: '给出修复方案' },
-  { label: '解释报错含义(面向新手)', value: '解释报错含义(面向新手)' },
-  { label: '优化/改写这段代码', value: '优化/改写这段代码' },
+  { label: t('diagnose.focusRoot'), value: t('diagnose.focusRoot') },
+  { label: t('diagnose.focusFix'), value: t('diagnose.focusFix') },
+  { label: t('diagnose.focusLogic'), value: t('diagnose.focusLogic') },
+  { label: t('diagnose.focusPerf'), value: t('diagnose.focusPerf') },
 ]
 
 function onOpen() {
@@ -40,18 +42,18 @@ function onOpen() {
 function buildPrompt(): string | null {
   const err = errorText.value.trim()
   if (!err) {
-    msg.warning('请先粘贴报错信息或日志')
+    msg.warning(t('diagnose.noContext'))
     return null
   }
   const lines: string[] = []
-  const langText = lang.value === 'auto' ? '' : `(涉及语言/环境:${lang.value})`
-  lines.push(`请帮我${focus.value}。${langText}`)
-  if (context.value.trim()) lines.push(`补充上下文:${context.value.trim()}`)
-  lines.push('报错信息/日志如下:')
+  const langText = lang.value === 'auto' ? '' : t('diagnose.langLine', { lang: lang.value })
+  lines.push(t('diagnose.lineFocus', { focus: focus.value }))
+  if (context.value.trim()) lines.push(t('diagnose.lineContext', { ctx: context.value.trim() }))
+  lines.push(t('diagnose.lineInfo'))
   lines.push('```')
   lines.push(err)
   lines.push('```')
-  lines.push('要求:直接给出结论,用要点说明原因,给出可操作的修复建议;若信息不足,列出还需要的排查信息。')
+  lines.push(t('diagnose.lineRule'))
   return lines.join('\n')
 }
 
@@ -67,49 +69,49 @@ function onSubmit() {
   <n-modal
     :show="show"
     preset="card"
-    title="解读报错"
+    title="t('diagnose.title')"
     style="width: 640px; max-width: 94vw"
     :bordered="false"
     @update:show="(v: boolean) => emit('update:show', v)"
     @after-enter="onOpen"
   >
     <div class="er-field">
-      <label class="er-label">报错信息 / 日志 <span class="er-req">*</span></label>
+      <label class="er-label">{{ t('diagnose.infoLabel') }} <span class="er-req">*</span></label>
       <n-input
         v-model:value="errorText"
         type="textarea"
         :rows="6"
         size="small"
-        placeholder="把报错内容或终端日志粘贴到这里…"
+        placeholder="t('diagnose.infoPlaceholder')"
       />
     </div>
     <div class="er-row">
       <div class="er-field">
-        <label class="er-label">语言 / 环境</label>
+      <label class="er-label">{{ t('diagnose.langLabel') }}</label>
         <n-select v-model:value="lang" size="small" :options="LANG_OPTIONS" />
       </div>
       <div class="er-field">
-        <label class="er-label">想让它做什么</label>
+      <label class="er-label">{{ t('diagnose.whatLabel') }}</label>
         <n-select v-model:value="focus" size="small" :options="FOCUS_OPTIONS" />
       </div>
     </div>
     <div class="er-field">
-      <label class="er-label">补充上下文(可选)</label>
+      <label class="er-label">{{ t('diagnose.actualLabel') }}</label>
       <n-input
         v-model:value="context"
         type="textarea"
         :rows="2"
         size="small"
-        placeholder="例如:在什么操作/命令后出现、期望的行为、相关代码片段…"
+        placeholder="t('diagnose.actualPlaceholder')"
       />
     </div>
 
     <template #footer>
       <div class="er-footer">
-        <span class="er-hint">生成后填入输入框,确认后发送</span>
+      <span class="er-hint">{{ t('diagnose.hint') }}</span>
         <div style="display: flex; gap: 8px">
           <n-button @click="emit('update:show', false)">取消</n-button>
-          <n-button type="primary" @click="onSubmit">生成提问</n-button>
+      <n-button type="primary" @click="onSubmit">{{ t('diagnose.submit') }}</n-button>
         </div>
       </div>
     </template>

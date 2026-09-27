@@ -6,11 +6,13 @@
  */
 import { computed, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{ value?: string | null; disabled?: boolean }>()
 const emit = defineEmits<{ (e: 'update:value', v: string): void }>()
 
 const msg = useMessage()
+const { t } = useI18n()
 
 type Mode = 'hourly' | 'daily' | 'weekly' | 'monthly' | 'none'
 const mode = ref<Mode>('none')
@@ -22,19 +24,19 @@ const monthDay = ref(1)
 const customCron = ref('')
 
 const WEEK_OPTIONS = [
-  { label: '周一', value: 'MON' },
-  { label: '周二', value: 'TUE' },
-  { label: '周三', value: 'WED' },
-  { label: '周四', value: 'THU' },
-  { label: '周五', value: 'FRI' },
-  { label: '周六', value: 'SAT' },
-  { label: '周日', value: 'SUN' },
+  { label: t('cron.mon'), value: 'MON' },
+  { label: t('cron.tue'), value: 'TUE' },
+  { label: t('cron.wed'), value: 'WED' },
+  { label: t('cron.thu'), value: 'THU' },
+  { label: t('cron.fri'), value: 'FRI' },
+  { label: t('cron.sat'), value: 'SAT' },
+  { label: t('cron.sun'), value: 'SUN' },
 ]
-const DAYS_31 = Array.from({ length: 31 }, (_, i) => ({ label: `${i + 1} 日`, value: i + 1 }))
-const HOURS = Array.from({ length: 24 }, (_, i) => ({ label: `${String(i).padStart(2, '0')} 时`, value: i }))
-const MINUTES = Array.from({ length: 60 }, (_, i) => ({ label: `${String(i).padStart(2, '0')} 分`, value: i }))
+const DAYS_31 = Array.from({ length: 31 }, (_, i) => ({ label: t('cron.dayUnit', { n: i + 1 }), value: i + 1 }))
+const HOURS = Array.from({ length: 24 }, (_, i) => ({ label: t('cron.hourLabel', { h: String(i).padStart(2, '0') }), value: i }))
+const MINUTES = Array.from({ length: 60 }, (_, i) => ({ label: t('cron.minLabel', { m: String(i).padStart(2, '0') }), value: i }))
 
-const hoursOptions = Array.from({ length: 24 }, (_, i) => ({ label: `每 ${i + 1} 小时`, value: i + 1 }))
+const hoursOptions = Array.from({ length: 24 }, (_, i) => ({ label: t('cron.everyNHours', { n: i + 1 }), value: i + 1 }))
 
 /** 由当前选项生成 cron(Spring 6 段:秒 分 时 日 月 周)。 */
 function buildCron(): string {
@@ -62,14 +64,14 @@ const summary = computed(() => {
   const hh = String(timeHour.value).padStart(2, '0')
   const mm = String(timeMin.value).padStart(2, '0')
   switch (mode.value) {
-    case 'hourly': return `每 ${everyHours.value} 小时执行一次`
-    case 'daily': return `每天 ${hh}:${mm} 执行`
+    case 'hourly': return t('cron.hourlyDesc', { n: everyHours.value })
+    case 'daily': return t('cron.dailyDesc', { hh, mm })
     case 'weekly': {
-      const names = weekDays.value.length ? weekDays.value.map((d) => WEEK_OPTIONS.find((w) => w.value === d)?.label ?? d).join('、') : '周一'
-      return `每周 ${names} ${hh}:${mm} 执行`
+    const names = weekDays.value.length ? weekDays.value.map((d) => WEEK_OPTIONS.find((w) => w.value === d)?.label ?? d).join('、') : t('cron.weeklyFallback')
+    return t('cron.weeklyDesc', { names, hh, mm })
     }
-    case 'monthly': return `每月 ${monthDay.value} 日 ${hh}:${mm} 执行`
-    case 'none': return '不设置定时(创建后立即执行一次)'
+    case 'monthly': return t('cron.monthlyDesc', { d: monthDay.value, hh, mm })
+    case 'none': return t('cron.noneDesc')
     default: return ''
   }
 })
@@ -139,20 +141,20 @@ watch(
 <template>
   <div class="cron-picker">
     <n-radio-group v-model:value="mode" size="small">
-      <n-radio-button value="none">不设置</n-radio-button>
-      <n-radio-button value="hourly">每N小时</n-radio-button>
-      <n-radio-button value="daily">每天</n-radio-button>
-      <n-radio-button value="weekly">每周</n-radio-button>
-      <n-radio-button value="monthly">每月</n-radio-button>
+        <n-radio-button value="none">{{ t('cron.modeNone') }}</n-radio-button>
+        <n-radio-button value="hourly">{{ t('cron.modeHourly') }}</n-radio-button>
+        <n-radio-button value="daily">{{ t('cron.modeDaily') }}</n-radio-button>
+        <n-radio-button value="weekly">{{ t('cron.modeWeekly') }}</n-radio-button>
+        <n-radio-button value="monthly">{{ t('cron.modeMonthly') }}</n-radio-button>
     </n-radio-group>
 
     <div v-if="mode === 'hourly'" class="pick-row">
       <n-select v-model:value="everyHours" :options="hoursOptions" size="small" class="pick-select" />
-      <span class="pick-note">(最小间隔 1 小时)</span>
+        <span class="pick-note">{{ t('cron.note') }}</span>
     </div>
 
     <div v-if="mode === 'daily'" class="pick-row">
-      <span class="pick-label">每天</span>
+        <span class="pick-label">{{ t('cron.labelDay') }}</span>
       <n-select v-model:value="timeHour" :options="HOURS" size="small" class="pick-time" />
       <n-select v-model:value="timeMin" :options="MINUTES" size="small" class="pick-time" />
     </div>
@@ -161,15 +163,15 @@ watch(
       <n-checkbox-group v-model:value="weekDays">
         <n-checkbox v-for="w in WEEK_OPTIONS" :key="w.value" :value="w.value" :label="w.label" size="small" />
       </n-checkbox-group>
-      <span class="pick-label">执行时间</span>
+        <span class="pick-label">{{ t('cron.labelAt') }}</span>
       <n-select v-model:value="timeHour" :options="HOURS" size="small" class="pick-time" />
       <n-select v-model:value="timeMin" :options="MINUTES" size="small" class="pick-time" />
     </div>
 
     <div v-if="mode === 'monthly'" class="pick-row">
-      <span class="pick-label">每月</span>
+        <span class="pick-label">{{ t('cron.labelDay') }}</span>
       <n-select v-model:value="monthDay" :options="DAYS_31" size="small" class="pick-day" />
-      <span class="pick-label">执行时间</span>
+        <span class="pick-label">{{ t('cron.labelAt') }}</span>
       <n-select v-model:value="timeHour" :options="HOURS" size="small" class="pick-time" />
       <n-select v-model:value="timeMin" :options="MINUTES" size="small" class="pick-time" />
     </div>

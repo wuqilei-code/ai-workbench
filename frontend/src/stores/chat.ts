@@ -4,6 +4,10 @@ import { chatApi } from '@/api/chat'
 import { modelApi } from '@/api/admin'
 import { subscribeSession, type SseHandlers } from '@/api/sse'
 import { useAuthStore } from './auth'
+import { i18n } from '@/i18n'
+
+/** store 内(非组件上下文)取翻译函数;`t` 已被 sanitize() 用作局部变量,故用 `tr`。 */
+const tr = (key: string) => i18n.global.t(key)
 import { buildTurns, buildFlow, summarizeToolCall } from '@/utils/turns'
 import type {
   SessionVo,
@@ -12,10 +16,15 @@ import type {
   StepParts,
   ToolCall,
   PendingPermission,
-  ChangeSummary,
 } from '@/types'
 
 interface StreamHandle { close: () => void }
+
+/** 流式时间线调试日志:默认关闭;控制台执行 `localStorage.setItem('aiwb_debug','1')` 后刷新可开启。 */
+const DEBUG_TIMELINE = typeof localStorage !== 'undefined' && localStorage.getItem('aiwb_debug') === '1'
+function dbg(...args: unknown[]) {
+  if (DEBUG_TIMELINE) dbg(...args)
+}
 
 /**
  * 从首条用户消息派生会话标题:剥离附件块、压缩空白、截断长度。
@@ -38,21 +47,27 @@ export const useChatStore = defineStore('chat', () => {
   const sessions = ref<SessionVo[]>([])
   const archivedSessions = ref<SessionVo[]>([])
   const currentSessionId = ref<number | null>(null)
+  /** 草稿态:已进入欢迎页但尚未创建会话,首次发送消息时才创建 */
+  const draft = ref(false)
   const messages = ref<MessageVo[]>([])
   const MESSAGE_PAGE = 60
   const hasOlder = ref(false)
   const loadingOlder = ref(false)
   const olderTopId = ref<number>(0)
-  /** AI 变更总结(deepagents 轨道不再产生,恒为空) */
-  const summaries = ref<ChangeSummary[]>([])
 
   const pendingFill = ref('')
   function fillInput(prompt: string) {
     pendingFill.value = prompt
   }
   const pendingAttachPath = ref('')
-  function attachFile(path: string) {
+  /** 与 pendingAttachPath 搭配的提示词(如「做同款」附件+回填);为空则用默认文件提示词 */
+  const pendingAttachPrompt = ref('')
+  /** 挂载该附件前,先移除同前缀的旧附件(如「做同款」重复点击只保留最新模板) */
+  const pendingAttachReplace = ref('')
+  function attachFile(path: string, prompt = '', replacePrefix = '') {
     pendingAttachPath.value = path
+    pendingAttachPrompt.value = prompt
+    pendingAttachReplace.value = replacePrefix
   }
 
   const streamingText = ref('')
@@ -120,7 +135,7 @@ export const useChatStore = defineStore('chat', () => {
   )
 
   const turns = computed(() => buildTurns(messages.value.filter((m) => !isHiddenMessage(m))))
-  const flow = computed(() => buildFlow(turns.value, summaries.value))
+  const flow = computed(() => buildFlow(turns.value))
 
   const manualCollapseOverride = ref<Record<string, boolean>>({})
   function setCollapse(turnId: string, expanded: boolean) {
@@ -155,15 +170,59 @@ export const useChatStore = defineStore('chat', () => {
 
   // ---------- 会话 ----------
 
+  /** 会话列表分页:每页 SESSIONS_PAGE 条,滚动到底由侧边栏的 IntersectionObserver 自动续页。 */
+  const SESSIONS_PAGE = 20
+  const sessionsHasMore = ref(false)
+  const sessionsLoadingMore = ref(false)
+
   async function loadSessions() {
-    sessions.value = await chatApi.listSessions()
+    const list = await chatApi.listSessions(SESSIONS_PAGE, 0)
+    sessions.value = list
+    sessionsHasMore.value = list.length >= SESSIONS_PAGE
   }
+
+  /** 追加下一页会话(侧边栏滚动到底自动触发)。 */
+  async function loadMoreSessions() {
+    if (sessionsLoadingMore.value || !sessionsHasMore.value) return
+    sessionsLoadingMore.value = true
+    try {
+      const list = await chatApi.listSessions(SESSIONS_PAGE, sessions.value.length)
+      const seen = new Set(sessions.value.map((s) => s.id))
+      let added = 0
+      for (const s of list) if (!seen.has(s.id)) { sessions.value.push(s); added++ }
+      // 无进展(整页都是重复项,如排序在两次请求间变动)就停止,否则 offset 不前进会反复取同一页
+      sessionsHasMore.value = added > 0 && list.length >= SESSIONS_PAGE
+    } finally {
+      sessionsLoadingMore.value = false
+    }
+  }
+
+  /** 归档列表同样分页(此前不传 limit,后端会全量返回,归档多了就是慢查询)。 */
+  const archivedHasMore = ref(false)
+  const archivedLoadingMore = ref(false)
 
   async function loadArchivedSessions() {
     try {
-      archivedSessions.value = await chatApi.listArchivedSessions()
+      const list = await chatApi.listArchivedSessions(SESSIONS_PAGE, 0)
+      archivedSessions.value = list
+      archivedHasMore.value = list.length >= SESSIONS_PAGE
     } catch (e) {
       archivedSessions.value = []
+      archivedHasMore.value = false
+    }
+  }
+
+  async function loadMoreArchived() {
+    if (archivedLoadingMore.value || !archivedHasMore.value) return
+    archivedLoadingMore.value = true
+    try {
+      const list = await chatApi.listArchivedSessions(SESSIONS_PAGE, archivedSessions.value.length)
+      const seen = new Set(archivedSessions.value.map((s) => s.id))
+      let added = 0
+      for (const s of list) if (!seen.has(s.id)) { archivedSessions.value.push(s); added++ }
+      archivedHasMore.value = added > 0 && list.length >= SESSIONS_PAGE
+    } finally {
+      archivedLoadingMore.value = false
     }
   }
 
@@ -190,6 +249,21 @@ export const useChatStore = defineStore('chat', () => {
     }, 300)
   }
 
+  /** 进入草稿态(欢迎页):不创建会话,首次发送消息时才落库 */
+  function startDraft() {
+    closeStream()
+    _sseGeneration++
+    currentSessionId.value = null
+    messages.value = []
+    streamingText.value = ''
+    liveReasoning.value = ''
+    streamingMessageId.value = null
+    isStreaming.value = false
+    contextUsage.value = null
+    switching.value = false
+    draft.value = true
+  }
+
   async function createSession(title?: string, agent?: string) {
     const s = await chatApi.createSession({
       title,
@@ -197,6 +271,7 @@ export const useChatStore = defineStore('chat', () => {
       providerId: selectedProviderId.value || undefined,
       modelId: selectedModelId.value || undefined,
     })
+    draft.value = false
     sessions.value.unshift(s)
     await selectSession(s.id)
     return s
@@ -209,8 +284,8 @@ export const useChatStore = defineStore('chat', () => {
     _sseGeneration++
     closeStream()
     currentSessionId.value = id
+    draft.value = false
     messages.value = []
-    summaries.value = []
     streamingText.value = ''
     liveReasoning.value = ''
     streamingMessageId.value = null
@@ -341,7 +416,6 @@ export const useChatStore = defineStore('chat', () => {
     await chatApi.clearMessages(id)
     if (currentSessionId.value === id) {
       messages.value = []
-      summaries.value = []
       streamingText.value = ''
       liveReasoning.value = ''
     }
@@ -352,7 +426,7 @@ export const useChatStore = defineStore('chat', () => {
     const blob = res?.data instanceof Blob ? res.data : new Blob([res.data], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    const s = currentSession ? currentSession.title : `会话${id}`
+    const s = currentSession.value ? currentSession.value.title : `会话${id}`
     const safe = (s || `session-${id}`).replace(/[\\/:*?"<>|]/g, '_').slice(0, 60)
     a.href = url
     a.download = `${safe}.${format}`
@@ -373,7 +447,7 @@ export const useChatStore = defineStore('chat', () => {
       if (!content) continue
       lines.push(`${who}:${content}`)
     }
-    if (!lines.length) throw new Error('该会话暂无内容可总结')
+    if (!lines.length) throw new Error(tr('chatStore.noContent'))
     const transcript = lines.join('\n').slice(-60000)
     const prompt = [
       '请总结以下这段对话,输出三部分:',
@@ -501,7 +575,12 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function sendMessage(text: string) {
-    if (!currentSessionId.value || !text.trim() || isStreaming.value) return
+    if (!text.trim() || isStreaming.value) return
+    // 草稿态/无会话:首次发送时才创建会话
+    if (!currentSessionId.value) {
+      const s = await createSession(deriveTitle(text) || '新对话')
+      if (!s) return
+    }
     const isFirstMessage = messages.value.length === 0
     const optimistic: MessageVo = {
       id: -Date.now(),
@@ -541,7 +620,7 @@ export const useChatStore = defineStore('chat', () => {
     if (isFirstMessage) {
       const title = deriveTitle(text)
       if (title) {
-        chatApi.updateSession(currentSessionId.value, { title })
+        chatApi.updateSession(currentSessionId.value!, { title })
           .then((updated) => {
             const idx = sessions.value.findIndex((s) => s.id === currentSessionId.value)
             if (idx >= 0) sessions.value[idx] = updated
@@ -551,7 +630,7 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     try {
-      await chatApi.sendMessage(currentSessionId.value, {
+      await chatApi.sendMessage(currentSessionId.value!, {
         text,
         providerId: selectedProviderId.value || undefined,
         modelId: selectedModelId.value || undefined,
@@ -564,7 +643,7 @@ export const useChatStore = defineStore('chat', () => {
       removeUnclaimedPlaceholder()
       const idx = messages.value.findIndex((m) => m.id === optimistic.id)
       if (idx >= 0) {
-        messages.value[idx] = { ...messages.value[idx], _pending: false, status: 'error', error: '发送失败,请重试' }
+        messages.value[idx] = { ...messages.value[idx], _pending: false, status: 'error', error: tr('chatStore.sendFailed') }
       }
       throw e
     }
@@ -599,7 +678,7 @@ export const useChatStore = defineStore('chat', () => {
     // 不检查会污染新会话的消息列表(步骤重复、文本重叠)。
     const evGen = data?._sseGen
     if (evGen != null && evGen !== _sseGeneration) return
-    console.debug('[chat] SSE event:', type, 'isStreaming=', isStreaming.value,
+    dbg('[chat] SSE event:', type, 'isStreaming=', isStreaming.value,
       'streamingMsgId=', streamingMessageId.value, 'data=', data)
     switch (type) {
       case 'open':
@@ -615,7 +694,7 @@ export const useChatStore = defineStore('chat', () => {
 
       case 'message.start': {
         const id: string = data.id
-        console.debug('[timeline] event message.start', { id, prevStreamingMsgId: streamingMessageId.value })
+        dbg('[timeline] event message.start', { id, prevStreamingMsgId: streamingMessageId.value })
         if (id) {
           ensureAssistantShell(id)
           streamingMessageId.value = id
@@ -632,7 +711,7 @@ export const useChatStore = defineStore('chat', () => {
         const content: string = data.content || ''
         if (!content) break
         if (id && id !== streamingMessageId.value) {
-          console.debug('[timeline] delta new msg id', { oldId: streamingMessageId.value, newId: id })
+          dbg('[timeline] delta new msg id', { oldId: streamingMessageId.value, newId: id })
           ensureAssistantShell(id)
           streamingMessageId.value = id
           streamingText.value = ''
@@ -646,7 +725,7 @@ export const useChatStore = defineStore('chat', () => {
         if (isStreaming.value) touchStreamActivity()
         const rc: string = data.content || ''
         if (!rc) break
-        console.debug('[timeline] reason chunk', { len: rc.length, liveReasoningLen: liveReasoning.value.length, tail: rc.slice(-60) })
+        dbg('[timeline] reason chunk', { len: rc.length, liveReasoningLen: liveReasoning.value.length, tail: rc.slice(-60) })
         // 推理段独立累积到 liveReasoning(轻量纯标量),让"思考"块随 reason 逐块实时可见;
         // 不再逐个写 messages.timeline,避免 buildTurns 全量重算阻塞主线程致内容成批跳出。
         // 在与工具/文本/结束的边界处才由 flushLiveReasoning 定稿合并进时间线(落库结构一致)。
@@ -659,7 +738,7 @@ export const useChatStore = defineStore('chat', () => {
       case 'tool': {
         isStreaming.value = true
         touchStreamActivity()
-        console.debug('[timeline] event tool', { id: data.id, name: data.name, streamingTextLen: streamingText.value.length, liveReasoningLen: liveReasoning.value.length })
+        dbg('[timeline] event tool', { id: data.id, name: data.name, streamingTextLen: streamingText.value.length, liveReasoningLen: liveReasoning.value.length })
         flushLiveSteps()
         const tc: ToolCall = {
           id: typeof data.id === 'string' ? data.id : undefined,
@@ -710,7 +789,7 @@ export const useChatStore = defineStore('chat', () => {
       // agent 向用户提问(ask_user 工具触发)
       case 'question': {
         const requestId: string = data.id || ''
-        const question: string = data.question || '请提供更多信息'
+        const question: string = data.question || tr('chatStore.needMoreInfo')
         if (!requestId) break
         suspendForPermission({
           requestId,
@@ -730,7 +809,7 @@ export const useChatStore = defineStore('chat', () => {
         isStreaming.value = true
         touchStreamActivity()
         flushLiveSteps()
-        appendLiveTimeline('system', data.message || '会话历史已压缩')
+        appendLiveTimeline('system', data.message || tr('chatStore.historyCompact'))
         break
       }
 
@@ -749,17 +828,17 @@ export const useChatStore = defineStore('chat', () => {
         const id: string = data.id
         const status: string = data.status
         const finalText = streamingText.value
-        console.debug('[timeline] event message.end', { id, status, finalTextLen: finalText.length, streamingMsgId: streamingMessageId.value })
+        dbg('[timeline] event message.end', { id, status, finalTextLen: finalText.length, streamingMsgId: streamingMessageId.value })
         // 边界处一次性把实时缓冲(reason+text)定稿进时间线并清空,保证历史结构与后端落库一致
         flushLiveSteps()
         if (status === 'error') {
-          markAssistantError(id, '本轮生成出错,请重试')
+          markAssistantError(id, tr('chatStore.genError'))
           streamingText.value = ''
           streamingMessageId.value = null
         } else {
           // completed / aborted:把最终文本定稿到该消息(文本已随 flushLiveSteps 并入时间线)
           if (id && id === streamingMessageId.value && finalText) {
-            console.debug('[timeline] message.end finalizing text part', { id, finalTextLen: finalText.length })
+            dbg('[timeline] message.end finalizing text part', { id, finalTextLen: finalText.length })
             finalizeTextPart(id, finalText, status === 'completed')
           }
           if (id) {
@@ -790,12 +869,12 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       case 'done':
-        console.debug('[timeline] event done', { streamingMsgId: streamingMessageId.value, streamingTextLen: streamingText.value.length })
+        dbg('[timeline] event done', { streamingMsgId: streamingMessageId.value, streamingTextLen: streamingText.value.length })
         finishStreaming()
         break
 
       case 'error': {
-        const msg = data.message || '生成出错,请重试'
+        const msg = data.message || tr('chatStore.genErrorShort')
         const id = streamingMessageId.value
         const pendingText = streamingText.value
         // 先把已流式产出(reason+正文)定稿进时间线再标记错误:否则总结文本会随
@@ -866,7 +945,7 @@ export const useChatStore = defineStore('chat', () => {
     // 若 v 为空则该占位"思考"步骤根本不出现,导致 buildTurns 回退为空 finalAnswer,
     // 思考内容直到边界 flush 前都渲染不出来。写入非空值即可让"思考"步骤立即存在,
     // 渲染时 displayContent 直接读 liveReasoning(实时)而非此占位 v。
-    console.debug('[timeline] ensureLiveReasonStep ADD', { tlLen: tl.length, lastK: last?.k, liveReasoningLen: liveReasoning.value.length })
+    dbg('[timeline] ensureLiveReasonStep ADD', { tlLen: tl.length, lastK: last?.k, liveReasoningLen: liveReasoning.value.length })
     tl.push({ k: 'reason', v: liveReasoning.value })
     messages.value[idx] = { ...msg, parts: { ...(msg.parts || {}), timeline: tl } } as any
   }
@@ -878,23 +957,23 @@ export const useChatStore = defineStore('chat', () => {
   function flushLiveReasoning() {
     const txt = liveReasoning.value
     liveReasoning.value = ''
-    if (!txt) { console.debug('[timeline] flushReasoning: empty, skip'); return }
+    if (!txt) { dbg('[timeline] flushReasoning: empty, skip'); return }
     const targetId = streamingMessageId.value
     let idx = targetId ? messages.value.findIndex((m) => m.agentMessageId === targetId) : -1
     if (idx < 0 && messages.value.length && messages.value[messages.value.length - 1].role === 'assistant') {
       idx = messages.value.length - 1
     }
-    if (idx < 0) { console.debug('[timeline] flushReasoning: no target msg'); return }
+    if (idx < 0) { dbg('[timeline] flushReasoning: no target msg'); return }
     const msg = messages.value[idx]
     const tl: { k: string; v?: string }[] = Array.isArray((msg.parts as any)?.timeline)
-      ? [...((msg.parts as any).timeline as unknown[])]
+      ? ([...(((msg.parts as any).timeline) as { k: string; v?: string }[])])
       : []
     const last = tl.length ? tl[tl.length - 1] : null
     if (last && last.k === 'reason') {
-      console.debug('[timeline] flushReasoning MERGE into existing', { prevLen: (last.v || '').length, addedLen: txt.length, tail: txt.slice(-60) })
+      dbg('[timeline] flushReasoning MERGE into existing', { prevLen: (last.v || '').length, addedLen: txt.length, tail: txt.slice(-60) })
       tl[tl.length - 1] = { k: 'reason', v: txt }
     } else {
-      console.debug('[timeline] flushReasoning NEW entry', { tlLen: tl.length, txtLen: txt.length, tail: txt.slice(-60) })
+      dbg('[timeline] flushReasoning NEW entry', { tlLen: tl.length, txtLen: txt.length, tail: txt.slice(-60) })
       tl.push({ k: 'reason', v: txt })
     }
     messages.value[idx] = { ...msg, parts: { ...(msg.parts || {}), timeline: tl } }
@@ -904,10 +983,10 @@ export const useChatStore = defineStore('chat', () => {
    *  liveReasoning / streamingText 在流式期间是轻量纯标量,不触发 buildTurns 全量重算;
    *  仅在此处一次性合并,既保证逐块实时可见,又保证刷新/断线后的历史重建与后端落库一致。 */
   function flushLiveSteps() {
-    console.debug('[timeline] flushLiveSteps called', { streamingTextLen: streamingText.value.length, liveReasoningLen: liveReasoning.value.length })
+    dbg('[timeline] flushLiveSteps called', { streamingTextLen: streamingText.value.length, liveReasoningLen: liveReasoning.value.length })
     flushLiveReasoning()
     if (streamingText.value) {
-      console.debug('[timeline] flushLiveSteps appending text', { len: streamingText.value.length, tail: streamingText.value.slice(-80) })
+      dbg('[timeline] flushLiveSteps appending text', { len: streamingText.value.length, tail: streamingText.value.slice(-80) })
       appendLiveTimeline('text', streamingText.value)
       streamingText.value = ''
     }
@@ -920,31 +999,31 @@ export const useChatStore = defineStore('chat', () => {
     if (idx < 0 && messages.value.length && messages.value[messages.value.length - 1].role === 'assistant') {
       idx = messages.value.length - 1
     }
-    if (idx < 0) { console.debug('[timeline] append skipped: no target msg', { k, targetId }); return }
+    if (idx < 0) { dbg('[timeline] append skipped: no target msg', { k, targetId }); return }
     const msg = messages.value[idx]
     const tl: { k: string; v?: string; id?: string }[] = Array.isArray((msg.parts as any)?.timeline)
-      ? [...((msg.parts as any).timeline as unknown[])]
+      ? ([...(((msg.parts as any).timeline) as { k: string; v?: string; id?: string }[])])
       : []
     const last = tl.length ? (tl[tl.length - 1] as { k: string; v?: string }) : null
     const prevLen = tl.length
     if ((k === 'reason' || k === 'text') && last && last.k === k) {
       const oldLen = (last.v || '').length
       tl[tl.length - 1] = { k, v: (last.v || '') + (v || '') }
-      console.debug('[timeline] append MERGE', { k, prevLen, oldContentLen: oldLen, addedLen: (v || '').length, newContentLen: (last.v || '').length + (v || '').length, tail: (v || '').slice(-60) })
+      dbg('[timeline] append MERGE', { k, prevLen, oldContentLen: oldLen, addedLen: (v || '').length, newContentLen: (last.v || '').length + (v || '').length, tail: (v || '').slice(-60) })
     } else if (k === 'tool') {
       if (!toolId) return
       tl.push({ k, id: toolId })
-      console.debug('[timeline] append TOOL', { k: 'tool', toolId, prevLen, newLen: tl.length })
+      dbg('[timeline] append TOOL', { k: 'tool', toolId, prevLen, newLen: tl.length })
     } else {
       tl.push({ k, v: v || '' })
-      console.debug('[timeline] append NEW', { k, prevLen, newLen: tl.length, contentLen: (v || '').length, tail: (v || '').slice(-60) })
+      dbg('[timeline] append NEW', { k, prevLen, newLen: tl.length, contentLen: (v || '').length, tail: (v || '').slice(-60) })
     }
     messages.value[idx] = { ...msg, parts: { ...(msg.parts || {}), timeline: tl } }
   }
 
   /** 把流式文本落定到目标 assistant 消息 */
   function finalizeTextPart(id: string, text: string, completed: boolean) {
-    console.debug('[timeline] finalizeTextPart', { id, textLen: text.length, completed, tail: text.slice(-80) })
+    dbg('[timeline] finalizeTextPart', { id, textLen: text.length, completed, tail: text.slice(-80) })
     const idx = messages.value.findIndex((m) => m.agentMessageId === id)
     if (idx >= 0) {
       messages.value[idx] = {
@@ -957,7 +1036,7 @@ export const useChatStore = defineStore('chat', () => {
         streamingMessageId.value = null
       }
     } else {
-      console.debug('[timeline] finalizeTextPart creating new msg', { id })
+      dbg('[timeline] finalizeTextPart creating new msg', { id })
       messages.value.push({
         id: -Date.now(),
         agentMessageId: id,
@@ -1049,12 +1128,12 @@ export const useChatStore = defineStore('chat', () => {
 
   /** 会话空闲:生成结束,兜底落定未提交的流式文本 */
   function finishStreaming() {
-    console.debug('[timeline] finishStreaming called', { streamingMsgId: streamingMessageId.value, streamingTextLen: streamingText.value.length, liveReasoningLen: liveReasoning.value.length })
+    dbg('[timeline] finishStreaming called', { streamingMsgId: streamingMessageId.value, streamingTextLen: streamingText.value.length, liveReasoningLen: liveReasoning.value.length })
     // 记录本轮耗时(结束时刻 - 开始时刻)到对应 assistant 消息,供头部"已完成 Xs"展示
     recordTurnElapsed()
     flushLiveReasoning()
     if (streamingMessageId.value && streamingText.value) {
-      console.debug('[timeline] finishStreaming finalizing leftover text', { len: streamingText.value.length })
+      dbg('[timeline] finishStreaming finalizing leftover text', { len: streamingText.value.length })
       appendLiveTimeline('text', streamingText.value)
       finalizeTextPart(streamingMessageId.value, streamingText.value, true)
       streamingText.value = ''
@@ -1167,7 +1246,7 @@ export const useChatStore = defineStore('chat', () => {
     if (_interruptedMsgId && _interruptedText) {
       finalizeTextPart(_interruptedMsgId, _interruptedText, true)
     }
-    markAssistantError(_interruptedMsgId, '连接已断开，本轮回答已中止。请检查网络后重新提问。')
+    markAssistantError(_interruptedMsgId, tr('chatStore.interrupted'))
     isStreaming.value = false
     streamStartAt.value = 0
     streamingText.value = ''
@@ -1229,7 +1308,8 @@ export const useChatStore = defineStore('chat', () => {
   const changedFilePaths = computed(() => new Set<string>())
 
   return {
-    sessions, archivedSessions, currentSessionId, currentSession, messages, turns, flow, summaries,
+    sessions, archivedSessions, currentSessionId, currentSession, messages, turns, flow,
+    draft, startDraft,
     streamingText, liveReasoning, streamingMessageId, isStreaming, streamingStuckSeconds, streamingElapsedSeconds, runningActivity,
     streamingWidgetCode, turnElapsed, contextUsage,
     browserToolSignal, lastBrowserToolAt,
@@ -1239,9 +1319,11 @@ export const useChatStore = defineStore('chat', () => {
     hasOlder, loadingOlder, loadOlderMessages,
     searchResults, searching, searchSessions,
     availableModels, selectedProviderId, selectedModelId,
-    pendingFill, fillInput, pendingAttachPath, attachFile,
+    pendingFill, fillInput, pendingAttachPath, pendingAttachPrompt, pendingAttachReplace, attachFile,
     manualCollapseOverride, setCollapse,
-    loadModels, selectModel, loadSessions, loadArchivedSessions, createSession, selectSession,
+    loadModels, selectModel, loadSessions, loadMoreSessions, sessionsHasMore, sessionsLoadingMore,
+    loadArchivedSessions, loadMoreArchived, archivedHasMore, archivedLoadingMore,
+    createSession, selectSession,
     deleteSession, pinSession, archiveSession, unarchiveSession, renameSession, clearSession, exportSession,
     importSession,
     summarizeSession,

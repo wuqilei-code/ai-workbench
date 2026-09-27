@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, inject, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import type { Ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useDialog, useMessage } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 import type { SessionVo } from '@/types'
 
 const props = withDefaults(defineProps<{ collapsed?: boolean; narrow?: boolean }>(), {
@@ -18,12 +20,18 @@ const emit = defineEmits<{
   'open-automation': []
   'open-find': []
   'open-dashboard': []
+  'close-manage': []
 }>()
 
 const router = useRouter()
 const chat = useChatStore()
 const dialog = useDialog()
 const msg = useMessage()
+const { t } = useI18n()
+
+/** 当前打开的整页管理视图(技能/工具/模板/驾驶舱/自动化):用于导航项高亮 */
+const sidebarEvents = inject<Ref<{ managePage: string }> | undefined>('sidebarEvents', undefined)
+const managePage = computed(() => sidebarEvents?.value?.managePage || '')
 
 /** 汉堡按钮:窄屏可手动收起/展开侧边栏 */
 function toggleCollapsed() {
@@ -55,41 +63,41 @@ function fmtRelativeTime(ts?: string): string {
   if (Number.isNaN(d)) return ''
   const diff = Date.now() - d
   const min = 60_000, hour = 3_600_000, day = 86_400_000
-  if (diff < min) return '刚刚'
-  if (diff < hour) return `${Math.floor(diff / min)} 分钟前`
-  if (diff < day) return `${Math.floor(diff / hour)} 小时前`
+  if (diff < min) return t('sidebar2.justNow')
+  if (diff < hour) return t('sidebar2.minutesAgo', { n: Math.floor(diff / min) })
+  if (diff < day) return t('sidebar2.hoursAgo', { n: Math.floor(diff / hour) })
   const dayDiff = Math.floor(diff / day)
-  if (dayDiff === 1) return '昨天'
-  if (dayDiff < 7) return `${dayDiff} 天前`
+  if (dayDiff === 1) return t('sidebar2.yesterday')
+  if (dayDiff < 7) return t('sidebar2.daysAgo', { n: dayDiff })
   const date = new Date(d)
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
 /** 会话时间分组:今天/昨天/7 天内/更早 */
 function groupOf(ts?: string): string {
-  if (!ts) return '更早'
+  if (!ts) return t('sidebar2.prevThread')
   const d = new Date(ts).getTime()
-  if (Number.isNaN(d)) return '更早'
+  if (Number.isNaN(d)) return t('sidebar2.prevThread')
   const now = new Date()
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
   const day = 86_400_000
-  if (d >= todayStart) return '今天'
-  if (d >= todayStart - day) return '昨天'
-  if (d >= todayStart - 7 * day) return '7 天内'
-  return '更早'
+  if (d >= todayStart) return t('sidebar2.gToday')
+  if (d >= todayStart - day) return t('sidebar2.gYesterday')
+  if (d >= todayStart - 7 * day) return t('sidebar2.g7')
+  return t('sidebar2.gEarlier')
 }
 
 interface GroupedSessions { label: string; items: SessionVo[] }
 /** 分组后的会话列表:搜索时平铺;否则 置顶 → 今天 → 昨天 → 7 天内 → 更早 */
 const grouped = computed<GroupedSessions[]>(() => {
   if (searchActive.value) {
-    return displayed.value.length ? [{ label: '搜索结果', items: displayed.value }] : []
+  return displayed.value.length ? [{ label: t('sidebar2.searchGroup'), items: displayed.value }] : []
   }
   const groups: GroupedSessions[] = []
   const pinned = displayed.value.filter((s) => !viewArchived.value && s.pinned)
   const rest = displayed.value.filter((s) => viewArchived.value || !s.pinned)
-  if (pinned.length) groups.push({ label: '置顶', items: pinned })
-  for (const label of ['今天', '昨天', '7 天内', '更早']) {
+  if (pinned.length) groups.push({ label: t('sidebar2.pinned'), items: pinned })
+  for (const label of [t('sidebar2.gToday'), t('sidebar2.gYesterday'), t('sidebar2.g7'), t('sidebar2.gEarlier')]) {
     const items = rest.filter((s) => groupOf(s.updatedAt) === label)
     if (items.length) groups.push({ label, items })
   }
@@ -109,30 +117,73 @@ async function onOpenSearchResult(s: { id: number }) {
 }
 async function onViewArchived(v: boolean) {
   viewArchived.value = v
-  if (v) await withBusy('正在加载归档会话…', () => chat.loadArchivedSessions())
+    if (v) await withBusy(t('sidebar2.loadingArchived'), () => chat.loadArchivedSessions())
 }
+
+// ---------- 会话列表滚动分页 ----------
+
+/** 哨兵元素(列表末尾);进入视口即续一页 */
+const pagerSentinel = ref<HTMLElement | null>(null)
+/** 是否还有下一页:会话页看 sessionsHasMore,归档页看 archivedHasMore */
+const hasMore = computed(() =>
+  viewArchived.value ? chat.archivedHasMore : chat.sessionsHasMore,
+)
+const loadingMore = computed(() =>
+  viewArchived.value ? chat.archivedLoadingMore : chat.sessionsLoadingMore,
+)
+
+let pagerObserver: IntersectionObserver | null = null
+
+function tryLoadMore() {
+  if (searchActive.value || !hasMore.value || loadingMore.value) return
+  if (viewArchived.value) chat.loadMoreArchived()
+  else chat.loadMoreSessions()
+}
+
+function observePager() {
+  pagerObserver?.disconnect()
+  pagerObserver = null
+  const el = pagerSentinel.value
+  if (!el || typeof IntersectionObserver === 'undefined') return
+  // rootMargin 提前 240px:用户快滚到底时就开始预取,避免出现"停一下才加载"
+  pagerObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((e) => e.isIntersecting)) tryLoadMore()
+    },
+    { rootMargin: '0px 0px 240px 0px' },
+  )
+  pagerObserver.observe(el)
+}
+
+onMounted(() => nextTick(observePager))
+// 切换 会话/归档 或列表结构变化后,哨兵位置变了,重新绑定观察
+watch([viewArchived, searchActive, () => displayed.value.length], () => nextTick(observePager))
+onBeforeUnmount(() => {
+  pagerObserver?.disconnect()
+  pagerObserver = null
+})
 
 async function newChat() {
   if (chat.isStreaming) {
-    const go = await confirmSwitch('新建会话')
+  const go = await confirmSwitch(t('sidebar2.newSession'))
     if (!go) return
   }
-  try {
-    const s = await withBusy('正在新建会话…', () => chat.createSession('New Chat'))
-    router.push(`/session/${s.id}`)
-  } catch (e: any) {
-    msg.error(e?.message || '新建会话失败')
-  }
+  // 只进入草稿态(欢迎页),不立即创建会话;首次发送消息时再创建
+  chat.startDraft()
+  emit('close-manage')
+  router.push('/')
 }
 
 /** 顶部模式切换:work=主工作区 */
 async function openSession(id: number) {
+  // 点击会话(含当前会话)时退出整页管理视图,切回聊天
+  emit('close-manage')
   if (id === chat.currentSessionId) {
     router.push(`/session/${id}`)
     return
   }
   if (chat.isStreaming) {
-    const go = await confirmSwitch('切换会话')
+  const go = await confirmSwitch(t('sidebar2.switchSession'))
     if (!go) return
   }
   router.push(`/session/${id}`)
@@ -144,9 +195,9 @@ function confirmSwitch(action: string): Promise<boolean> {
   return new Promise((resolve) => {
     dialog.warning({
       title: action,
-      content: '当前会话仍在生成中。切换后本会话的实时推送会中断(已在服务端执行的操作会继续完成),确认继续？',
-      positiveText: '继续',
-      negativeText: '取消',
+    content: t('sidebar2.switchContent'),
+    positiveText: t('sidebar2.confirm'),
+    negativeText: t('sidebar2.cancel'),
       positiveButtonProps: { type: 'primary' },
       onPositiveClick: () => resolve(true),
       onNegativeClick: () => resolve(false),
@@ -157,15 +208,15 @@ function confirmSwitch(action: string): Promise<boolean> {
 
 async function remove(id: number) {
   dialog.warning({
-    title: '删除会话',
-    content: '确定删除该会话？此操作不可恢复。',
-    positiveText: '删除',
-    negativeText: '取消',
+    title: t('sidebar2.delTitle'),
+    content: t('sidebar2.delContent'),
+    positiveText: t('sidebar2.del'),
+    negativeText: t('sidebar2.cancel'),
     positiveButtonProps: { type: 'primary' },
     onPositiveClick: async () => {
       try {
-        await withBusy('正在删除会话…', () => chat.deleteSession(id))
-        msg.success('已删除')
+    await withBusy(t('sidebar2.deleting'), () => chat.deleteSession(id))
+    msg.success(t('sidebar2.deleted'))
         if (chat.currentSessionId === null) router.push('/')
       } catch (e: any) { msg.error(e.message) }
     },
@@ -175,21 +226,21 @@ async function remove(id: number) {
 async function onPin(s: { id: number; pinned: number }) {
   try {
     await chat.pinSession(s.id, !s.pinned)
-    msg.success(s.pinned ? '已取消置顶' : '已置顶')
+  msg.success(s.pinned ? t('sidebar2.pinned_off') : t('sidebar2.pinned_on'))
   } catch (e: any) { msg.error(e.message) }
 }
 
 async function onArchive(s: { id: number; title: string }) {
   dialog.warning({
-    title: '归档会话',
-    content: `将「${s.title}」移入归档？归档后仍可在归档视图找回。`,
-    positiveText: '归档',
-    negativeText: '取消',
+    title: t('sidebar2.archTitle'),
+    content: t('sidebar2.archContent', { title: s.title }),
+    positiveText: t('sidebar2.archive'),
+    negativeText: t('sidebar2.cancel'),
     positiveButtonProps: { type: 'primary' },
     onPositiveClick: async () => {
       try {
-        await withBusy('正在归档会话…', () => chat.archiveSession(s.id))
-        msg.success('已归档')
+    await withBusy(t('sidebar2.archiving'), () => chat.archiveSession(s.id))
+    msg.success(t('sidebar2.archived'))
       } catch (e: any) { msg.error(e.message) }
     },
   })
@@ -197,8 +248,8 @@ async function onArchive(s: { id: number; title: string }) {
 
 async function onRestore(s: { id: number; title: string }) {
   try {
-    await withBusy('正在恢复会话…', () => chat.unarchiveSession(s.id))
-    msg.success('已取消归档')
+    await withBusy(t('sidebar2.unarchiving'), () => chat.unarchiveSession(s.id))
+    msg.success(t('sidebar2.unarchived'))
   } catch (e: any) { msg.error(e.message) }
 }
 
@@ -215,31 +266,31 @@ function onRename(s: { id: number; title: string }) {
 
 async function submitRename() {
   const v = renameValue.value.trim()
-  if (!v) { msg.warning('标题不能为空'); return }
+  if (!v) { msg.warning(t('sidebar2.nameEmpty')); return }
   if (!renameTarget.value) return
   try {
-    await withBusy('正在重命名…', () => chat.renameSession(renameTarget.value!.id, v))
-    msg.success('已重命名')
+    await withBusy(t('sidebar2.renaming'), () => chat.renameSession(renameTarget.value!.id, v))
+    msg.success(t('sidebar2.renamed'))
     renameVisible.value = false
   } catch (e: any) { msg.error(e.message) }
 }
 
 function onExport(s: { id: number; title: string }, format: 'md' | 'json' | 'pdf' | 'docx') {
   const labels: Record<string, string> = { md: 'Markdown', json: 'JSON', pdf: 'PDF', docx: 'Word' }
-  withBusy(`正在导出 ${labels[format] || format}…`, () => chat.exportSession(s.id, format)).catch((e: any) => msg.error(e.message))
+    withBusy(t('sidebar2.exporting', { label: labels[format] || format }), () => chat.exportSession(s.id, format)).catch((e: any) => msg.error(e.message))
 }
 
 async function onClear(s: { id: number; title: string }) {
   dialog.warning({
-    title: '清空会话',
-    content: `将清空「${s.title}」的所有聊天记录（会话保留）。确定继续？`,
-    positiveText: '清空',
-    negativeText: '取消',
+    title: t('sidebar2.clearTitle'),
+    content: t('sidebar2.clearContent', { title: s.title }),
+    positiveText: t('sidebar2.clear'),
+    negativeText: t('sidebar2.cancel'),
     positiveButtonProps: { type: 'primary' },
     onPositiveClick: async () => {
       try {
-        await withBusy('正在清空会话…', () => chat.clearSession(s.id))
-        msg.success('已清空')
+    await withBusy(t('sidebar2.clearing'), () => chat.clearSession(s.id))
+    msg.success(t('sidebar2.cleared'))
       } catch (e: any) { msg.error(e.message) }
     },
   })
@@ -249,39 +300,39 @@ async function onClear(s: { id: number; title: string }) {
 function menuOptions(s: { id: number; pinned?: number; title: string }) {
   if (viewArchived.value) {
     return [
-      { label: '总结会话', key: 'summarize' },
-      { label: '恢复', key: 'restore' },
-      { label: '重命名', key: 'rename' },
-      { label: '导出 Markdown', key: 'export-md' },
-      { label: '导出 JSON', key: 'export-json' },
-      { label: '导出 PDF', key: 'export-pdf' },
-      { label: '导出 Word', key: 'export-docx' },
+    { label: t('sidebar2.actSummarize'), key: 'summarize' },
+    { label: t('sidebar2.actRestore'), key: 'restore' },
+    { label: t('sidebar2.actRename'), key: 'rename' },
+    { label: t('sidebar2.actExportMd'), key: 'export-md' },
+    { label: t('sidebar2.actExportJson'), key: 'export-json' },
+    { label: t('sidebar2.actExportPdf'), key: 'export-pdf' },
+    { label: t('sidebar2.actExportDocx'), key: 'export-docx' },
       { type: 'divider' as const, key: 'd1' },
-      { label: '删除', key: 'delete' },
+    { label: t('sidebar2.actDelete'), key: 'delete' },
     ]
   }
   return [
-    { label: '总结会话', key: 'summarize' },
-    { label: s.pinned ? '取消置顶' : '置顶', key: 'pin' },
-    { label: '重命名', key: 'rename' },
-    { label: '导出 Markdown', key: 'export-md' },
-    { label: '导出 JSON', key: 'export-json' },
-    { label: '导出 PDF', key: 'export-pdf' },
-    { label: '导出 Word', key: 'export-docx' },
+    { label: t('sidebar2.actSummarize'), key: 'summarize' },
+    { label: s.pinned ? t('sidebar2.actUnpin') : t('sidebar2.actPin'), key: 'pin' },
+    { label: t('sidebar2.actRename'), key: 'rename' },
+    { label: t('sidebar2.actExportMd'), key: 'export-md' },
+    { label: t('sidebar2.actExportJson'), key: 'export-json' },
+    { label: t('sidebar2.actExportPdf'), key: 'export-pdf' },
+    { label: t('sidebar2.actExportDocx'), key: 'export-docx' },
     { type: 'divider' as const, key: 'd1' },
-    { label: '归档', key: 'archive' },
-    { label: '清空记录', key: 'clear' },
-    { label: '删除', key: 'delete' },
+    { label: t('sidebar2.actArchive'), key: 'archive' },
+    { label: t('sidebar2.actClear'), key: 'clear' },
+    { label: t('sidebar2.actDelete'), key: 'delete' },
   ]
 }
 
 async function onSummarize(s: { id: number; title: string }) {
   try {
-    msg.info('正在整理会话内容并生成总结,请稍候…')
+    msg.info(t('sidebar2.summarizing'))
     const s2 = await chat.summarizeSession(s.id, s.title)
     router.push(`/session/${s2.id}`)
   } catch (e: any) {
-    msg.error(e?.message || '总结失败')
+    msg.error(e?.message || t('sidebar2.summarizeFailed'))
   }
 }
 
@@ -304,46 +355,50 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
 
 <template>
   <n-layout-sider :width="260" :collapsed-width="0" collapsible :collapsed="props.collapsed" :show-trigger="false" collapse-mode="width" content-style="display:flex; flex-direction:column; background: var(--sidebar-bg); overflow:hidden" @update:collapsed="emit('update:collapsed', $event)">
-    <div class="mode-tabs">
-      <span class="mode-toggle" title="收起侧边栏" @click="toggleCollapsed">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/></svg>
-      </span>
-      <span class="mode-tab active">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-        Work
+    <!-- 品牌区(参考主视图设计) -->
+    <div class="brand">
+      <div class="brand-logo">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      </div>
+      <div class="brand-text">
+        <div class="brand-name">{{ t('app.name') }}</div>
+        <div class="brand-sub">{{ t('app.sub') }}</div>
+      </div>
+      <span class="brand-collapse" role="button" tabindex="0" :title="t('sidebar2.collapseTitle')" :aria-label="t('sidebar2.collapseTitle')" @click="toggleCollapsed" @keydown.enter.prevent="toggleCollapsed" @keydown.space.prevent="toggleCollapsed">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/></svg>
       </span>
     </div>
 
     <div class="nav-section">
-      <div class="nav-item" @click="emit('open-dashboard')">
+      <div class="nav-item" :class="{ active: managePage === 'dashboard' }" @click="emit('open-dashboard')">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
-        <span>驾驶舱</span>
+        <span>{{ t('nav.dashboard') }}</span>
       </div>
       <div class="nav-item" @click="newChat">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        <span>新建对话</span>
+        <span>{{ t('nav.newChat') }}</span>
       </div>
-      <div class="nav-item" @click="emit('open-plugin-market')">
+      <div class="nav-item" :class="{ active: managePage === 'skills' }" @click="emit('open-plugin-market')">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
-        <span>技能市场</span>
+        <span>{{ t('nav.pluginMarket') }}</span>
       </div>
-      <div class="nav-item" @click="emit('open-automation')">
+      <div class="nav-item" :class="{ active: managePage === 'automation' }" @click="emit('open-automation')">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-        <span>自动化</span>
+        <span>{{ t('nav.automation') }}</span>
       </div>
-      <div class="nav-item" @click="emit('open-template-lib')">
+      <div class="nav-item" :class="{ active: managePage === 'templates' }" @click="emit('open-template-lib')">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-        <span>模板库</span>
+        <span>{{ t('nav.templateLib') }}</span>
       </div>
-      <div class="nav-item" @click="emit('open-mcp')">
+      <div class="nav-item" :class="{ active: managePage === 'tools' }" @click="emit('open-mcp')">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
-        <span>工具库</span>
+        <span>{{ t('nav.tools') }}</span>
       </div>
     </div>
 
     <div class="session-section">
       <div class="section-header">
-        <span class="section-title">任务列表</span>
+        <span class="section-title">{{ t('sidebar.tasks') }}</span>
       </div>
 
       <div class="search-box">
@@ -351,7 +406,7 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
           v-model:value="searchQuery"
           size="small"
           clearable
-          placeholder="搜索会话…"
+          :placeholder="t('sidebar.searchPlaceholder')"
           @update:value="onSearchInput"
           @clear="clearSearch"
         >
@@ -366,12 +421,12 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
           class="tab"
           :class="{ active: !viewArchived }"
           @click="onViewArchived(false)"
-        >会话</span>
+        >{{ t('sidebar.sessions') }}</span>
         <span
           class="tab"
           :class="{ active: viewArchived }"
           @click="onViewArchived(true)"
-        >归档{{ chat.archivedSessions.length ? ` (${chat.archivedSessions.length})` : '' }}</span>
+        >{{ t('sidebar.archived') }}{{ chat.archivedSessions.length ? ` (${chat.archivedSessions.length})` : '' }}</span>
       </div>
 
       <div class="session-list">
@@ -384,15 +439,15 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
             :class="{ active: s.id === chat.currentSessionId }"
             @click="openSession(s.id)"
           >
-            <span v-if="!viewArchived && s.pinned" class="pin-mark" title="已置顶">📌</span>
+        <span v-if="!viewArchived && s.pinned" class="pin-mark" :title="t('sidebar2.pinMark')">📌</span>
             <span class="title" :title="s.agent ? `agent: ${s.agent}` : undefined">{{ s.title }}</span>
-            <n-tag v-if="searchActive && s.archived" size="tiny" :bordered="false" class="arch-tag">归档</n-tag>
+      <n-tag v-if="searchActive && s.archived" size="tiny" :bordered="false" class="arch-tag">{{ t('sidebar2.archTag') }}</n-tag>
             <span class="item-time">{{ fmtRelativeTime(s.updatedAt) }}</span>
             <div class="item-ops" @click.stop>
               <button
                 v-if="!viewArchived"
                 class="op-btn"
-                :title="s.pinned ? '取消置顶' : '置顶'"
+        :title="s.pinned ? t('sidebar2.unpinTitle') : t('sidebar2.pinTitle')"
                 @click="onPin(s)"
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16h14v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z"/></svg>
@@ -400,7 +455,7 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
               <button
                 v-if="!viewArchived"
                 class="op-btn"
-                title="重命名"
+        :title="t('sidebar2.newSessionTitle')"
                 @click="onRename(s)"
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
@@ -417,14 +472,20 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
             </div>
           </div>
         </template>
+        <!-- 滚动分页哨兵:进入视口即自动续一页(rootMargin 提前 240px 预取),取代原来的「加载更多」按钮 -->
+        <div v-if="!searchActive" ref="pagerSentinel" class="pager-sentinel">
+          <span v-if="loadingMore" class="pager-loading">
+            <span class="pager-spinner" />{{ t('sidebar.loading') }}
+          </span>
+        </div>
         <n-spin v-if="searchActive && searching" size="small" style="margin: 24px auto; display: block" />
         <n-empty
           v-else-if="!displayed.length"
-          :description="searchActive ? '未找到匹配的会话' : (viewArchived ? '暂无归档会话' : '暂无会话')"
+          :description="searchActive ? t('sidebar.noMatch') : (viewArchived ? t('sidebar.noArchived') : t('sidebar.noSessions'))"
           style="margin-top: 40px"
         >
           <template #extra>
-            <n-button v-if="!searchActive && !viewArchived" size="small" type="primary" @click="newChat">新建会话</n-button>
+            <n-button v-if="!searchActive && !viewArchived" size="small" type="primary" @click="newChat">{{ t('sidebar.newSession') }}</n-button>
           </template>
         </n-empty>
         <transition name="sidebusy-fade">
@@ -439,21 +500,21 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
     <n-modal
       v-model:show="renameVisible"
       preset="card"
-      title="重命名会话"
+        :title="t('sidebar2.renameTitle')"
       :style="{ width: '380px', maxWidth: '92vw' }"
       :mask-closable="false"
       :bordered="false"
     >
       <n-input
         v-model:value="renameValue"
-        placeholder="输入新标题"
+        :placeholder="t('sidebar2.renamePlaceholder')"
         :maxlength="100"
         @keyup.enter="submitRename"
       />
       <template #footer>
         <div style="display:flex; justify-content:flex-end; gap:8px">
-          <n-button @click="renameVisible = false">取消</n-button>
-          <n-button type="primary" @click="submitRename">保存</n-button>
+        <n-button @click="renameVisible = false">{{ t('sidebar2.cancel') }}</n-button>
+        <n-button type="primary" @click="submitRename">{{ t('sidebar2.ok') }}</n-button>
         </div>
       </template>
     </n-modal>
@@ -461,68 +522,50 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
 </template>
 
 <style scoped>
-.mode-tabs {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-soft);
+/* 品牌区 */
+.brand { display: flex; align-items: center; gap: 10px; padding: 14px 14px 12px; }
+.brand-logo {
+  width: 32px; height: 32px; border-radius: 10px; flex-shrink: 0;
+  background: linear-gradient(135deg, var(--accent), #7a5cff);
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 12px rgba(79, 110, 247, .4);
 }
-.mode-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--control-h); height: var(--control-h);
-  border-radius: var(--radius-sm);
-  margin-right: 2px;
-  flex-shrink: 0;
-  cursor: pointer;
-  color: var(--text-3);
-  transition: color var(--motion-fast) var(--ease-standard), background-color var(--motion-fast) var(--ease-standard);
+.brand-text { flex: 1; min-width: 0; }
+.brand-name { font-size: 16px; font-weight: 700; color: var(--text); letter-spacing: -.2px; line-height: 1.2; }
+.brand-sub { font-size: 11px; color: var(--text-3); }
+.brand-collapse {
+  flex-shrink: 0; width: 28px; height: 28px; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--text-3); cursor: pointer; transition: background .15s, color .15s;
 }
-.mode-toggle:hover { color: var(--accent); background: var(--fill-0); }
-.mode-tab {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--text-3);
-  padding: 6px 12px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: background-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
-}
-.mode-tab:hover {
-  background: var(--fill-0);
-  color: var(--text-2);
-}
-.mode-tab.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 500;
-}
+.brand-collapse:hover { background: var(--fill-0); color: var(--text); }
+/* 新建对话:渐变主按钮样式(参考主视图) */
 .nav-section {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-soft);
+  padding: 6px 12px 12px;
 }
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: var(--radius-sm);
+  gap: 11px;
+  padding: 9px 11px;
+  border-radius: 10px;
   cursor: pointer;
-  color: var(--text);
-  font-size: 14px;
+  color: var(--text-2);
+  font-size: 13.5px;
   transition: background-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
 }
 .nav-item:hover {
   background: var(--fill-0);
+  color: var(--text);
+}
+.nav-item.active {
+  background: var(--accent-soft);
   color: var(--accent-text);
+  font-weight: 600;
 }
 .nav-item svg {
   flex-shrink: 0;
-  opacity: 0.85;
+  opacity: 0.9;
 }
 .session-section {
   flex: 1;
@@ -537,31 +580,34 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
   padding: 12px 16px 8px;
 }
 .section-title {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .4px;
+  text-transform: uppercase;
   color: var(--text-3);
 }
 .list-tabs {
   display: flex;
-  gap: 4px;
-  padding: 0 16px 8px;
+  gap: 6px;
+  padding: 2px 16px 10px;
 }
 .list-tabs .tab {
-  font-size: 12px;
-  color: var(--text-3);
-  padding: 4px 10px;
-  border-radius: 12px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  padding: 4px 11px;
+  border-radius: 20px;
   cursor: pointer;
+  border: 1px solid transparent;
+  background: var(--fill-0);
   transition: background-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
 }
 .list-tabs .tab:hover {
-  background: var(--fill-0);
-  color: var(--text-2);
+  color: var(--text);
 }
 .list-tabs .tab.active {
   background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 500;
+  color: var(--accent-text);
+  font-weight: 600;
 }
 .session-list {
   flex: 1;
@@ -569,6 +615,22 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
   padding: 0 8px;
   position: relative;
 }
+/* 滚动分页哨兵:无更多内容时高度为 0(不占位),加载中显示细 spinner */
+.pager-sentinel {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 0; padding: 0;
+}
+.pager-loading {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 10px 0 14px;
+  color: var(--text-3); font-size: 12px;
+}
+.pager-spinner {
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid var(--border-soft); border-top-color: var(--accent);
+  animation: pager-spin .7s linear infinite;
+}
+@keyframes pager-spin { to { transform: rotate(360deg); } }
 .side-busy {
   position: absolute;
   inset: 0;
@@ -608,15 +670,17 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 8px 12px;
-  border-radius: var(--radius-sm);
+  padding: 8px 11px;
+  border-radius: 10px;
   cursor: pointer;
   margin-bottom: 2px;
   position: relative;
-  transition: background-color var(--motion-fast) var(--ease-standard);
+  color: var(--text-2);
+  transition: background-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
 }
 .session-item:hover {
   background: var(--fill-0);
+  color: var(--text);
 }
 /* Semi 规范:按下态用 fill 阶梯,不做 scale 形变 */
 .session-item:active {
@@ -626,8 +690,8 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
   background: var(--accent-soft);
 }
 .session-item.active .title {
-  color: var(--text);
-  font-weight: 500;
+  color: var(--accent-text);
+  font-weight: 600;
 }
 .session-item .title {
   overflow: hidden;
@@ -635,8 +699,8 @@ function onMenuSelect(key: string, s: { id: number; pinned?: number; title: stri
   white-space: nowrap;
   flex: 1;
   min-width: 0;
-  color: var(--text);
-  font-size: 14px;
+  color: inherit;
+  font-size: 13.5px;
 }
 .search-box {
   padding: 0 16px 8px;

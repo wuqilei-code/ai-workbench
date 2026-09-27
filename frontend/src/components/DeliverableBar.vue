@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 /** 结果文件卡片区:展示 AI 本 turn 产出的交付文件,点击即下载。
  *  数据来源:AssistantTurn 通过 extractDeliverables(turn) 解析 AI 回复里的
  *  `[结果文件] <路径>` 标记得到 items,再交给本组件渲染。 */
@@ -31,17 +34,17 @@ function fileColor(name: string): string {
     <div class="deliverable-header">
       <span class="deliverable-title">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
-        结果文件
+        {{ t('deliverable.files') }}
       </span>
       <button
         v-if="items.length > 1"
         class="download-all-btn"
         :disabled="busy"
-        :title="busy ? '打包中…' : '打包下载本 turn 全部结果文件'"
+        :title="busy ? t('deliverable.packing') : t('deliverable.packTitle')"
         @click="$emit('downloadAll')"
       >
         <svg v-if="!busy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        {{ busy ? '打包中…' : '打包下载' }}
+        {{ busy ? t('deliverable.packing') : t('deliverable.packDownload') }}
       </button>
     </div>
     <div class="deliverable-list">
@@ -50,7 +53,7 @@ function fileColor(name: string): string {
         :key="item.path"
         class="deliverable-item"
         :class="{ 'item-busy': downloadingPath === item.path }"
-        :title="`预览 ${item.path}`"
+        :title="t('deliverable.previewTitle', { path: item.path })"
         @click="$emit('preview', item.path)"
       >
         <span class="deliverable-icon">
@@ -60,7 +63,7 @@ function fileColor(name: string): string {
         <span
           class="deliverable-action"
           :class="{ spin: downloadingPath === item.path }"
-          title="下载"
+          :title="t('deliverable.download')"
           @click.stop="$emit('download', item.path)"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>

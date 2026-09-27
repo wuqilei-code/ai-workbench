@@ -2,6 +2,7 @@
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import { fileApi } from '@/api/files'
 import { useMessage, useDialog } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 import { useChatStore } from '@/stores/chat'
 import TextPromptModal from './TextPromptModal.vue'
 import type { FileNode } from '@/types'
@@ -32,6 +33,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ (e: 'askAI', path: string): void }>()
 
 const msg = useMessage()
+const { t } = useI18n()
 const dialog = useDialog()
 const chat = useChatStore()
 const nodes = ref<FileNode[]>([])
@@ -199,7 +201,7 @@ async function createFileWith(name: string) {
   const rel = currentPath.value ? `${currentPath.value}/${name}` : name
   try {
     await fileApi.write(abs(rel), '')
-    msg.success('已创建')
+    msg.success(t('files.copied'))
     await load(currentPath.value)
   } catch (e: any) { msg.error(e.message) }
 }
@@ -208,7 +210,7 @@ async function createDirWith(name: string) {
   const rel = currentPath.value ? `${currentPath.value}/${name}` : name
   try {
     await fileApi.mkdir(abs(rel))
-    msg.success('已创建目录')
+    msg.success(t('files.dirCreated'))
     await load(currentPath.value)
   } catch (e: any) { msg.error(e.message) }
 }
@@ -229,23 +231,23 @@ async function submitSkillForm() {
   const description = skForm.value.description.trim()
   const icon = skForm.value.icon.trim()
   if (!NAME_RE.test(name) || name.length > 64) {
-    msg.error('技能名不合法:仅小写字母/数字,单连字符分隔,1-64 字符')
+    msg.error(t('files.nameInvalid'))
     return
   }
   // 重名检查(在 root 下)
   try {
     const existing = await fileApi.list(abs(''))
     if (existing.some((n) => n.name === name && n.directory)) {
-      msg.error(`技能「${name}」已存在`)
+      msg.error(t('files.copyDirFailed', { name }))
       return
     }
   } catch { /* 读取失败时忽略,交给后续 mkdir/write 报错 */ }
   if (!description) {
-    msg.error('描述不能为空')
+    msg.error(t('files.nameEmpty'))
     return
   }
   if (description.length > 1024) {
-    msg.error('描述过长(最多 1024 字符)')
+    msg.error(t('files.nameTooLong'))
     return
   }
   skFormShow.value = false
@@ -256,12 +258,12 @@ async function submitSkillForm() {
       `---\nname: ${name}\ndescription: ${description.replace(/\n/g, ' ')}${fmIcon}\n---\n\n` +
       `## What I do\n- \n\n## When to use me\n- \n`
     await fileApi.write(`${abs(name)}/SKILL.md`, md)
-    msg.success(`已创建技能「${name}」`)
+    msg.success(t('files.skillCreated', { name }))
     skillMetaCacheKey = '' // 强制下次加载重读元信息
     clearEditor()
     await load(name)
   } catch (e: any) {
-    msg.error(e?.message || '创建技能失败')
+    msg.error(e?.message || t('files.createFailed'))
   }
 }
 
@@ -269,19 +271,19 @@ async function downloadNode(node: FileNode) {
   if (node.directory) return
   try {
     await fileApi.download(node.path)
-  } catch (e: any) { msg.error(e?.message || '下载失败') }
+  } catch (e: any) { msg.error(e?.message || t('files.uploadFailed')) }
 }
 
 async function deleteNode(node: FileNode) {
   dialog.warning({
-    title: '删除确认',
-    content: `确认删除「${node.name}」?${node.directory ? '该目录及其内容将被删除。' : ''}`,
-    positiveText: '删除',
-    negativeText: '取消',
+    title: t('files.deleteTitle'),
+    content: t('files.deleteContent', { name: node.name, tip: node.directory ? t('files.deleteDirTip') : '' }),
+    positiveText: t('files.deleteBtn'),
+    negativeText: t('files.cancel'),
     onPositiveClick: async () => {
       try {
         await fileApi.delete(node.path)
-        msg.success('已删除')
+        msg.success(t('files.deleted'))
         if (selectedFile.value === node.path) {
           selectedFile.value = null
         }
@@ -313,9 +315,9 @@ function closeContextMenu() {
 async function copyPath(node: FileNode) {
   try {
     await navigator.clipboard.writeText(node.path)
-    msg.success('已复制路径')
+    msg.success(t('files.pathCopied'))
   } catch (e: any) {
-    msg.error(e?.message || '复制失败')
+    msg.error(e?.message || t('files.copied'))
   }
 }
 
@@ -324,7 +326,7 @@ function askAIMenu(node: FileNode) {
   // 经 store 中转(绕开组件事件名匹配),ChatInput 监听后挂附件并填提示词
   chat.attachFile(node.path)
   emit('askAI', node.path)
-  msg.success(`已把 ${node.path} 填入输入框,补充问题后发送即可`)
+  msg.success(t('files.addedForAnalysis', { path: node.path }))
 }
 
 function triggerUpload() {
@@ -349,7 +351,7 @@ function fmtDate(ts: number): string {
   const yest = new Date(now)
   yest.setDate(now.getDate() - 1)
   const isYesterday = d.getFullYear() === yest.getFullYear() && d.getMonth() === yest.getMonth() && d.getDate() === yest.getDate()
-  if (isYesterday) return '昨天'
+  if (isYesterday) return t('files.yesterday')
   if (d.getFullYear() === now.getFullYear()) return `${p(d.getMonth() + 1)}-${p(d.getDate())}`
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
@@ -370,8 +372,8 @@ async function handleUpload(e: Event) {
         fail++
       }
     }
-    if (fail === 0) msg.success(`已上传 ${ok} 个文件`)
-    else msg.warning(`上传完成:${ok} 成功,${fail} 失败`)
+    if (fail === 0) msg.success(t('files.uploaded', { ok }))
+    else msg.warning(t('files.uploadPartial', { ok, fail }))
     await load(currentPath.value)
   } finally {
     uploading.value = false
@@ -406,7 +408,7 @@ function onSearchInput() {
     try {
       searchResults.value = await fileApi.search(props.root, q)
     } catch (e: any) {
-      msg.error(e?.message || '搜索失败')
+      msg.error(e?.message || t('fileTree2.searchFailed'))
       searchResults.value = []
     } finally {
       searching.value = false
@@ -434,8 +436,8 @@ const isSearchMode = computed(() => searchResults.value !== null)
 
 /** 工具栏「+」下拉:skillsMode 追加新建技能 */
 const createOptions = computed(() => {
-  const opts = [{ key: 'file', label: '新建文件' }, { key: 'dir', label: '新建目录' }]
-  return props.skillsMode ? [{ key: 'skill', label: '新建技能' }, { type: 'divider', key: 'd1' }, ...opts] : opts
+  const opts = [{ key: 'file', label: t('files.newFile') }, { key: 'dir', label: t('files.newDir') }]
+  return props.skillsMode ? [{ key: 'skill', label: t('files.newSkill') }, { type: 'divider', key: 'd1' }, ...opts] : opts
 })
 function onCreateSelect(key: string | number) {
   if (key === 'skill') openSkillForm()
@@ -534,19 +536,19 @@ onBeforeUnmount(() => {
 <template>
   <div class="file-tree">
     <div class="toolbar">
-      <button class="tb-btn" :disabled="!currentPath" title="上级目录" @click="up">
+      <button class="tb-btn" :disabled="!currentPath" :title="t('files.upDir')" @click="up">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
       </button>
-      <div class="crumb" :title="isSearchMode ? `搜索:${searchQuery}` : displayPath">
-        <template v-if="isSearchMode">搜索「{{ searchQuery }}」· {{ displayNodes.length }} 个结果</template>
+      <div class="crumb" :title="isSearchMode ? t('files.searchCrumb', { q: searchQuery }) : displayPath">
+        <template v-if="isSearchMode">{{ t('files.searchResult', { q: searchQuery, n: displayNodes.length }) }}</template>
         <template v-else>{{ displayPath }}</template>
       </div>
       <n-dropdown trigger="click" :options="createOptions" @select="onCreateSelect">
-        <button class="tb-btn" title="新建">
+        <button class="tb-btn" :title="t('files.newEntry')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
         </button>
       </n-dropdown>
-      <button class="tb-btn" :class="{ busy: uploading }" title="上传文件" @click="triggerUpload">
+      <button class="tb-btn" :class="{ busy: uploading }" :title="t('files.uploadFiles')" @click="triggerUpload">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
       </button>
       <input ref="fileInput" type="file" multiple class="hidden-input" @change="handleUpload" />
@@ -555,7 +557,7 @@ onBeforeUnmount(() => {
       v-model:value="searchQuery"
       size="small"
       clearable
-      placeholder="搜索文件名…"
+      :placeholder="t('files.searchPlaceholder')"
       @input="onSearchInput"
       @clear="onSearchInput"
     >
@@ -564,7 +566,7 @@ onBeforeUnmount(() => {
       </template>
     </n-input>
     <div v-if="skillsMode" class="hint">
-      技能 = 目录 + <code>SKILL.md</code>;进入技能目录后可「新建目录/新建文件/上传」添加脚本等扩展,智能体经 bash 工具按相对路径执行。
+      {{ t('files.skillHint') }}
     </div>
     <n-spin :show="loading || searching">
       <div v-for="n in displayNodes" :key="n.path" class="node" :class="{ 'ai-changed': isAiChanged(n), selected: selectedFile === n.path }">
@@ -574,25 +576,25 @@ onBeforeUnmount(() => {
             <svg v-else-if="n.directory" class="dir-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
             <svg v-else class="file-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
           </span>
-          <span v-if="isAiChanged(n)" class="ai-mark" title="本轮 AI 改动">✦</span>
+<span v-if="isAiChanged(n)" class="ai-mark" :title="t('files.aiChanged')">?</span>
           <span class="node-name" :class="{ dir: n.directory }" :title="skillDisplay(n) ? `${skillDisplay(n)!.title} (${n.name})` : n.name">{{ skillDisplay(n) ? skillDisplay(n)!.title : n.name }}</span>
           <span v-if="skillDisplay(n)" class="skill-sub" :title="n.name">/{{ n.name }}</span>
           <span v-if="isSearchMode" class="node-sub" :title="relFromAbs(n.path)">{{ relFromAbs(n.path) }}</span>
           <span v-if="!n.directory && !isSearchMode" class="node-size">{{ fmtSize(n.size) }}</span>
         </div>
-        <div class="node-date" v-if="!isSearchMode" :title="`创建于 ${fmtTime(n.created)}`">{{ fmtDate(n.created) }}</div>
+        <div class="node-date" v-if="!isSearchMode" :title="t('files.createdAt', { t: fmtTime(n.created) })">{{ fmtDate(n.created) }}</div>
         <div class="node-ops">
           <button
             v-if="!n.directory"
             class="op-btn"
-            title="下载"
+            :title="t('fileTree2.download')"
             @click.stop="downloadNode(n)"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           </button>
           <button
             class="op-btn op-btn-danger"
-            title="删除"
+            :title="t('files.deleteBtn')"
             @click.stop="deleteNode(n)"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -602,7 +604,7 @@ onBeforeUnmount(() => {
       <n-empty
         v-if="!displayNodes.length && !loading && !searching"
         size="small"
-        :description="isSearchMode ? '无匹配文件' : (skillsMode ? '尚无技能,点「新建技能」创建' : '空目录')"
+        :description="isSearchMode ? t('files.noMatch') : (skillsMode ? t('files.noFiles') : t('files.dirEmpty'))"
       />
     </n-spin>
 
@@ -616,15 +618,15 @@ onBeforeUnmount(() => {
       >
         <div v-if="!ctxNode.directory" class="ctx-item" @click="downloadNode(ctxNode); closeContextMenu()">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          <span>下载</span>
+          <span>{{ t('files.download') }}</span>
         </div>
         <div class="ctx-item" @click="askAIMenu(ctxNode); closeContextMenu()">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          <span>问 AI</span>
+          <span>{{ t('files.askAi') }}</span>
         </div>
         <div class="ctx-item" @click="copyPath(ctxNode); closeContextMenu()">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          <span>复制路径</span>
+          <span>{{ t('files.copyPath') }}</span>
         </div>
       </div>
     </Teleport>
@@ -640,7 +642,7 @@ onBeforeUnmount(() => {
       <template #header>
         <div class="fp-modal-title">
           <span class="fp-modal-icon">{{ previewPath ? getFileIcon(previewPath) : '📄' }}</span>
-          <span>{{ previewPath ? previewPath.split(/[\\/]/).pop() : '预览' }}</span>
+<span>{{ previewPath ? previewPath.split(/[\\/]/).pop() : t('files.preview') }}</span>
         </div>
       </template>
       <FilePreview
@@ -652,7 +654,7 @@ onBeforeUnmount(() => {
       <button
         v-if="previewList.length > 1 && previewIndex() > 0"
         class="fp-nav fp-nav--left"
-        title="上一个文件"
+        :title="t('files.prevFile')"
         @click="stepPreview(-1)"
       >
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
@@ -660,19 +662,19 @@ onBeforeUnmount(() => {
       <button
         v-if="previewList.length > 1 && previewIndex() < previewList.length - 1"
         class="fp-nav fp-nav--right"
-        title="下一个文件"
+        :title="t('files.nextFile')"
         @click="stepPreview(1)"
       >
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
       </button>
-      <div class="fp-hint">Esc 关闭 · ←/→ 切换同目录文件</div>
+      <div class="fp-hint">{{ t('files.fpHint') }}</div>
     </n-modal>
 
     <!-- 新建文件/目录 输入弹窗 -->
     <TextPromptModal
       :show="fileNamePromptShow"
-      :title="fileNamePrompt === 'dir' ? '新建目录' : '新建文件'"
-      :placeholder="fileNamePrompt === 'dir' ? '输入目录名(如 scripts、data)' : '输入文件名(如 index.md、config.json)'"
+      :title="fileNamePrompt === 'dir' ? t('files.newDir') : t('files.newFile')"
+:placeholder="fileNamePrompt === 'dir' ? t('files.dirPlaceholder') : t('files.filePlaceholder')"
       @update:show="fileNamePromptShow = false"
       @confirm="onFileNameConfirm"
       @cancel="fileNamePromptShow = false"
@@ -682,7 +684,7 @@ onBeforeUnmount(() => {
     <n-modal
       v-model:show="skFormShow"
       preset="card"
-      title="新建技能"
+      :title="t('files.newSkill')"
       style="width: 460px; max-width: 92vw"
       :mask-closable="true"
       :close-on-esc="true"
@@ -690,23 +692,23 @@ onBeforeUnmount(() => {
     >
       <div class="skf-body">
         <div class="skf-row">
-          <span class="skf-label">技能名</span>
-          <n-input v-model:value="skForm.name" placeholder="小写字母/数字/连字符,如 note-summarizer" size="small" />
+          <span class="skf-label">{{ t('files.skillName') }}</span>
+          <n-input v-model:value="skForm.name" :placeholder="t('files.skillNamePlaceholder')" size="small" />
         </div>
         <div class="skf-row">
-          <span class="skf-label">描述</span>
-          <n-input v-model:value="skForm.description" type="textarea" :rows="2" placeholder="一句话说明做什么、何时使用" size="small" />
+          <span class="skf-label">{{ t('files.skillDesc') }}</span>
+          <n-input v-model:value="skForm.description" type="textarea" :rows="2" :placeholder="t('files.skillDescPlaceholder')" size="small" />
         </div>
         <div class="skf-row">
-          <span class="skf-label">图标(可选)</span>
-          <n-input v-model:value="skForm.icon" placeholder="填一个 emoji,如 🤖;留空自动分配" size="small" />
+          <span class="skf-label">{{ t('files.skillIcon') }}</span>
+          <n-input v-model:value="skForm.icon" :placeholder="t('files.skillIconPlaceholder')" size="small" />
         </div>
-        <p class="skf-hint">技能 = 目录 + SKILL.md;进入目录后可「新建文件/上传」添加脚本。</p>
+        <p class="skf-hint">{{ t('files.skillHint') }}</p>
       </div>
       <template #footer>
         <div class="skf-footer">
-          <n-button size="small" quaternary @click="skFormShow = false">取消</n-button>
-          <n-button size="small" type="primary" :disabled="!skForm.name.trim() || !skForm.description.trim()" @click="submitSkillForm">创建</n-button>
+          <n-button size="small" quaternary @click="skFormShow = false">{{ t('files.cancel') }}</n-button>
+          <n-button size="small" type="primary" :disabled="!skForm.name.trim() || !skForm.description.trim()" @click="submitSkillForm">{{ t('files.create') }}</n-button>
         </div>
       </template>
     </n-modal>
@@ -750,11 +752,12 @@ onBeforeUnmount(() => {
 /* 文件行 */
 .node {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 6px 8px; border-radius: 8px; gap: 6px;
+  padding: 7px 10px; border-radius: 9px; gap: 6px;
   position: relative;
-  transition: background .12s;
+  font-size: 12.5px; color: var(--text-2);
+  transition: background-color .12s, color .12s;
 }
-.node:hover { background: var(--surface-hover); }
+.node:hover { background: var(--fill-0); color: var(--text); }
 .node.selected .node-main { background: var(--accent-soft); border-radius: 6px; }
 .node.selected .node-main .node-name { color: var(--accent-text); font-weight: 600; }
 /* AI 改动:行左侧高亮竖条 */
@@ -763,16 +766,16 @@ onBeforeUnmount(() => {
   width: 2px; border-radius: 2px; background: var(--warn);
 }
 .node-main {
-  display: flex; align-items: center; gap: 7px;
-  cursor: pointer; flex: 1; min-width: 0; padding: 2px 5px;
-  border-radius: 6px;
+  display: flex; align-items: center; gap: 9px;
+  cursor: pointer; flex: 1; min-width: 0; padding: 2px 4px;
+  border-radius: 7px;
 }
 .node-icon { flex-shrink: 0; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; }
-.node-icon .dir-icon { color: var(--accent); }
+.node-icon .dir-icon { color: var(--accent-text); }
 .node-icon .file-icon { color: var(--text-3); }
 .node-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ai-mark { color: var(--warn); font-size: 11px; flex-shrink: 0; }
-.node-name.dir { font-weight: 600; }
+.node-name.dir { font-weight: 500; }
 .node-size { color: var(--text-3); font-size: 11px; flex-shrink: 0; margin-left: auto; }
 .node-date { color: var(--text-3); font-size: 11px; flex-shrink: 0; white-space: nowrap; min-width: 34px; text-align: right; }
 .node-ops {

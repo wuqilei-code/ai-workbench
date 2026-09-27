@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { fileApi } from '@/api/files'
 import { useMessage } from 'naive-ui'
 import { extToKind, extToLang, EDITABLE_KINDS, BINARY_KINDS, fmtSize } from './ext'
@@ -15,6 +16,7 @@ import PreviewPptx from './PreviewPptx.vue'
 import PreviewExcalidraw from './PreviewExcalidraw.vue'
 import PreviewUnsupported from './PreviewUnsupported.vue'
 
+const { t } = useI18n()
 const props = withDefaults(defineProps<{ path: string; textContent?: string; size?: number; /** 隐藏工具栏左侧文件信息(由外层 modal 标题提供) */ hideFileInfo?: boolean }>(), {
   hideFileInfo: false,
 })
@@ -59,15 +61,45 @@ const kindIcon = computed(() => {
   }
   return map[kind.value] || '📄'
 })
-/** 文本预览上限:超过部分截断展示(避免大文件高亮/渲染卡顿),提示需下载查看完整内容 */
-const MAX_TEXT_CHARS = 1_500_000
-const truncated = computed(() => displayText.value.length > MAX_TEXT_CHARS)
-const viewText = computed(() => (truncated.value ? displayText.value.slice(0, MAX_TEXT_CHARS) : displayText.value))
+/** 文本类内联预览控制:
+ *  - 代码/文档的渲染字符上限更小,避免大文件布局与高亮卡顿;
+ *  - 已知字节大小超过 MAX_INLINE_BYTES 时默认不加载全文,由用户手动选择预览。 */
+const MAX_TEXT_CHARS = 300_000
+const MAX_CODE_CHARS = 150_000
+const MAX_INLINE_BYTES = 1_000_000
+
+const charCap = computed(() => {
+  const k = kind.value
+  return (k === 'code' || k === 'markdown' || k === 'excalidraw') ? MAX_CODE_CHARS : MAX_TEXT_CHARS
+})
+const truncated = computed(() => displayText.value.length > charCap.value)
+const viewText = computed(() => (truncated.value ? displayText.value.slice(0, charCap.value) : displayText.value))
+
+/** 超大文本/代码文件:默认不加载(避免浏览器卡死),用户可手动选择预览 */
+const forcePreview = ref(false)
+const tooLarge = computed(() =>
+  !isBinary.value &&
+  props.textContent == null &&
+  (props.size ?? 0) > MAX_INLINE_BYTES &&
+  !forcePreview.value,
+)
+function previewAnyway() {
+  forcePreview.value = true
+  load()
+}
+function capLabel(): string {
+  return charCap.value >= 1000 ? `${Math.round(charCap.value / 1000)}K` : String(charCap.value)
+}
 
 async function load() {
   error.value = null
   // unsupported 类型(如 pptx/ppt)无需加载内容,直接展示下载入口
   if (kind.value === 'unsupported') {
+    loading.value = false
+    return
+  }
+  // 大文件默认不加载,交给用户手动确认
+  if (tooLarge.value) {
     loading.value = false
     return
   }
@@ -86,15 +118,19 @@ async function load() {
       editableText.value = displayText.value
     }
   } catch (e: any) {
-    error.value = e?.message || '加载失败'
+    error.value = e?.message || t('preview.loadFailed')
   } finally {
     loading.value = false
   }
 }
 
 function toggleEdit() {
+  if (tooLarge.value) {
+    msg.warning(t('preview.tooLarge'))
+    return
+  }
   if (truncated.value) {
-    msg.warning(`文件过大(${fmtSize(props.size ?? 0)}),已截断预览,请下载后本地编辑`)
+    msg.warning(t('preview.tooLargeTruncated', { size: fmtSize(props.size ?? 0) }))
     return
   }
   if (!editMode.value) {
@@ -116,10 +152,10 @@ async function save() {
   try {
     await fileApi.write(props.path, editableText.value)
     localText.value = editableText.value
-    msg.success('已保存')
+    msg.success(t('preview.saved'))
     editMode.value = false
   } catch (e: any) {
-    msg.error(e?.message || '保存失败')
+    msg.error(e?.message || t('preview.saveFailed'))
   } finally {
     saving.value = false
   }
@@ -130,7 +166,7 @@ async function download() {
   try {
     await fileApi.download(props.path)
   } catch (e: any) {
-    msg.error(e?.message || '下载失败')
+    msg.error(e?.message || t('preview.downloadFailed'))
   } finally {
     downloading.value = false
   }
@@ -141,6 +177,7 @@ watch(() => props.path, async () => {
   blob.value = null
   localText.value = ''
   editMode.value = false
+  forcePreview.value = false
   await load()
 }, { immediate: true })
 
@@ -169,16 +206,26 @@ onBeforeUnmount(() => {
       <span v-else-if="size" class="fp-size-inline">{{ fmtSize(size) }}</span>
       <div class="fp-spacer" />
       <template v-if="editable && !error">
-        <n-button v-if="editMode" size="tiny" type="primary" :loading="saving" @click="save">保存</n-button>
-        <n-button size="tiny" quaternary @click="toggleEdit">{{ editMode ? '预览' : '编辑' }}</n-button>
+        <n-button v-if="editMode" size="tiny" type="primary" :loading="saving" @click="save">{{ t('preview.save') }}</n-button>
+        <n-button size="tiny" quaternary @click="toggleEdit">{{ editMode ? t('preview.previewBtn') : t('preview.edit') }}</n-button>
       </template>
-      <n-button size="tiny" quaternary :loading="downloading" @click="download">下载</n-button>
-      <n-button size="tiny" quaternary @click="toggleFullscreen">{{ isFullscreen ? '退出全屏' : '全屏' }}</n-button>
+      <n-button size="tiny" quaternary :loading="downloading" @click="download">{{ t('preview.download') }}</n-button>
+      <n-button size="tiny" quaternary @click="toggleFullscreen">{{ isFullscreen ? t('preview.exitFullscreen') : t('preview.fullscreen') }}</n-button>
     </div>
 
     <n-spin :show="loading" class="fp-body">
       <div v-if="error" class="fp-error-wrap">
         <PreviewUnsupported :path="path" :size="size" :reason="error" @download="download" />
+      </div>
+
+      <div v-else-if="tooLarge" class="fp-toolarge">
+        <div class="fp-toolarge-ico">{{ kindIcon }}</div>
+        <div class="fp-toolarge-title">{{ t('preview.tooLargeTitle') }}</div>
+        <div class="fp-toolarge-desc">{{ t('preview.tooLargeDesc', { size: fmtSize(size ?? 0) }) }}</div>
+        <div class="fp-toolarge-actions">
+          <n-button size="small" type="primary" @click="previewAnyway">{{ t('preview.previewAnyway', { cap: capLabel() }) }}</n-button>
+          <n-button size="small" quaternary @click="download">{{ t('preview.downloadFile') }}</n-button>
+        </div>
       </div>
 
       <template v-else-if="editMode && editable">
@@ -187,7 +234,7 @@ onBeforeUnmount(() => {
 
       <template v-else>
         <div v-if="truncated" class="fp-truncated">
-          文件较大,已截断仅显示前 {{ (MAX_TEXT_CHARS / 1000 / 1000).toFixed(1) }} MB,完整内容请下载查看。
+          {{ t('preview.tooLargeTruncated', { size: capLabel() }) }}
         </div>
         <PreviewText        v-if="kind === 'text'"      :content="viewText" />
         <PreviewCode         v-else-if="kind === 'code'"     :content="viewText" :lang="lang" />
@@ -248,6 +295,15 @@ onBeforeUnmount(() => {
 .fp-body { flex: 1; overflow: hidden; }
 .fp-body :deep(.n-spin-content) { height: 100%; }
 .fp-error-wrap { height: 100%; }
+.fp-toolarge {
+  height: 100%; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 10px; text-align: center;
+  color: var(--text-2); padding: 24px;
+}
+.fp-toolarge-ico { font-size: 40px; opacity: .8; }
+.fp-toolarge-title { font-size: 15px; font-weight: 600; color: var(--text); }
+.fp-toolarge-desc { font-size: 12.5px; color: var(--text-3); }
+.fp-toolarge-actions { display: flex; gap: 10px; margin-top: 6px; }
 .fp-truncated {
   padding: 8px 12px;
   font-size: 12px;

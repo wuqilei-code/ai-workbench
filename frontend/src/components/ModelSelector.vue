@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useChatStore } from '@/stores/chat'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 const chat = useChatStore()
 
 const options = computed(() => {
@@ -37,12 +39,12 @@ const value = computed({
   <n-select
     v-model:value="value"
     :options="options"
-    placeholder="选择模型"
+    :placeholder="t('modelSel2.placeholder')"
     size="small"
     style="width: 240px"
     :disabled="!options.length"
   />
   <n-text v-if="!options.length" depth="3" style="margin-left: 8px; font-size: 12px">
-    暂无可用模型，请前往「模型管理」配置
+    {{ t('modelSel2.none') }}
   </n-text>
 </template>

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 const props = defineProps<{ text: string; isStreaming?: boolean }>()
 
 /** 用户手动展开/折叠覆盖;null 恢复自动态 */
@@ -38,9 +40,9 @@ watch([() => props.text, expanded], async () => {
   <div v-if="text" class="reasoning">
     <button class="reasoning-head" @click="toggle">
       <svg class="chevron" :class="{ open: expanded }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-      <span class="label">思考链</span>
-      <span v-if="lineCount > 0" class="meta">{{ lineCount }} 行</span>
-      <span v-if="isStreaming" class="run-tag">生成中…</span>
+      <span class="label">{{ t('reasoning2.label') }}</span>
+      <span v-if="lineCount > 0" class="meta">{{ t('reasoning2.lines', { n: lineCount }) }}</span>
+      <span v-if="isStreaming" class="run-tag">{{ t('reasoning2.streaming') }}</span>
     </button>
     <transition name="reasoning">
       <div v-if="expanded" ref="boxEl" class="reasoning-body">{{ text }}</div>

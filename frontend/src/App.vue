@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { darkTheme, lightTheme, dateZhCN, zhCN } from 'naive-ui'
 import type { GlobalThemeOverrides } from 'naive-ui'
 import { useThemeStore } from '@/stores/theme'
+import ErrorBoundary from '@/components/ErrorBoundary.vue'
 
 const theme = useThemeStore()
 const isDark = computed(() => theme.mode === 'dark')
@@ -106,7 +107,9 @@ const lightOverrides: GlobalThemeOverrides = {
     <n-message-provider>
       <n-dialog-provider>
         <n-notification-provider>
-          <router-view />
+          <ErrorBoundary>
+            <router-view />
+          </ErrorBoundary>
         </n-notification-provider>
       </n-dialog-provider>
     </n-message-provider>

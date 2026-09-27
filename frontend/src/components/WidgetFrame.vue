@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useMessage } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 import { fileApi } from '@/api/files'
 import { useThemeStore } from '@/stores/theme'
 import { SVG_LINE_FILL_FIX_CSS } from '@/utils/svgFix'
@@ -17,6 +18,7 @@ const props = defineProps<{ path?: string; liveCode?: string | null }>()
 const emit = defineEmits<{ (e: 'prompt', text: string): void }>()
 
 const msg = useMessage()
+const { t } = useI18n()
 const theme = useThemeStore()
 const srcdoc = ref('')
 const failed = ref(false)
@@ -336,9 +338,9 @@ async function copyCode() {
   if (!rawCode.value) return
   try {
     await navigator.clipboard.writeText(rawCode.value)
-    msg.success('代码已复制')
+    msg.success(t('widget2.copied'))
   } catch {
-    msg.error('复制失败')
+    msg.error(t('widget2.copyFailed'))
   }
 }
 
@@ -369,7 +371,7 @@ async function captureToImage() {
     a.click()
     document.body.removeChild(a)
   } catch {
-    msg.error('导出图片失败(组件可能含外部资源)')
+    msg.error(t('widget2.exportFailed'))
   } finally {
     capBusy.value = false
   }
@@ -452,11 +454,9 @@ function onMessage(e: MessageEvent) {
   if (d.type === 'ready') {
     _liveReady = true
     if (_pendingLive) pushPatch(_pendingLive)
-    console.debug('[widget] live ready')
   } else if (d.type === 'height' && typeof d.height === 'number') {
     // 上限放宽到 8000:长流程图等高内容经 viewBox 自适应后可能超过 3000
     height.value = Math.max(80, Math.min(8000, d.height))
-    console.debug('[widget] height', d.height)
   } else if (d.type === 'wheel' && typeof d.dy === 'number') {
     // iframe 高度与内容齐平时内部无滚动空间:滚轮链式交给聊天容器
     scrollAncestorBy(d.dy)
@@ -531,13 +531,13 @@ onBeforeUnmount(() => {
         >
           <polyline points="6 9 12 15 18 9" />
         </svg>
-        <span>展示详情</span>
+        <span>{{ t('widget2.detail') }}</span>
       </button>
       <div class="wd-menu-wrap">
         <button
           class="wd-menu-btn"
           :class="{ open: menuOpen }"
-          title="更多操作"
+          :title="t('widget2.moreActions')"
           @click.stop="toggleMenu"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -549,19 +549,19 @@ onBeforeUnmount(() => {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
             </svg>
-            <span>下载到本地</span>
+            <span>{{ t('widget2.downloadLocal') }}</span>
           </button>
           <button class="wd-menu-item" :disabled="capBusy || !rawCode" @click="captureToImage">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" />
             </svg>
-            <span>{{ capBusy ? '正在生成图片…' : '下载为图片' }}</span>
+            <span>{{ capBusy ? t('widget2.imgBusy') : t('widget2.imgDownload') }}</span>
           </button>
           <button class="wd-menu-item" :disabled="!rawCode" @click="copyCode">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
             </svg>
-            <span>复制代码</span>
+            <span>{{ t('widget2.copyCode') }}</span>
           </button>
           <button class="wd-menu-item" :disabled="!rawCode" @click="toggleCodeView">
             <svg v-if="!showCode" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -570,16 +570,16 @@ onBeforeUnmount(() => {
             <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><line x1="3" y1="9" x2="21" y2="9" />
             </svg>
-            <span>{{ showCode ? '显示UI' : '查看代码' }}</span>
+            <span>{{ showCode ? t('widget2.showUI') : t('widget2.viewCode') }}</span>
           </button>
         </div>
       </div>
     </div>
 
     <div v-if="failed" class="widget-failed">
-      <div class="wf-fail-t">组件已不可用</div>
+      <div class="wf-fail-t">{{ t('widget2.failTitle') }}</div>
       <div class="wf-fail-s">
-        文件 <code>{{ failName }}</code> 不存在,可能已在文件树中被删除或移动;让 AI 重新生成一次即可恢复。
+        {{ t('widget2.failDesc', { name: failName }) }}
       </div>
     </div>
     <template v-else-if="expanded">
@@ -596,7 +596,7 @@ onBeforeUnmount(() => {
           scrolling="no"
         ></iframe>
         <div v-else class="widget-loading">
-          {{ liveCode != null ? '正在生成组件…' : '组件加载中…' }}
+          {{ liveCode != null ? t('widget2.genBusy') : t('widget2.loading') }}
         </div>
       </template>
     </template>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import { fmtSize } from './ext'
 
 defineProps<{ path: string; size?: number; reason?: string }>()
@@ -10,7 +11,7 @@ defineEmits<{ download: [] }>()
     <div class="icon">📄</div>
     <div class="filename">{{ path.split(/[\\/]/).pop() }}</div>
     <div v-if="reason" class="reason">{{ reason }}</div>
-    <div v-else class="reason">该格式暂不支持在线预览</div>
+    <div v-else class="reason">t('preview.unsupported')</div>
     <div v-if="size" class="size">{{ fmtSize(size) }}</div>
     <n-button size="small" type="primary" @click="$emit('download')">下载文件</n-button>
   </div>

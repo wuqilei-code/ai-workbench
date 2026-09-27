@@ -18,4 +18,7 @@ export const adminApi = {
   updateUserStatus: (id: number, status: number) => http.put(`/admin/users/${id}/status`, { status }),
   updateUserRole: (id: number, role: 'user' | 'admin') => http.put(`/admin/users/${id}/role`, { role }),
   resetUserPassword: (id: number, password: string) => http.put(`/admin/users/${id}/password`, { password }),
+  /** 定时任务全局暂停开关(管理员) */
+  jobPaused: () => http.get<boolean>('/admin/jobs/paused').then(unwrap),
+  setJobPaused: (paused: boolean) => http.post<boolean>('/admin/jobs/paused', { paused }).then(unwrap),
 }

@@ -2,27 +2,29 @@
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
 const auth = useAuthStore()
 const msg = useMessage()
+const { t } = useI18n()
 
 const form = reactive({ usernameOrEmail: '', password: '' })
 const loading = ref(false)
 
 async function onSubmit() {
   if (!form.usernameOrEmail || !form.password) {
-    msg.warning('请输入用户名和密码')
+    msg.warning(t('auth.needAccount'))
     return
   }
   loading.value = true
   try {
     await auth.login(form.usernameOrEmail, form.password)
-    msg.success('登录成功')
+    msg.success(t('auth.loginOk'))
     router.push('/')
   } catch (e: any) {
-    msg.error(e.message || '登录失败')
+    msg.error(e.message || t('auth.loginFailed'))
   } finally {
     loading.value = false
   }
@@ -30,12 +32,12 @@ async function onSubmit() {
 
 /** 项目功能展示 */
 const features = [
-  { icon: '💬', title: '智能对话', desc: '多模型 AI 助手，上下文感知，支持文档/代码/数据分析' },
-  { icon: '🧩', title: '技能市场', desc: '一键安装/发布技能，SKILL.md 驱动的工作流扩展' },
-  { icon: '📚', title: '模板库', desc: '周报、会议纪要、数据分析等常用提示词模板' },
-  { icon: '⏰', title: '定时自动化', desc: '可视化 cron 定时任务，结果自动生成执行报告' },
-  { icon: '📁', title: '文件工作区', desc: '内置代码编辑器、预览与 AI 联动' },
-  { icon: '🔌', title: 'MCP 集成', desc: '连接外部数据源与工具，扩展 AI 能力边界' },
+  { icon: '💬', title: t('auth.fChat'), desc: t('auth.fChatDesc') },
+  { icon: '🧩', title: t('auth.fSkill'), desc: t('auth.fSkillDesc') },
+  { icon: '📄', title: t('auth.fTemplate'), desc: t('auth.fTemplateDesc') },
+  { icon: '⏰', title: t('auth.fJob'), desc: t('auth.fJobDesc') },
+  { icon: '🛡️', title: t('auth.fSandbox'), desc: t('auth.fSandboxDesc') },
+  { icon: '🔌', title: t('auth.fMcp'), desc: t('auth.fMcpDesc') },
 ]
 </script>
 
@@ -55,7 +57,7 @@ const features = [
           </div>
           <span class="brand-name">AI Workbench</span>
         </div>
-        <p class="brand-slogan">一站式 AI 工作台，让每一次创作与协作都更高效</p>
+    <p class="brand-slogan">{{ t('auth.sloganLogin') }}</p>
 
         <div class="feature-grid">
           <div v-for="f in features" :key="f.title" class="feature-card">
@@ -71,28 +73,28 @@ const features = [
       <!-- 右侧登录表单 -->
       <div class="form-panel">
         <div class="form-card">
-          <h2 class="form-title">欢迎回来</h2>
-          <p class="form-sub">登录以继续你的工作</p>
+    <h2 class="form-title">{{ t('auth.welcome') }}</h2>
+    <p class="form-sub">{{ t('auth.welcomeSub') }}</p>
           <n-form @keyup.enter="onSubmit">
-            <n-form-item label="用户名 / 邮箱">
-              <n-input v-model:value="form.usernameOrEmail" placeholder="用户名或邮箱" size="large">
+      <n-form-item :label="t('auth.labelUser')">
+      <n-input v-model:value="form.usernameOrEmail" :placeholder="t('auth.phUser')" size="large">
                 <template #prefix>
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                 </template>
               </n-input>
             </n-form-item>
-            <n-form-item label="密码">
-              <n-input v-model:value="form.password" type="password" show-password-on="click" placeholder="密码" size="large">
+      <n-form-item :label="t('auth.labelPass')">
+              <n-input v-model:value="form.password" type="password" show-password-on="click" :placeholder="t('auth.phPassOnly')" size="large">
                 <template #prefix>
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                 </template>
               </n-input>
             </n-form-item>
-            <n-button type="primary" block :loading="loading" @click="onSubmit" size="large">登录</n-button>
+      <n-button type="primary" block :loading="loading" @click="onSubmit" size="large">{{ t('auth.login') }}</n-button>
           </n-form>
           <div class="form-footer">
-            <span class="footer-text">还没有账号？</span>
-            <n-button text type="primary" @click="router.push('/register')">去注册</n-button>
+    <span class="footer-text">{{ t('auth.noAccount') }}</span>
+    <n-button text type="primary" @click="router.push('/register')">{{ t('auth.goRegister') }}</n-button>
           </div>
         </div>
       </div>

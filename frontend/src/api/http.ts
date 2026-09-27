@@ -42,7 +42,10 @@ http.interceptors.response.use(
   },
 )
 
-/** 取 data 字段 */
-export function unwrap<T>(res: { data: { data: T } }): T {
-  return res.data.data
+/** 取后端统一响应体 R<T> 的 data 字段。
+ *  调用方 `http.get<T>(...)` 的泛型是「业务数据类型 T」,而运行时 `res.data` 实际是
+ *  `{ code, message, data: T }` 信封(AxiosResponse 的 data 泛型与之一致),故这里从
+ *  res.data.data 取出 T;若后端返回的不是信封(如 blob),不会走到这里。 */
+export function unwrap<T>(res: { data: T }): T {
+  return (res.data as unknown as { data: T }).data
 }

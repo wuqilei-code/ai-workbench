@@ -4,15 +4,24 @@ import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useFavoritesStore } from '@/stores/favorites'
 import { useMessage, useDialog } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 import ChatMessage from '@/components/ChatMessage.vue'
 import AssistantTurn from '@/components/AssistantTurn.vue'
 import ChatInput from '@/components/ChatInput.vue'
 import TaskPlan from '@/components/TaskPlan.vue'
 import WelcomeBoard from '@/components/WelcomeBoard.vue'
+import { useSessionFind } from '@/composables/useSessionFind'
+import { useSessionNav } from '@/composables/useSessionNav'
+import { useWorkspacePanel } from '@/composables/useWorkspacePanel'
+import { useChatScroll } from '@/composables/useChatScroll'
+import { useManagePages } from '@/composables/useManagePages'
+import { useVirtualList } from '@/composables/useVirtualList'
+import { useVirtualWindow } from '@/composables/useVirtualWindow'
 import TemplateLibrary from '@/components/TemplateLibrary.vue'
 import FavoritesPanel from '@/components/FavoritesPanel.vue'
 import SkillMarketplace from '@/components/SkillMarketplace.vue'
-import SkillEditor from '@/components/SkillEditor.vue'
+import SkillsPanel from '@/components/SkillsPanel.vue'
+import SessionPickers from '@/components/SessionPickers.vue'
 import FileTree from '@/components/FileTree.vue'
 import AutomationManager from '@/components/AutomationManager.vue'
 import McpManager from '@/components/McpManager.vue'
@@ -20,13 +29,9 @@ import JobRunsPanel from '@/components/JobRunsPanel.vue'
 import NotificationCenter from '@/components/NotificationCenter.vue'
 import UserMenu from '@/components/UserMenu.vue'
 import BrowserCanvas from '@/components/BrowserCanvas.vue'
-import ChangeSummaryCard from '@/components/ChangeSummaryCard.vue'
 import DashboardView from '@/views/DashboardView.vue'
 import { chatApi } from '@/api/chat'
-import { mcpApi } from '@/api/mcp'
-import type { MessageVo, SkillInfo, SkillFileVo, UserSkill } from '@/types'
-import type { FlowItem, SummaryItem, Turn } from '@/utils/turns'
-import { extractPlan } from '@/utils/turns'
+import { fileApi } from '@/api/files'
 
 const route = useRoute()
 const router = useRouter()
@@ -34,336 +39,43 @@ const chat = useChatStore()
 const fav = useFavoritesStore()
 const msg = useMessage()
 const dialog = useDialog()
+const { t } = useI18n()
 const scrollRef = ref<HTMLElement | null>(null)
 /** 消息整体内容的包装层(chat-virtual-container):其高度随所有消息撑高而增长。
  *  ResizeObserver 监听它而非某条具体消息,才能在异步加载/流式撑高时正确钉底。 */
 const contentRef = ref<HTMLElement | null>(null)
-const showFiles = ref(true)
-const dashboardShow = ref(false)
-/** 工作区右侧面板已打开的标签(可关闭),默认只打开「文件」 */
-const openTabs = ref<string[]>(['files'])
-/** 当前激活的标签 */
-const activeTab = ref('files')
-/** 工作区面板宽度(px),可拖动调整 */
-const wsWidth = ref(420)
-/** 拖动调整宽度中(禁用 transition 避免拖拽卡顿) */
-const wsResizing = ref(false)
-/** 工作区面板最小宽度(px) */
-const WS_MIN = 260
-/** 拖动中残留的事件清理(组件卸载时兜底) */
-let _resizeCleanup: (() => void) | null = null
 let _scrollObsCleanup: (() => void) | null = null
 
-/** 工作区标签(收起后顶部显示的小图标,点击展开并切换)。浏览器不设顶部入口,仅由对话唤出 */
-const workspaceTabs = [
-  { key: 'files', label: '文件', icon: 'M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z' },
-  { key: 'skills', label: '技能', icon: 'M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 2.001c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z' },
-  { key: 'jobs', label: '定时任务', icon: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2' },
-  { key: 'favorites', label: '收藏', icon: 'M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 21 12 17.77 5.82 21 7 14.14 2 9.27l6.91-1.01z' },
-]
-/** 浏览器标签元数据(不在 workspaceTabs 里 → 无顶部按钮;agent 唤出时仍可作为标签展示) */
-const browserTabMeta = { key: 'browser', label: '浏览器', icon: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 2.07A8 8 0 0 1 20 12h-7zM4.9 5.8l3.4 3.4A3 3 0 0 0 8 9H5.5A8 8 0 0 1 4.9 5.8zM4 12a8 8 0 0 1 .5-2.8H8a3 3 0 0 0-3 3v.5H4zm0 1h1v1h-1zm3 4.2A8 8 0 0 0 12 20c-1.7 0-3.3-.5-4.6-1.4L9 16.9zM20 12a8 8 0 0 1-.5 2.8H16a3 3 0 0 0 3-3v-.5h1zm-8 8a8 8 0 0 1-3-.6L10 17.6a4 4 0 0 0 2-.6c1 .6 1.9 1 3 1.2zm-1-6a3 3 0 1 1 0-6 3 3 0 0 1 0 6z' }
-function openWorkspaceTab(key: string) {
-  showFiles.value = true
-  if (!openTabs.value.includes(key)) openTabs.value.push(key)
-  activeTab.value = key
-  if (key === 'browser' && !isMobile.value) {
-    const target = Math.round(window.innerWidth * 0.55)
-    if (wsWidth.value < target) wsWidth.value = target
-  }
-}
-
-/** agent 调用浏览器工具时自动唤出浏览器面板,实时看 agent 操作 */
-watch(
-  () => chat.browserToolSignal,
-  () => {
-    if (!showFiles.value) showFiles.value = true
-    if (activeTab.value !== 'browser') openWorkspaceTab('browser')
-  },
-)
-
-/** agent 正在流式执行且近期调用过浏览器工具 → 面板保持实时 */
-const browserFollowing = computed(
-  () => chat.isStreaming && Date.now() - chat.lastBrowserToolAt < 120000,
-)
-
-/** 顶部入口按钮:未激活则打开;再次点击已激活的面板则收起工作区 */
-function onLauncherClick(key: string) {
-  if (showFiles.value && activeTab.value === key) {
-    showFiles.value = false
-  } else {
-    openWorkspaceTab(key)
-  }
-}
-
-/** 关闭工作区标签;关闭当前激活标签时自动切到相邻标签 */
-function closeTab(key: string) {
-  const idx = openTabs.value.indexOf(key)
-  if (idx < 0) return
-  openTabs.value.splice(idx, 1)
-  if (activeTab.value === key) {
-    activeTab.value = openTabs.value.length ? openTabs.value[Math.max(0, idx - 1)] : ''
-  }
-}
-
-/** 已打开标签的元信息(图标+文案),供标签栏渲染 */
-const openTabList = computed(() =>
-  [...workspaceTabs, browserTabMeta].filter((t) => openTabs.value.includes(t.key)),
-)
-
-/** 拖动面板左缘调整宽度:按住 → 随鼠标移动计算新宽度(限制最小/最大),松开结束。 */
-function startResize(e: MouseEvent) {
-  e.preventDefault()
-  wsResizing.value = true
-  document.body.style.cursor = 'col-resize'
-  document.body.style.userSelect = 'none'
-  const move = (ev: MouseEvent) => {
-    const w = window.innerWidth - ev.clientX
-    wsWidth.value = Math.round(Math.max(WS_MIN, Math.min(window.innerWidth * 0.7, w)))
-  }
-  const up = () => {
-    wsResizing.value = false
-    document.body.style.cursor = ''
-    document.body.style.userSelect = ''
-    document.removeEventListener('mousemove', move)
-    document.removeEventListener('mouseup', up)
-    _resizeCleanup = null
-  }
-  document.addEventListener('mousemove', move)
-  document.addEventListener('mouseup', up)
-  _resizeCleanup = up
-}
-
 const chatInputRef = ref<InstanceType<typeof ChatInput> | null>(null)
-const templateLibShow = ref(false)
+
+/** turn id → 窗口化列表的行 key(与 useVirtualList 的 `'t-' + turn.id` 规则保持一致) */
+function turnKeyOf(turnId: string) {
+  return 't-' + turnId
+}
+/** 空会话主页里的输入框实例(与聊天态底部输入框二选一) */
+const homeInputRef = ref<InstanceType<typeof ChatInput> | null>(null)
 const marketplaceShow = ref(false)
-const skillTreeKey = ref(0)
-/** 内置技能名(技能栏顶部内置列表;用户技能区/会话配置只展示自定义技能) */
-const builtinSkillNames = computed(() => builtinSkills.value.map((s) => s.name))
-/** ---- 用户技能(user_skill:自建/安装) ---- */
-const ICON_PRESETS = ['🤖', '⚙️', '📊', '📄', '✍️', '🗂️', '💻', '🧩', '📚', '🎨', '🔬', '🚀', '🛠️', '📝', '🗣️', '🧠']
-
-/** 从 SKILL.md frontmatter 提取 icon;无则按名字哈希取兜底 emoji */
-function parseSkillIcon(content: string | undefined): string {
-  if (!content) return ''
-  const m = content.match(/^---\s*\n([\s\S]*?)\n---/)
-  if (m) {
-    const icon = m[1].match(/^icon\s*:\s*(.+)$/m)?.[1]?.trim()
-    if (icon) return icon
-  }
-  return ''
-}
-function fallbackIcon(name: string): string {
-  const pool = ['🤖', '🧩', '📊', '📄', '✍️', '🗂️', '💻', '🔬', '🎨', '🚀', '🛠️', '📝']
-  let h = 0
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0
-  return pool[h % pool.length]
-}
-
-/** 把 icon 注入 SKILL.md frontmatter(已有 icon 则替换;无 frontmatter 则创建) */
-function injectIconIntoFrontmatter(content: string, icon: string, name: string, desc: string): string {
-  if (!icon) return content
-  const c = content || ''
-  const m = c.match(/^---\s*\n([\s\S]*?)\n---/)
-  if (m) {
-    if (m[1].includes('icon:')) return c.replace(/^(icon\s*:\s*).+$/m, `$1${icon}`)
-    return c.replace(/^(---\s*\n(?:[\s\S]*?\n))/, `$1icon: ${icon}\n`)
-  }
-  const d = (desc || '').replace(/\n/g, ' ').trim() || '用户自定义技能。'
-  return `---\nname: ${name}\ndescription: ${d}\nicon: ${icon}\n---\n\n# ${name}\n\n(c 在此描述技能功能)。\n`
-}
-
-const userSkills = ref<UserSkill[]>([])
-async function loadUserSkills() {
-  try { userSkills.value = await chatApi.listMineSkills() } catch { userSkills.value = [] }
-}
-const skillModalShow = ref(false)
-const skillEditingId = ref<number | null>(null)
-const skillReadonly = ref(false)
-const skillForm = ref<{ name: string; description: string; content: string; visibility: number; icon: string; files: SkillFileVo[] }>({
-  name: '', description: '', content: '', visibility: 0, icon: '', files: [],
-})
-function openCreateSkill() {
-  skillEditingId.value = null
-  skillReadonly.value = false
-  skillForm.value = { name: '', description: '', content: '', visibility: 0, icon: '🤖', files: [] }
-  skillModalShow.value = true
-}
-function openEditSkill(s: UserSkill) {
-  skillEditingId.value = s.id
-  // 市场安装的技能只读,点击打开查看详情
-  skillReadonly.value = s.source === 'installed'
-  skillForm.value = {
-    name: s.name, description: s.description || '',
-    content: s.content || '', visibility: s.visibility || 0,
-    icon: parseSkillIcon(s.content) || fallbackIcon(s.name),
-    files: (s.files || []).map((f) => ({ path: f.path, content: f.content || '', encoding: f.encoding })),
-  }
-  skillModalShow.value = true
-}
-async function saveSkill() {
-  try {
-    // 把 skillForm.icon 注入 SKILL.md frontmatter,技能列表/FileTree 可读取图标
-    const contentWithIcon = injectIconIntoFrontmatter(
-      skillForm.value.content, skillForm.value.icon, skillForm.value.name.trim() || 'skill', skillForm.value.description,
-    )
-    if (skillEditingId.value) {
-      await chatApi.updateSkill(skillEditingId.value, {
-        description: skillForm.value.description,
-        content: contentWithIcon,
-        visibility: skillForm.value.visibility,
-        files: skillForm.value.files.filter((f) => f.path && !f.path.startsWith('SKILL.md')),
-      })
-    } else {
-      await chatApi.createSkill({
-        name: skillForm.value.name.trim(),
-        description: skillForm.value.description,
-        content: contentWithIcon,
-        visibility: skillForm.value.visibility,
-        files: skillForm.value.files.filter((f) => f.path),
-      })
-    }
-    skillModalShow.value = false
-    await loadUserSkills()
-    msg.success('技能已保存')
-  } catch (e: any) {
-    msg.error(e?.response?.data?.message || e?.message || '保存失败')
-  }
-}
-async function removeUserSkill(s: UserSkill) {
-  const ok = await new Promise<boolean>((resolve) => {
-    dialog.warning({
-      title: '删除技能',
-      content: s.source === 'installed' ? `确定卸载已安装的技能「${s.name}」吗?` : `确定删除技能「${s.name}」吗?`,
-      positiveText: '删除', negativeText: '取消',
-      onPositiveClick: () => resolve(true), onNegativeClick: () => resolve(false), onClose: () => resolve(false),
-    })
-  })
-  if (!ok) return
-  try {
-    await chatApi.deleteSkill(s.id)
-    await loadUserSkills()
-    msg.success('已删除')
-  } catch (e: any) {
-    msg.error(e?.response?.data?.message || e?.message || '删除失败')
-  }
-}
-watch(activeTab, (t) => { if (t === 'skills') loadUserSkills() })
-/** 会话自定义技能配置:穿梭框选择;内置技能默认加载,不可配置。
- *  左侧「可选」列表按页取数(已选项始终注入 options,保证右侧完整回显)。 */
-const customSkills = ref<string[]>([])
-const skillsPick = ref<string[]>([])
-const skillsOpen = ref(false)
-const SKILL_PAGE_SIZE = 8
-const skillPage = ref(1)
-const skillUnpicked = computed(() => customSkills.value.filter((s) => !skillsPick.value.includes(s)))
-const skillPageCount = computed(() => Math.max(1, Math.ceil(skillUnpicked.value.length / SKILL_PAGE_SIZE)))
-const skillTransferOptions = computed(() => [
-  ...skillsPick.value.map((s) => ({ label: s, value: s })),
-  ...skillUnpicked.value.slice((skillPage.value - 1) * SKILL_PAGE_SIZE, skillPage.value * SKILL_PAGE_SIZE).map((s) => ({ label: s, value: s })),
-])
-watch(() => skillsPick.value.length, () => { if (skillPage.value > skillPageCount.value) skillPage.value = skillPageCount.value })
-async function openSkillPicker() {
-  try { customSkills.value = await chatApi.customSkills() } catch { customSkills.value = [] }
-  skillsPick.value = (chat.currentSession?.skills || []).filter((s) => customSkills.value.includes(s))
-  skillPage.value = 1
-  skillsOpen.value = true
-}
-async function applySkills() {
-  if (!chat.currentSessionId) return
-  try {
-    const updated = await chatApi.updateSession(chat.currentSessionId, { skills: skillsPick.value })
-    const idx = chat.sessions.findIndex((s) => s.id === chat.currentSessionId)
-    if (idx >= 0) chat.sessions[idx] = updated
-    skillsOpen.value = false
-    msg.success('已保存(内置技能默认加载;自定义技能下一条消息生效)')
-  } catch (e: any) {
-    msg.error(e?.response?.data?.message || e?.message || '保存失败')
-  }
-}
-/** 会话级 MCP 勾选:与技能一致,按会话选择要加载的 MCP Server(仅已启用的可选) */
-async function openMcpPicker() {
-  try {
-    const servers = await mcpApi.list()
-    mcpAvail.value = servers.filter((s) => !!s.enabled).map((s) => s.name)
-  } catch {
-    mcpAvail.value = []
-    msg.error('加载 MCP 配置失败')
-    return
-  }
-  const cur = chat.currentSession?.mcpServers
-  // 未设置(null)=默认全部已启用(全选展示);显式选择则沿用;空数组=本会话不加载
-  mcpPick.value = cur == null ? [...mcpAvail.value] : [...cur]
-  mcpPage.value = 1
-  mcpOpen.value = true
-}
-async function applyMcp() {
-  if (!chat.currentSessionId) return
-  if (mcpSaving.value) return
-  mcpSaving.value = true
-  try {
-    const updated = await chatApi.updateSession(chat.currentSessionId, { mcpServers: mcpPick.value })
-    const idx = chat.sessions.findIndex((s) => s.id === chat.currentSessionId)
-    if (idx >= 0) chat.sessions[idx] = updated
-    mcpOpen.value = false
-    msg.success('已保存(下一条消息生效)')
-  } catch (e: any) {
-    msg.error(e?.response?.data?.message || e?.message || '保存失败')
-  } finally {
-    mcpSaving.value = false
-  }
-}
-async function resetMcp() {
-  if (!chat.currentSessionId) return
-  if (mcpSaving.value) return
-  mcpSaving.value = true
-  try {
-    const updated = await chatApi.updateSession(chat.currentSessionId, { resetMcpServers: true })
-    const idx = chat.sessions.findIndex((s) => s.id === chat.currentSessionId)
-    if (idx >= 0) chat.sessions[idx] = updated
-    mcpOpen.value = false
-    msg.success('已恢复默认(加载全部已启用 MCP)')
-  } catch (e: any) {
-    msg.error(e?.response?.data?.message || e?.message || '保存失败')
-  } finally {
-    mcpSaving.value = false
-  }
-}
-/** 自动化管理弹窗(点侧边栏「自动化」打开:任务列表 + 启停 + 新建) */
-const automationShow = ref(false)
+// 技能面板(内置/我的/市场)已抽到 components/SkillsPanel.vue
+// 会话技能/工具选择弹窗已抽到 components/SessionPickers.vue
 /** 工具库弹窗(点侧边栏「工具库」打开:Server 增/删/改/启停) */
 const mcpShow = ref(false)
-/** 会话级 MCP 勾选(点顶部「MCP」按钮打开:按会话选择要加载的 Server) */
-const mcpOpen = ref(false)
-const mcpPick = ref<string[]>([])
-const mcpAvail = ref<string[]>([])
-const mcpSaving = ref(false)
-const MCP_PAGE_SIZE = 8
-const mcpPage = ref(1)
-const mcpUnpicked = computed(() => mcpAvail.value.filter((n) => !mcpPick.value.includes(n)))
-const mcpPageCount = computed(() => Math.max(1, Math.ceil(mcpUnpicked.value.length / MCP_PAGE_SIZE)))
-const mcpTransferOptions = computed(() => [
-  ...mcpPick.value.map((n) => ({ label: n, value: n })),
-  ...mcpUnpicked.value.slice((mcpPage.value - 1) * MCP_PAGE_SIZE, mcpPage.value * MCP_PAGE_SIZE).map((n) => ({ label: n, value: n })),
-])
-watch(() => mcpPick.value.length, () => { if (mcpPage.value > mcpPageCount.value) mcpPage.value = mcpPageCount.value })
-/** 消息定位轮询中(从任务/收藏跳转后等待消息加载) */
-const locating = ref(false)
-/** 安装技能后刷新技能目录树 */
-function onSkillInstalled() {
-  skillTreeKey.value++
-}
+
+/** 会话技能/工具选择弹窗(子组件暴露 openSkills/openMcp) */
+const sessionPickers = ref<InstanceType<typeof SessionPickers> | null>(null)
+function openSkillPicker() { sessionPickers.value?.openSkills() }
+function openMcpPicker() { sessionPickers.value?.openMcp() }
+
+/** 技能安装回调(技能面板挂载时自取最新列表,父级无需刷新) */
+function onSkillInstalled() {}
 
 /** 侧边栏导航事件监听 */
-const sidebarEvents = inject<Ref<{openPluginMarket:boolean; openTemplateLib:boolean; openMyFiles:boolean; openAutomation:boolean; openFind:boolean; openDashboard:boolean; openMcp:boolean}>>('sidebarEvents')
-if (sidebarEvents) {
-  watch(() => sidebarEvents.value.openPluginMarket, (v) => { if (v) marketplaceShow.value = true })
-  watch(() => sidebarEvents.value.openTemplateLib, (v) => { if (v) templateLibShow.value = true })
-  watch(() => sidebarEvents.value.openMyFiles, (v) => { if (v) showFiles.value = true })
-  watch(() => sidebarEvents.value.openFind, (v) => { if (v) openFind() })
-  watch(() => sidebarEvents.value.openAutomation, (v) => { if (v) openAutomationModal() })
-  watch(() => sidebarEvents.value.openDashboard, (v) => { if (v) dashboardShow.value = true })
-  watch(() => sidebarEvents.value.openMcp, (v) => { if (v) mcpShow.value = true })}
+const sidebarEvents = inject<Ref<import('@/composables/useManagePages').SidebarEvents>>('sidebarEvents')
+
+// 草稿态首次发送创建会话后,把地址同步为 /session/:id(便于刷新/分享)
+watch(() => chat.currentSessionId, (id) => {
+  if (id == null) return
+  if (String(route.params.id || '') !== String(id)) router.replace(`/session/${id}`)
+})
 
 /** 侧边栏折叠状态(由 ChatLayout provide):顶部「展开侧边栏」按钮使用 */
 const sidebarCollapsed = inject<Ref<boolean>>('sidebarCollapsed', ref(false))
@@ -371,111 +83,107 @@ const toggleSidebar = inject<() => void>('toggleSidebar', () => {})
 /** 是否移动端(由 ChatLayout provide):工作区改为底部抽屉、顶栏精简 */
 const isMobile = inject<Ref<boolean>>('isMobile', ref(false))
 
+/** 右侧工作区面板(文件/技能/定时任务/收藏/浏览器)的开合、标签与拖拽 */
+const {
+  showFiles,
+  activeTab,
+  wsWidth,
+  wsResizing,
+  workspaceTabs,
+  openTabList,
+  browserFollowing,
+  openWorkspaceTab,
+  closeTab,
+  onLauncherClick,
+  startResize,
+  dispose: disposeWorkspacePanel,
+} = useWorkspacePanel({
+  isMobile,
+  // 打开工作区面板时关闭整页管理视图(技能市场/工具库/模板库)
+  onBeforeOpen: () => {
+    skillsPageShow.value = false
+    toolsPageShow.value = false
+    templateLibShow.value = false
+  },
+})
+
 // 移动端:工作区默认收起为底部抽屉
 watch(isMobile, (m) => { if (m) showFiles.value = false }, { immediate: true })
 
 /** 空会话判断:会话已建但尚无任何消息(turn 为空)。 */
 const isNewSession = computed(() => chat.currentSessionId != null && chat.turns.length === 0)
 
+/** 当前活跃的输入框实例:空会话主页 or 聊天态底部 */
+function activeInput() {
+  return chatInputRef.value || homeInputRef.value
+}
+
 /** 欢迎板/模板库点击:把模板填入输入框供用户补充后发送。 */
 function onScenarioSelect(prompt: string) {
-  chatInputRef.value?.fill(prompt)
+  const el = activeInput()
+  if (el) el.fill(prompt)
+  else chat.pendingFill = prompt
 }
 function onTemplateUse(prompt: string) {
-  chatInputRef.value?.fill(prompt)
+  // 整页管理视图打开时聊天输入框被卸载 → 兜底写入 store,挂载后再消费
+  const el = activeInput()
+  if (el) el.fill(prompt)
+  else chat.pendingFill = prompt
+}
+
+/** 「做同款」(HTML 文档模板):把模板 HTML 落到工作区 templates/,作为附件引用到对话并回填提示词 */
+async function onTemplateUseHtml(p: { title: string; content: string }) {
+  const safe = (p.title || 'template').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60) || 'template'
+  const path = `templates/${safe}.html`
+  try {
+    await fileApi.write(path, p.content || '')
+  } catch { /* 写盘失败也继续:仅回填提示词,不阻塞 */ }
+  const prompt = `请参考工作区里的 HTML 模板附件《${p.title}》,生成一份同款文档:替换其中的 {{占位}} 为合适内容,整体沿用其排版风格。`
+  // replacePrefix:多次「做同款」只保留最新模板的附件,避免叠加引用
+  chat.attachFile(path, prompt, 'templates/')
+  closeManagePages()
 }
 
 /** 文件树右键「问 AI」:把文件挂到输入框附件,并填入引导提示词,用户补充后发送 */
 function onAskAIFile(path: string) {
-  console.log('[ChatView] onAskAIFile', path, 'inputRef=', !!chatInputRef.value)
-  chatInputRef.value?.attachFilePath(path)
-  chatInputRef.value?.fill(`请看看工作区里的这个文件:${path}\n\n我需要你:`)
+  const el = activeInput()
+  if (!el) return
+  el.attachFilePath(path)
+  el.fill(`请看看工作区里的这个文件:${path}\n\n我需要你:`)
 }
 
 /** 侧边栏「测试分析」入口:填入测试提示词,引导用户上传项目 zip 后发送 */
 function onTestAnalysis() {
-  chatInputRef.value?.fill(
-    '我上传了一个项目源码压缩包,请用 test-analysis 技能对源码做静态分析:①生成测试点清单 ②生成测试用例 ③生成测试脚本(通过语法校验) ④输出测试报告。沙箱无法安装依赖,不要运行项目,只做静态分析与语法校验。',
-  )
-}
-
-// ---------- 技能面板(内置全局技能只读列表)----------
-
-const builtinSkills = ref<SkillInfo[]>([])
-const builtinLoading = ref(false)
-async function loadBuiltinSkills() {
-  builtinLoading.value = true
-  try {
-    builtinSkills.value = await chatApi.builtinSkills()
-  } catch (e) {
-    console.warn('[skills] load builtin failed', e)
-  } finally {
-    builtinLoading.value = false
+  const el = activeInput()
+  if (el) {
+    el.fill(
+      '我上传了一个项目源码压缩包,请用 test-analysis 技能对源码做静态分析:①生成测试点清单 ②生成测试用例 ③生成测试脚本(通过语法校验) ④输出测试报告。沙箱无法安装依赖,不要运行项目,只做静态分析与语法校验。',
+    )
+  } else {
+    chat.pendingFill = '我上传了一个项目源码压缩包,请用 test-analysis 技能对源码做静态分析:①生成测试点清单 ②生成测试用例 ③生成测试脚本(通过语法校验) ④输出测试报告。沙箱无法安装依赖,不要运行项目,只做静态分析与语法校验。'
   }
 }
-// immediate:刷新后即使 showFiles 已是 true 也加载一次;之后每次打开也刷新
-watch(showFiles, (v) => { if (v) loadBuiltinSkills() }, { immediate: true })
 
 // ---------- 会话内查找(Ctrl+F)----------
 
-const findOpen = ref(false)
-const findQuery = ref('')
-const findIndex = ref(0)
-const findInputRef = ref<any>(null)
-const flashedTurnId = ref<string | null>(null)
-let _flashTimer: ReturnType<typeof setTimeout> | null = null
+// ---------- 会话内查找(Ctrl+F)----------
 
-interface FindMatch { turnId: string; role: 'user' | 'assistant' }
+const { findOpen, findQuery, findIndex, findInputRef, flashedTurnId, findMatches, openFind, closeFind, locateTurn, navigateFind } =
+  // 第二个参数:窗口化下列表按偏移定位(目标行未渲染时 DOM 里没有元素)
+  useSessionFind(() => chat.turns, (turnId) => windowScrollToKey(turnKeyOf(turnId), 'center'))
 
-const findMatches = computed<FindMatch[]>(() => {
-  const q = findQuery.value.trim().toLowerCase()
-  if (!q) return []
-  const list: FindMatch[] = []
-  for (const t of chat.turns) {
-    const cands: { m: MessageVo | null; role: 'user' | 'assistant' }[] = []
-    if (t.userMessage) cands.push({ m: t.userMessage, role: 'user' })
-    for (const s of t.steps) cands.push({ m: s.message, role: 'assistant' })
-    if (t.finalAnswer) cands.push({ m: t.finalAnswer.message, role: 'assistant' })
-    const hit = cands.find((c) => (c.m?.content || '').toLowerCase().includes(q))
-    if (hit) list.push({ turnId: t.id, role: hit.role })
-  }
-  return list
-})
-
-function openFind() {
-  findOpen.value = true
-  findIndex.value = 0
-  nextTick(() => findInputRef.value?.focus())
-}
-/** 打开「自动化」:弹窗展示任务列表(管理:新建/启停/执行)。 */
+/** 打开「自动化」:整页展示任务列表(再次点击收起) */
 function openAutomationModal() {
-  automationShow.value = true
+  openManagePage('automation')
+}
+/** 打开驾驶舱(整页,再次点击收起) */
+function openDashboard() {
+  openManagePage('dashboard')
 }
 
 /** 跳转到工作区「定时任务」tab(消息中心点击后查看执行记录/报告)。 */
 function openJobTab() {
   openWorkspaceTab('jobs')
-}
-function closeFind() {
-  findOpen.value = false
-  findQuery.value = ''
-  findIndex.value = 0
-}
-
-/** 滚动到指定 turn 并短暂高亮(普通滚动容器按 DOM id 定位)。 */
-function locateTurn(turnId: string) {
-  const el = document.getElementById('find-turn-' + turnId)
-  el?.scrollIntoView({ block: 'start' })
-  flashedTurnId.value = turnId
-  if (_flashTimer) clearTimeout(_flashTimer)
-  _flashTimer = setTimeout(() => { flashedTurnId.value = null }, 1600)
-}
-
-function navigateFind(dir: number) {
-  const total = findMatches.value.length
-  if (!total) return
-  findIndex.value = (findIndex.value + dir + total) % total
-  locateTurn(findMatches.value[findIndex.value].turnId)
 }
 
 // ---------- 全局快捷键 ----------
@@ -495,86 +203,45 @@ const sessionId = computed(() => {
   return id ? Number(id) : null
 })
 
+/** 整页管理视图(技能市场/工具库/模板库/驾驶舱/自动化)互斥开合 + 侧边栏联动 */
+const {
+  templateLibShow,
+  dashboardShow,
+  automationShow,
+  skillsPageShow,
+  toolsPageShow,
+  managePageActive,
+  closeManagePages,
+  openManagePage,
+} = useManagePages({
+  sidebarEvents,
+  onOpenFiles: () => { showFiles.value = true },
+  onOpenFind: () => openFind(),
+  sessionId,
+})
+
 async function ensureSession() {
   if (sessionId.value && sessionId.value !== chat.currentSessionId) {
     await chat.selectSession(sessionId.value)
   }
 }
 
-/** 任务面板「来源会话」点击:关抽屉、切会话并滚动高亮触发该任务的那条用户消息。 */
-async function onOpenSession(target: { sessionId: number; messageId?: number }) {
-  showFiles.value = false
-  if (sessionId.value !== target.sessionId) {
-    await router.push({ name: 'session', params: { id: target.sessionId } })
-  }
-  await flashToMessage(target.messageId)
-}
-
-/** 收藏面板点击:切会话并定位到收藏项所在 turn(异步轮询等待消息加载)。 */
-async function onOpenFavorite(target: { sessionId: number; turnId?: string }) {
-  showFiles.value = false
-  if (sessionId.value !== target.sessionId) {
-    await router.push({ name: 'session', params: { id: target.sessionId } })
-  }
-  const flash = (turnId: string) => locateTurn(turnId)
-  if (!target.turnId) return
-  for (let i = 0; i < 40; i++) {
-    const turn = chat.turns.find((t) => t.id === target.turnId)
-    if (turn) {
-      flash(turn.id)
-      return
-    }
-    await new Promise((r) => setTimeout(r, 200))
-  }
-}
-
-/** 定位到指定用户消息所在 turn 并闪亮(消息加载是异步的,轮询等待)。 */
-async function flashToMessage(messageId?: number) {
-  if (!messageId) return
-  locating.value = true
-  const flash = (turnId: string) => {
-    locateTurn(turnId)
-  }
-  try {
-    for (let i = 0; i < 40; i++) {
-      const turn = chat.turns.find((t) => t.userMessage?.id === messageId)
-      if (turn) {
-        flash(turn.id)
-        return
-      }
-      await new Promise((r) => setTimeout(r, 200))
-    }
-  } finally {
-    locating.value = false
-  }
-}
+/** 会话跳转与消息定位(任务面板/收藏面板 → 定位并高亮) */
+const { locating, openSessionFromTask, openSessionFromFavorite } = useSessionNav({
+  chat,
+  router,
+  sessionId,
+  locateTurn,
+  onBeforeNav: () => { showFiles.value = false },
+})
 
 onMounted(() => {
   ensureSession()
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('aiwb:test-analysis', onTestAnalysis)
-  // 内容高度变化(组件/图片 iframe 异步加载撑高、新消息追加)时,若用户贴底则保持钉在底部,
-  // 避免"图渲染完视图向上滚,看不到最新输出"。
-  // 注意:必须监听内容整体包装层(chat-virtual-container,高度随所有消息增长),
-  // 而非单条消息或滚动容器(滚动容器尺寸固定不触发;单条消息大多在顶部,下方增长不会被察觉)。
+  // 内容高度变化(组件/图片 iframe 异步加载撑高)时贴底跟随:逻辑见 useChatScroll
   nextTick(() => {
-    const scroller = scrollRef.value
-    const inner = contentRef.value
-    if (scroller && inner && typeof ResizeObserver !== 'undefined') {
-      _prevScrollHeight = scroller.scrollHeight
-      const ro = new ResizeObserver(() => {
-        const prev = _prevScrollHeight
-        _prevScrollHeight = scroller.scrollHeight
-        if (scroller.scrollHeight > prev) {
-          // 内容撑高(图片加载等):若之前贴底则跟随,不因内容增长误判为用户上翻
-          if (stickToBottom.value) {
-            scroller.scrollTop = scroller.scrollHeight
-          }
-        }
-      })
-      ro.observe(inner)
-      _scrollObsCleanup = () => ro.disconnect()
-    }
+    _scrollObsCleanup = observeContentGrowth(scrollRef.value, contentRef.value)
   })
 })
 watch(() => chat.sessions, (list) => {
@@ -586,246 +253,56 @@ watch(sessionId, () => {
 })
 onBeforeUnmount(() => {
   chat.closeStream()
-  _resizeCleanup?.()
+  disposeWorkspacePanel()
   _scrollObsCleanup?.()
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('aiwb:test-analysis', onTestAnalysis)
 })
 
-function scrollToBottom() {
-  nextTick(() => {
-    const el = scrollRef.value
-    if (!el) return
-    if (!virtualItems.value.length) return
-    el.scrollTop = el.scrollHeight
-  })
+/** 虚拟列表渲染序列 + 流式/思考占位判定(逻辑见 composables/useVirtualList) */
+const { virtualItems, showStreamingBubble, showThinkingFallback } = useVirtualList(chat)
+
+/** 消息列表滚动/钉底/上翻加载(逻辑见 composables/useChatScroll) */
+const {
+  stickToBottom,
+  activePlan,
+  scrollToBottom,
+  handleVirtualScroll,
+  observeContentGrowth,
+} = useChatScroll(chat, scrollRef, virtualItems)
+
+/**
+ * 变高列表窗口化:只挂载视口附近的行(长会话不再把全部消息塞进 DOM)。
+ * 条数 ≤ 阈值时整渲染,短会话行为与之前完全一致。
+ * 注意:返回值必须解构成顶层 ref,模板才能自动解包(嵌套在对象里的 ref 不会)。
+ */
+const {
+  rows: vwinRows,
+  topSpacer: vwinTopSpacer,
+  bottomSpacer: vwinBottomSpacer,
+  setRowRef: setWindowRowRef,
+  syncViewport: syncWindowViewport,
+  scrollToKey: windowScrollToKey,
+  reset: resetWindowHeights,
+  pruneHeights: pruneWindowHeights,
+} = useVirtualWindow(scrollRef, virtualItems, {
+  threshold: 40,
+  overscan: 6,
+  estimate: 240,
+  isPinnedToBottom: () => stickToBottom.value,
+})
+
+/** 滚动事件:同步窗口化视口几何 + 原有钉底/上翻加载逻辑 */
+function onListScroll() {
+  syncWindowViewport()
+  handleVirtualScroll()
+  pruneWindowHeights()
 }
 
-/** 同步滚到底(用于会话切换:遮罩摘掉、列表刚挂载的那一帧立即定位,避免"先顶部后底部"闪烁) */
-function scrollToBottomNow() {
-  const el = scrollRef.value
-  if (!el) return
-  if (!virtualItems.value.length) return
-  el.scrollTop = el.scrollHeight
-}
-
-/** 是否处于"打开会话后的贴底稳定期":期间强制 stickToBottom=true,忽略瞬时滚动事件。
- *  否则异步测量撑高内容时,先出现的"未贴底"瞬时事件会误判 stickToBottom=false,
- *  内容撑高后不再回钉 → 表现为"一开始在最下方,又自动向上滚一段"。 */
-let _openSettleUntil = 0
-function pinOnOpen() {
-  stickToBottom.value = true
-  _openSettleUntil = Date.now() + 1000
-  const el = scrollRef.value
-  if (el) _prevScrollHeight = el.scrollHeight
-  scrollToBottomNow()
-  const tick = () => {
-    scrollToBottomNow()
-    if (Date.now() < _openSettleUntil) requestAnimationFrame(tick)
-  }
-  requestAnimationFrame(tick)
-  setTimeout(scrollToBottomNow, 200)
-  setTimeout(scrollToBottomNow, 500)
-}
-
-// 会话切换:switching=true 时列表被 v-else-if 卸载、遮罩覆盖;false 时列表重新挂载(默认滚到顶部)。
-// 在切换完成的同一帧立即滚到底,并用 rAF + 延迟在异步测量收尾时继续钉底,消除"闪一下顶部"/
-// "先到底又自动上滚"。
-watch(() => chat.switching, (now, prev) => {
-  if (!now && prev) pinOnOpen()
-}, { flush: 'post' })
-
-/** 用户提交/拒绝权限或问题后(resumeStreaming 置 isStreaming=true),agent 会继续输出。
- *  此时把用户拉回底部,避免"确认后看不到后续输出"。
- *  nextTick 滚动可能早于虚拟列表渲染新项,故延迟再滚一次保证到位。 */
-watch(() => chat.isStreaming, (now, prev) => {
-  if (now && !prev) {
-    stickToBottom.value = true
-    scrollToBottom()
-    setTimeout(scrollToBottom, 200)
-    setTimeout(scrollToBottom, 600)
-  }
-})
-
-/** 用户是否停留在底部区域(阈值内视为贴底)。贴底时流式输出自动跟随;上翻阅读时不被拉回。 */
-const stickToBottom = ref(true)
-
-/** 当前生成中 turn 的任务规划:悬浮在输入框上方,随 write_todos 实时刷新;
- *  生成结束(完成/出错/中断)即隐藏——完成态的结果由结果文件卡与正文承载。 */
-const activePlan = computed(() => {
-  if (!chat.isStreaming || !chat.turns.length) return []
-  return extractPlan(chat.turns[chat.turns.length - 1])
-})
-let _prevScrollHeight = 0
-let _prevScrollTop = 0
-/** 正在前插更早分页:期间抑制自动滚底(messages.length 变化由 loadOlderMessages 前插引起) */
-const isBackfilling = ref(false)
-function handleVirtualScroll() {
-  const el = scrollRef.value
-  if (!el) return
-  // 打开会话后的贴底稳定期:异步测量/自动滚动引发的瞬时非贴底事件不误判 stickToBottom,
-  // 否则内容撑高后不再回钉 → "先到底又自动向上滚"。稳定期结束恢复正常判定。
-  if (Date.now() < _openSettleUntil) {
-    stickToBottom.value = true
-    return
-  }
-  // 内容撑高(图片加载等):scrollHeight 增长说明是内容变化而非用户主动上翻,不释放钉底
-  if (el.scrollHeight > _prevScrollHeight) {
-    _prevScrollHeight = el.scrollHeight
-    return
-  }
-  _prevScrollHeight = el.scrollHeight
-  const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 120
-  stickToBottom.value = nearBottom
-  // 滚动到顶:加载更早历史(loadingOlder 防重入;hasOlder=false 表示已到最早)
-  if (el.scrollTop <= 60 && chat.hasOlder && !chat.loadingOlder) {
-    isBackfilling.value = true
-    // nextTick 后复位:store 的 loadingOlder 是同步复位的,而 messages/turns 的 watch
-    // 在组件下一帧调度,届时标志需仍为 true 才能抑制"前插后自动滚底"
-    chat.loadOlderMessages()
-      .catch(() => {})
-      .finally(() => nextTick(() => { isBackfilling.value = false }))
-  }
-}
-// 仅当贴底时才在流式时跟随底部,交给 vueuc 内置 ResizeObserver 跟随(避免与强制滚动竞争抖动)
-watch(() => chat.streamingText, () => {
-  if (stickToBottom.value) scrollToBottom()
-})
-
-// 前插更早分页时(backfilling)不自动滚底:用户正停留在顶部阅读历史,不应被拉回底部
-// 同时尊重 stickToBottom:用户已上翻阅读时,后台追加消息也不拉回,避免"卡在最底部组件"无法上翻
-watch(() => chat.messages.length, () => {
-  if (isBackfilling.value || chat.loadingOlder) return
-  if (!stickToBottom.value) return
-  // 打开历史会话 / 压缩后刷新:等渲染后再滚到底(内容高度异步实测,需延迟多次)
-  scrollToBottom()
-  setTimeout(scrollToBottom, 150)
-  setTimeout(scrollToBottom, 400)
-})
-watch(() => chat.turns.length, () => {
-  if (isBackfilling.value || chat.loadingOlder) return
-  if (!stickToBottom.value) return
-  scrollToBottom()
-})
-
-/** 当前流式目标消息是否已落入某个 turn(step/finalAnswer) */
-const activeTurnExists = computed(() => {
-  const id = chat.streamingMessageId
-  if (!id) return false
-  return chat.turns.some((t) =>
-    t.steps.some((s) => s.message.agentMessageId === id) ||
-    (t.finalAnswer?.message.agentMessageId === id),
-  )
-})
-
-/** 最后一个 turn 是否已有 assistant 内容(避免与"思考中"兜底重复) */
-const lastTurnHasContent = computed(() => {
-  const list = chat.turns
-  if (list.length === 0) return false
-  const last = list[list.length - 1]
-  return last.steps.length > 0 || !!last.finalAnswer
-})
-
-const showStreamingBubble = computed(
-  () => chat.isStreaming && !!chat.streamingText && !activeTurnExists.value,
-)
-const showThinkingFallback = computed(
-  () =>
-    chat.isStreaming &&
-    !chat.streamingText &&
-    !activeTurnExists.value &&
-    !lastTurnHasContent.value,
-)
-
-// ---------- 虚拟列表 ----------
-
-/** 虚拟列表每项的 key:turn 用 turn.id,summary 用 sha/at/长度(与原 v-for key 一致) */
-type VirtualListItem =
-  | { key: string; kind: 'turn'; turn: Turn }
-  | { key: string; kind: 'summary'; summary: SummaryItem }
-  | { key: string; kind: 'streaming'; text: string }
-  | { key: string; kind: 'thinking' }
-  | { key: string; kind: 'connecting' }
-  | { key: string; kind: 'older-loader' }
-  | { key: string; kind: 'top-space' }
-  | { key: string; kind: 'compact-divider' }
-  | { key: string; kind: 'compact-progress' }
-  | { key: string; kind: 'interrupted-divider' }
-
-const virtualItems = computed<VirtualListItem[]>(() => {
-  const items: VirtualListItem[] = []
-  // 历史分页:还有更早消息或正在加载时,顶部固定显示提示条(滚动到顶触发加载)
-  if (chat.hasOlder || chat.loadingOlder) {
-    items.push({ key: '__older__', kind: 'older-loader' })
-  } else if (chat.messages.length > 0) {
-    // 已到最早:插入空占位,避免第一条消息紧贴对话框顶部
-    items.push({ key: '__top-space__', kind: 'top-space' })
-  }
-  const msgs = chat.messages
-  // 压缩点(遗留兼容):deepagents 不再落 compaction 记录,该分支恒空。
-  const compactionMarks = msgs
-    .filter((m) => m.role === 'compaction')
-    .map((m) => ({ id: m.id, status: m.status }))
-  // 中断点:用户中断生成时后端落库 role=interrupted 记录,前端渲染为"已中断"分割线。
-  const interruptedMarks = msgs
-    .filter((m) => m.role === 'interrupted')
-    .map((m) => ({ id: m.id }))
-  // 统一归并:压缩/中断标记都按 id 插到对应 flow 项之前。
-  const dividerMarks = [
-    ...compactionMarks.map((m) => ({
-      id: m.id,
-      kind: 'compact-divider' as VirtualListItem['kind'],
-      key: '__compact__-' + m.id,
-    })),
-    ...interruptedMarks.map((m) => ({
-      id: m.id,
-      kind: 'interrupted-divider' as VirtualListItem['kind'],
-      key: '__interrupted__-' + m.id,
-    })),
-  ].sort((a, b) => (a.id ?? 0) - (b.id ?? 0))
-  // flow 每项的锚点消息 id:turn 用其 user 消息 id;summary 无对应消息(deepagents 恒空)。
-  const summaryIdOf = (): number => -1
-  const flowKeyById = chat.flow.map((it) => {
-    if (it.kind === 'turn') return it.turn.userMessage?.id ?? it.turn.steps[0]?.message?.id ?? -1
-    return summaryIdOf()
-  })
-  const flowItems: VirtualListItem[] = chat.flow.map((it) =>
-    it.kind === 'turn'
-      ? { key: 't-' + it.turn.id, kind: 'turn', turn: it.turn }
-      : {
-          key: 's-' + (it.summary.sha || '') + '-' + (it.summary.at || '') + '-' + it.summary.summary.length,
-          kind: 'summary',
-          summary: it.summary,
-        },
-  )
-  // 双指针归并:压缩/中断标记按 id 插到对应 flow 项之前。
-  // 本地乐观消息(id 为负,发送中的用户消息/未刷新定稿)必定是最新的,
-  // 任何已落库的标记记录都在它之前 → 负 id 一律判定"标记在前",否则按 id 比较。
-  const dividerBeforeFlow = (divId: number, flowId: number): boolean => {
-    if (flowId < 0) return true
-    return divId < flowId
-  }
-  let fi = 0
-  let ci = 0
-  while (fi < flowItems.length || ci < dividerMarks.length) {
-    const cm = dividerMarks[ci]
-    const nextFlowId = flowKeyById[fi] ?? Number.MAX_SAFE_INTEGER
-    if (cm && (fi >= flowItems.length || dividerBeforeFlow(cm.id ?? 0, nextFlowId))) {
-      items.push({ key: cm.key, kind: cm.kind })
-      ci++
-    } else {
-      items.push(flowItems[fi])
-      fi++
-    }
-  }
-  // 流式进行中:末尾显示流式气泡或思考占位(deepagents 无压缩/冷启动连接态)
-  if (showStreamingBubble.value) {
-    items.push({ key: '__streaming__', kind: 'streaming', text: chat.streamingText })
-  } else if (showThinkingFallback.value) {
-    items.push({ key: '__thinking__', kind: 'thinking' })
-  }
-  return items
-})
+// 会话切换:高度缓存与视口几何需重置(不同会话的 turn 完全不同)
+watch(sessionId, () => resetWindowHeights())
+watch(() => chat.currentSessionId, () => nextTick(() => syncWindowViewport()))
+onBeforeUnmount(() => resetWindowHeights())
 
 /** 普通滚动容器(非虚拟化):消息整体渲染,滚动行为与原生一致,避免虚拟列表对变高组件条的估算补偿 */
 </script>
@@ -834,36 +311,36 @@ const virtualItems = computed<VirtualListItem[]>(() => {
   <div class="chat-view">
     <div class="chat-head">
       <div class="head-left">
-        <n-button v-if="sidebarCollapsed || isMobile" size="small" quaternary title="展开侧边栏" @click="toggleSidebar()">
+        <n-button v-if="sidebarCollapsed || isMobile" size="small" quaternary :title="t('chatview.expandSidebar')" :aria-label="t('chatview.expandSidebar')" @click="toggleSidebar()">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/></svg>
         </n-button>
-        <span class="title">{{ chat.currentSession?.title || 'AI Workbench' }}</span>
-        <span class="conn-badge" :class="{ ok: chat.connected, warn: chat.reconnecting }">
+        <span v-if="!managePageActive && chat.currentSessionId" class="title">{{ chat.currentSession?.title || t('chatview.newChatTitle') }}</span>
+        <span v-if="!managePageActive" class="conn-badge" :class="{ ok: chat.connected, warn: chat.reconnecting }">
           <span class="conn-dot"></span>
-          {{ chat.connected ? '已连接' : (chat.reconnecting ? '重连中…' : '未连接') }}
+          {{ chat.connected ? t('chatview.connOk') : (chat.reconnecting ? t('chatview.connReconnecting') : t('chatview.connNone')) }}
         </span>
-        <n-button class="find-btn" size="small" quaternary title="会话内查找 (Ctrl+F)" @click="openFind">
+        <n-button v-if="!managePageActive && chat.currentSessionId" class="find-btn" size="small" quaternary :title="t('chatview.findTitle')" :aria-label="t('chatview.findTitle')" @click="openFind">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <span class="btn-label">查找</span>
+        <span class="btn-label">{{ t('chatview.findBtn') }}</span>
         </n-button>
       </div>
       <div class="head-right">
         <!-- 顶部面板入口:与用户信息同区,点击打开/切换;再次点击已激活的面板则收起工作区 -->
-        <div class="ws-launcher">
+        <div v-if="!managePageActive" class="ws-launcher">
           <n-button
-            v-for="t in workspaceTabs"
-            :key="t.key"
+            v-for="tab in workspaceTabs"
+            :key="tab.key"
             size="small"
             quaternary
-            :type="showFiles && activeTab === t.key ? 'primary' : 'default'"
-            :title="t.label"
-            @click="onLauncherClick(t.key)"
+            :type="showFiles && activeTab === tab.key ? 'primary' : 'default'"
+            :title="t('workspace.' + tab.key)"
+            @click="onLauncherClick(tab.key)"
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path :d="t.icon"/></svg>
-            <span class="ws-launcher-label">{{ t.label }}</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path :d="tab.icon"/></svg>
+            <span class="ws-launcher-label">{{ t('workspace.' + tab.key) }}</span>
           </n-button>
         </div>
-        <n-button size="small" quaternary :title="showFiles ? '收起工作区' : '展开工作区'" @click="showFiles = !showFiles">
+        <n-button v-if="!managePageActive" size="small" quaternary :title="showFiles ? t('chatview.collapseWs') : t('chatview.expandWs')" :aria-label="showFiles ? t('chatview.collapseWs') : t('chatview.expandWs')" @click="showFiles = !showFiles">
           <svg v-if="showFiles" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/><path d="m8 9 3 3-3 3"/></svg>
           <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/><path d="m8 15 3-3-3-3"/></svg>
         </n-button>
@@ -874,20 +351,20 @@ const virtualItems = computed<VirtualListItem[]>(() => {
 
     <!-- 登录过期横幅:token 失效后 SSE 停止重连,提示重新登录而非无限重连 -->
     <div v-if="chat.authExpired" class="auth-expired-bar">
-      <span>登录已过期,实时连接已断开,请重新登录后继续。</span>
-      <n-button size="tiny" type="primary" @click="router.push('/login')">重新登录</n-button>
+          <span>{{ t('chatview.loginExpired') }}</span>
+          <n-button size="tiny" type="primary" @click="router.push('/login')">{{ t('chatview.relogin') }}</n-button>
     </div>
 
     <!-- 断线横幅:意外断线时显示;切换会话/首次连接中的主动断开不算断线,不打扰 -->
     <div v-if="chat.currentSessionId && !chat.connected && chat.reconnecting && !chat.authExpired" class="reconnect-bar">
-      <span>连接已断开{{ chat.reconnecting ? '，正在自动重连…' : '' }}</span>
-      <n-button size="tiny" type="primary" @click="chat.forceReconnect">立即重连</n-button>
+          <span>{{ t('chatview.reconnectingTip', { extra: chat.reconnecting ? t('chatview.connReconnecting') : '' }) }}</span>
+          <n-button size="tiny" type="primary" @click="chat.forceReconnect">{{ t('chatview.reconnect') }}</n-button>
     </div>
 
     <!-- 断线兜底横幅:连接断开超时未恢复,本轮已中止 -->
     <div v-if="chat.disconnectAborted && !chat.isStreaming" class="disconnect-abort-bar">
-      <span>连接已断开，本轮回答已中止。请检查网络后重新提问。</span>
-      <n-button size="tiny" quaternary @click="chat.dismissDisconnectAbort">知道了</n-button>
+          <span>{{ t('chatview.disconnected') }}</span>
+          <n-button size="tiny" quaternary @click="chat.dismissDisconnectAbort">{{ t('chatview.dismiss') }}</n-button>
     </div>
 
     <!-- 会话内查找栏 -->
@@ -897,7 +374,7 @@ const virtualItems = computed<VirtualListItem[]>(() => {
         v-model:value="findQuery"
         size="small"
         clearable
-        placeholder="在本会话中查找…"
+          placeholder="t('chatview.searchPlaceholder')"
         @update:value="() => { findIndex = 0 }"
         @keyup.enter="navigateFind(1)"
       >
@@ -908,139 +385,171 @@ const virtualItems = computed<VirtualListItem[]>(() => {
           <span class="find-count">{{ findMatches.length ? findIndex + 1 + ' / ' + findMatches.length : 0 + ' / 0' }}</span>
         </template>
       </n-input>
-      <n-button size="small" quaternary title="上一个 (Shift+Enter)" @click="navigateFind(-1)">
+        <n-button size="small" quaternary :title="t('chatview.prevMatch')" @click="navigateFind(-1)">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
       </n-button>
-      <n-button size="small" quaternary title="下一个 (Enter)" @click="navigateFind(1)">
+        <n-button size="small" quaternary :title="t('chatview.nextMatch')" @click="navigateFind(1)">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
       </n-button>
-      <n-button size="small" quaternary title="关闭 (Esc)" @click="closeFind">
+        <n-button size="small" quaternary :title="t('chatview.closeFind')" @click="closeFind">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </n-button>
     </div>
 
     <div class="chat-main">
-      <DashboardView v-if="dashboardShow" @close="dashboardShow = false" />
-      <div class="chat-col">
+      <DashboardView v-if="dashboardShow" page @close="dashboardShow = false" />
+      <AutomationManager v-if="automationShow" page @close="automationShow = false" />
+      <!-- 技能市场 / 工具库:整页形式占满聊天窗口(带面包屑) -->
+      <SkillMarketplace
+        v-if="skillsPageShow"
+        page
+        @close="skillsPageShow = false"
+        @installed="onSkillInstalled"
+      />
+      <McpManager
+        v-if="toolsPageShow"
+        page
+        @close="toolsPageShow = false"
+      />
+      <TemplateLibrary
+        v-if="templateLibShow"
+        page
+        @close="templateLibShow = false"
+        @use="onTemplateUse"
+        @use-html="onTemplateUseHtml"
+      />
+      <div v-if="!managePageActive" class="chat-col">
         <div class="chat-body">
           <template v-if="chat.currentSessionId && !isNewSession">
             <div
               ref="scrollRef"
               class="chat-virtual"
-              @scroll="handleVirtualScroll"
+              role="log"
+              aria-live="polite"
+              aria-relevant="additions text"
+              :aria-label="t('chat.logLabel')"
+              @scroll="onListScroll"
             >
               <div
                 ref="contentRef"
                 class="chat-virtual-container"
               >
+              <!-- 窗口化:视口上方未渲染行的占位高度 -->
+              <div v-if="vwinTopSpacer > 0" class="vw-spacer" :style="{ height: vwinTopSpacer + 'px' }" aria-hidden="true"></div>
               <div
-                v-for="item in virtualItems"
-                :key="item.key"
+                v-for="row in vwinRows"
+                :key="row.key"
+                :ref="(el) => setWindowRowRef(row.key, el as Element | null)"
                 class="chat-virtual-inner"
               >
                 <div
-                  v-if="item.kind === 'turn'"
+                  v-if="row.item.kind === 'turn'"
                   class="flow-item"
-                  :id="'find-turn-' + item.turn.id"
-                  :class="{ 'find-flash': flashedTurnId === item.turn.id }"
+                  :id="'find-turn-' + row.item.turn.id"
+                  :class="{ 'find-flash': flashedTurnId === row.item.turn.id }"
                 >
-                  <ChatMessage v-if="item.turn.userMessage" :message="item.turn.userMessage" :session-id="chat.currentSessionId" :turn-id="item.turn.id" />
-                  <AssistantTurn v-if="item.turn.finalAnswer || item.turn.steps.length" :turn="item.turn" :session-id="chat.currentSessionId" />
+                  <ChatMessage v-if="row.item.turn.userMessage" :message="row.item.turn.userMessage" :session-id="chat.currentSessionId" :turn-id="row.item.turn.id" />
+                  <AssistantTurn v-if="row.item.turn.finalAnswer || row.item.turn.steps.length" :turn="row.item.turn" :session-id="chat.currentSessionId" />
                 </div>
-                <ChangeSummaryCard v-else-if="item.kind === 'summary'" :summary="item.summary" />
                 <ChatMessage
-                  v-else-if="item.kind === 'streaming'"
-                  :message="{ id: -1, role: 'assistant', content: item.text, status: 'streaming' }"
+                  v-else-if="row.item.kind === 'streaming'"
+                  :message="{ id: -1, role: 'assistant', content: row.item.text, status: 'streaming', createdAt: '' }"
                   :streaming="true"
                 />
-                <div v-else-if="item.kind === 'thinking'" class="thinking">
-                  <n-spin size="small" /> AI 思考中…
+                <div v-else-if="row.item.kind === 'thinking'" class="thinking">
+        <n-spin size="small" /> {{ t('chatview.thinking') }}
                 </div>
                 <!-- 历史分页:滚动到顶自动加载更早;加载中显示状态,已到最早则提示 -->
-                <div v-else-if="item.kind === 'older-loader'" class="older-loader">
+                <div v-else-if="row.item.kind === 'older-loader'" class="older-loader">
                   <span v-if="chat.loadingOlder" class="spinner"></span>
-                  <span>{{ chat.loadingOlder ? '正在加载更早消息…' : (chat.hasOlder ? '还有更早的历史消息,滚动到顶加载' : '已加载全部历史消息') }}</span>
+          <span>{{ chat.loadingOlder ? t('chatview.loadingOlder') : (chat.hasOlder ? t('chatview.hasOlder') : t('chatview.allLoaded')) }}</span>
                 </div>
                 <!-- 已到最早时的顶部占位:保持首条消息与对话框顶部的间距 -->
-                <div v-else-if="item.kind === 'top-space'" class="top-space"></div>
+                <div v-else-if="row.item.kind === 'top-space'" class="top-space"></div>
                 <!-- agent 冷启动连接中:空闲回收后发消息,先拉起容器再回复;有流式内容即消失 -->
-                <div v-else-if="item.kind === 'connecting'" class="connecting-dock">
-                  <span class="connecting">正在连接智能体,请稍候…</span>
+                <div v-else-if="row.item.kind === 'connecting'" class="connecting-dock">
+        <span class="connecting">{{ t('chatview.connecting') }}</span>
                 </div>
                 <!-- 压缩分割线:此前的早期内容已总结,不展示在对话里(文案固定,压缩中状态由底部占位单独表示) -->
-                <div v-else-if="item.kind === 'compact-divider'" class="compact-divider">
+                <div v-else-if="row.item.kind === 'compact-divider'" class="compact-divider">
                   <span class="cd-line"></span>
                   <span class="cd-label">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
-                    会话已压缩:早期内容已总结
+        {{ t('chatview.ctxHigh') }}
                   </span>
                   <span class="cd-line"></span>
                 </div>
                 <!-- 压缩进行中:消息流末尾的状态占位(当前可视区域可见) -->
-                <div v-else-if="item.kind === 'compact-progress'" class="compact-progress">
+                <div v-else-if="row.item.kind === 'compact-progress'" class="compact-progress">
                   <span class="spinner"></span>
-                  <span>正在压缩会话,总结早期内容…</span>
+          <span>{{ t('chatview.ctxTitle') }},{{ t('chatview.collapsedNote') }}</span>
                 </div>
                 <!-- 中断分割线:用户中断了本轮生成 -->
-                <div v-else-if="item.kind === 'interrupted-divider'" class="interrupted-divider">
+                <div v-else-if="row.item.kind === 'interrupted-divider'" class="interrupted-divider">
                   <span class="id-line"></span>
                   <span class="id-label">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>
-                    已中断
+        {{ t('chatview.collapsedNote') }}
                   </span>
                   <span class="id-line"></span>
                 </div>
               </div>
+              <!-- 窗口化:视口下方未渲染行的占位高度 -->
+              <div v-if="vwinBottomSpacer > 0" class="vw-spacer" :style="{ height: vwinBottomSpacer + 'px' }" aria-hidden="true"></div>
               </div>
             </div>
           </template>
-            <div v-else-if="chat.currentSessionId" class="chat-virtual-inner">
-              <WelcomeBoard @select="onScenarioSelect" />
+            <!-- 无进行中的会话(含首页/草稿/无会话):展示欢迎页,输入框在其中 -->
+            <div v-else class="chat-virtual-inner wel-inner">
+              <WelcomeBoard @select="onScenarioSelect" @use-html="onTemplateUseHtml">
+                <ChatInput ref="homeInputRef" @open-test-analysis="onTestAnalysis" @open-skills="openSkillPicker" @open-mcp="openMcpPicker" />
+              </WelcomeBoard>
             </div>
-            <n-empty v-else description="选择左侧会话或点击「新会话」开始" style="margin-top: 80px" />
           <!-- 切换/定位遮罩:绝对定位覆盖在列表之上,不卸载列表,避免切换时闪一下顶部 -->
           <div v-if="chat.switching || locating" class="switching-mask">
             <n-spin size="small" />
-            <span>{{ chat.switching ? '正在加载会话…' : '正在定位消息…' }}</span>
+          <span>{{ chat.switching ? t('chatview.switching') : t('chatview.locating') }}</span>
           </div>
         </div>
 
-        <div v-if="chat.currentSessionId" class="composer-wrap">
-          <!-- 任务规划悬浮卡:生成期间钉在输入框上方,实时展示 AI 的计划进度 -->
-          <TaskPlan :todos="activePlan" class="composer-plan" />
-          <!-- 未贴底时显示「回到最新」下箭头,点击滚到会话最下方 -->
+        <div v-if="chat.currentSessionId && !isNewSession" class="composer-wrap" :class="{ 'has-plan': activePlan.length }">
+          <!-- 未贴底时显示「回到最新」下箭头,位于任务栏上方 -->
           <button
             v-show="!stickToBottom"
             class="scroll-to-bottom-btn"
-            title="回到最新消息"
+        title="t('chatview.jumpToLatest')"
+        aria-label="t('chatview.jumpToLatest')"
             @click="scrollToBottom"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
+          <!-- 任务规划卡:钉在输入框正上方,与输入框等宽,实时展示计划进度 -->
+          <TaskPlan :todos="activePlan" class="composer-plan" />
           <ChatInput ref="chatInputRef" @open-test-analysis="onTestAnalysis" @open-skills="openSkillPicker" @open-mcp="openMcpPicker" />
         </div>
       </div>
 
       <!-- 工作区:常驻右侧面板,可拖动左缘调整宽度 -->
       <div
+        v-if="!managePageActive"
         class="workspace-panel"
         :class="{ 'workspace-collapsed': !showFiles, 'ws-resizing': wsResizing }"
         :style="{ width: wsWidth + 'px' }"
       >
         <!-- 宽度拖动条(拖动改变工作区宽度) -->
-        <div v-if="showFiles && !isMobile" class="ws-divider" :title="'拖动调整宽度'" @mousedown.prevent="startResize"></div>
+        <div v-if="showFiles && !isMobile" class="ws-divider" :title="t('chatview.resizeWs')" @mousedown.prevent="startResize"></div>
         <div class="workspace-body" v-if="showFiles">
           <!-- 已打开的标签栏(可关闭) -->
           <div v-if="openTabList.length" class="ws-tabbar">
             <div
-              v-for="t in openTabList"
-              :key="t.key"
+              v-for="tab in openTabList"
+              :key="tab.key"
               class="ws-tab"
-              :class="{ active: activeTab === t.key }"
-              @click="activeTab = t.key"
+              :class="{ active: activeTab === tab.key }"
+              @click="activeTab = tab.key"
             >
-              <span class="ws-tab-label">{{ t.label }}</span>
-              <span class="ws-tab-close" title="关闭" @click.stop="closeTab(t.key)">
+              <span class="ws-tab-label">{{ t('workspace.' + tab.key) }}</span>
+            <span class="ws-tab-close" :title="t('chatview.closeTab')" @click.stop="closeTab(tab.key)">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </span>
             </div>
@@ -1050,67 +559,24 @@ const virtualItems = computed<VirtualListItem[]>(() => {
               <FileTree :changed-paths="Array.from(chat.changedFilePaths)" @ask-ai="onAskAIFile" />
             </template>
             <template v-else-if="activeTab === 'skills'">
-              <n-collapse :default-expanded-names="[]" :bordered="false" class="builtin-collapse">
-                <n-collapse-item name="builtin" title="内置技能">
-                  <template #header-extra>
-                    <span class="builtin-note">{{ builtinLoading ? '加载中…' : builtinSkills.length + ' 个 · 随系统内置,只读' }}</span>
-                  </template>
-                  <div v-if="builtinLoading" class="builtin-empty">加载中…</div>
-                  <div v-else-if="builtinSkills.length" class="builtin-list">
-                    <div v-for="s in builtinSkills" :key="s.name" class="builtin-item">
-                      <span class="builtin-name">{{ s.name }}</span>
-                      <span class="builtin-desc">{{ s.description }}</span>
-                    </div>
-                  </div>
-                  <div v-else class="builtin-empty">暂无内置技能</div>
-                </n-collapse-item>
-              </n-collapse>
-              <n-divider style="margin: 10px 0" />
-              <div class="user-skills">
-              <div class="us-head">
-                <span class="us-title">用户技能</span>
-                <n-button size="tiny" type="primary" secondary @click="openCreateSkill">＋ 新建技能</n-button>
-              </div>
-              <div v-if="!userSkills.length" class="us-empty">
-                暂无用户技能,点击「新建技能」创建,或在技能市场安装
-              </div>
-              <div v-for="s in userSkills" :key="s.id" class="us-card">
-                <div class="us-card-icon">{{ parseSkillIcon(s.content) || fallbackIcon(s.name) }}</div>
-                <div class="us-card-body">
-                  <div class="us-card-name">{{ s.name }}</div>
-                  <div class="us-card-tags">
-                    <span class="us-tag" :class="s.source === 'installed' ? 'inst' : 'own'">{{ s.source === 'installed' ? '市场安装' : '自建' }}</span>
-                    <span class="us-tag" :class="s.visibility === 1 ? 'pub' : 'pri'">{{ s.visibility === 1 ? '公开' : '私有' }}</span>
-                  </div>
-                  <div class="us-desc">{{ s.description }}</div>
-                </div>
-                <div class="us-actions">
-                  <button class="us-act" :title="s.source === 'installed' ? '查看详情(市场安装的技能只读)' : '编辑'" @click="openEditSkill(s)">{{ s.source === 'installed' ? '查看' : '编辑' }}</button>
-                  <button class="us-act danger" @click="removeUserSkill(s)">删除</button>
-                </div>
-              </div>
-            </div>
+              <SkillsPanel />
             </template>
             <template v-else-if="activeTab === 'jobs'">
               <JobRunsPanel />
             </template>
             <template v-else-if="activeTab === 'favorites'">
-              <FavoritesPanel @open-session="onOpenFavorite" />
+              <FavoritesPanel @open-session="openSessionFromFavorite" />
             </template>
             <template v-else-if="activeTab === 'browser'">
               <BrowserCanvas auto-active :follow="browserFollowing" @stopped="closeTab('browser')" />
             </template>
-            <n-empty v-else description="从上方按钮打开面板" style="margin-top: 40px" />
+        <n-empty v-else :description="t('chatview.noSuggestion')" style="margin-top: 40px" />
           </div>
         </div>
       </div>
     </div>
   </div>
 
-  <TemplateLibrary
-    v-model:show="templateLibShow"
-    @use="onTemplateUse"
-  />
   <McpManager
     :show="mcpShow"
     @update:show="(v: boolean) => mcpShow = v"
@@ -1119,125 +585,22 @@ const virtualItems = computed<VirtualListItem[]>(() => {
     v-model:show="marketplaceShow"
     @installed="onSkillInstalled"
   />
-  <n-modal v-model:show="skillsOpen" preset="card" style="width: 780px; max-width: 96vw" :bordered="false">
-    <template #header>
-      <div class="picker-head">
-        <span class="picker-ico picker-ico-skill">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-        </span>
-        <div class="picker-head-text">
-          <div class="picker-title">会话技能</div>
-          <div class="picker-sub">按会话单独勾选要加载的自定义技能，与当前对话绑定</div>
-        </div>
-        <n-tag v-if="skillsPick.length" size="small" round type="primary" :bordered="false" class="picker-count">{{ skillsPick.length }} 项已选</n-tag>
-        <n-tag v-else size="small" round :bordered="false" class="picker-count">未选自定义技能</n-tag>
-      </div>
-    </template>
-    <div class="picker-body">
-      <div class="picker-desc">内置技能默认加载、无需勾选；把<em>自定义技能</em>（市场安装/自己创建）移到右侧即在本会话启用。</div>
-      <n-transfer v-model:value="skillsPick" :options="skillTransferOptions" source-filterable source-title="可选自定义技能" target-title="本会话已选" class="picker-transfer" />
-      <div v-if="skillUnpicked.length > SKILL_PAGE_SIZE" class="picker-pager">
-        <n-pagination :page="skillPage" :page-count="skillPageCount" size="small" @update:page="skillPage = $event" />
-      </div>
-    </div>
-    <div class="sp-actions">
-      <span class="sp-tip">应用后对本会话立即生效（下一条消息起）</span>
-      <div class="sp-action-btns">
-        <n-button size="medium" quaternary @click="skillsOpen = false">取消</n-button>
-        <n-button size="medium" type="primary" @click="applySkills">应用变更</n-button>
-      </div>
-    </div>
-  </n-modal>
+  <SessionPickers ref="sessionPickers" />
 
-  <n-modal v-model:show="mcpOpen" preset="card" style="width: 780px; max-width: 96vw" :bordered="false">
-    <template #header>
-      <div class="picker-head">
-        <span class="picker-ico picker-ico-mcp">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
-        </span>
-        <div class="picker-head-text">
-          <div class="picker-title">会话 MCP 连接</div>
-          <div class="picker-sub">按会话单独选择本次对话要调用的远程 MCP Server</div>
-        </div>
-        <n-tag v-if="mcpPick.length" size="small" round type="primary" :bordered="false" class="picker-count">{{ mcpPick.length }} 项已选</n-tag>
-        <n-tag v-else size="small" round :bordered="false" class="picker-count">本会话不加载 MCP</n-tag>
-      </div>
-    </template>
-    <div class="picker-body">
-      <div class="picker-desc">未作选择时默认加载你<em>全部已启用</em>的 MCP；把 Server 移到右侧后，本会话只加载选中的（可随时「恢复默认」）。</div>
-      <n-transfer v-model:value="mcpPick" :options="mcpTransferOptions" source-filterable source-title="可选 MCP Server" target-title="本会话已选" class="picker-transfer" />
-      <div v-if="mcpUnpicked.length > MCP_PAGE_SIZE" class="picker-pager">
-        <n-pagination :page="mcpPage" :page-count="mcpPageCount" size="small" @update:page="mcpPage = $event" />
-      </div>
-    </div>
-    <div class="sp-actions">
-      <span class="sp-tip">应用后对本会话立即生效（下一条消息起）</span>
-      <div class="sp-action-btns">
-        <n-button size="medium" quaternary :disabled="mcpSaving" class="reset-btn" @click="resetMcp">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
-          恢复默认（全部已启用）
-        </n-button>
-        <n-button size="medium" quaternary @click="mcpOpen = false">取消</n-button>
-        <n-button size="medium" type="primary" :loading="mcpSaving" :disabled="mcpSaving" @click="applyMcp">应用变更</n-button>
-      </div>
-    </div>
-  </n-modal>
-
-  <n-modal v-model:show="skillModalShow" preset="card" :title="skillReadonly ? '查看技能' : skillEditingId ? '编辑技能' : '新建技能'" style="width: 880px; max-width: 96vw" :bordered="false">
-    <div class="sk-form">
-      <div class="sk-row">
-        <span class="sk-label">技能名</span>
-        <n-input v-model:value="skillForm.name" :disabled="skillReadonly || !!skillEditingId" placeholder="小写字母/数字/连字符,如 note-summarizer" />
-      </div>
-      <div class="sk-row">
-        <span class="sk-label">描述</span>
-        <n-input v-model:value="skillForm.description" :disabled="skillReadonly" placeholder="一句话说明何时使用该技能" />
-      </div>
-      <div class="sk-row">
-        <span class="sk-label">可见性</span>
-        <n-select
-          v-model:value="skillForm.visibility"
-          :disabled="skillReadonly"
-          :options="[{ label: '私有(仅自己可见/使用)', value: 0 }, { label: '公开(发布到技能市场)' , value: 1 }]"
-          placeholder="可见性"
-        />
-      </div>
-      <div class="sk-row" v-if="!skillReadonly">
-        <span class="sk-label">图标</span>
-        <div class="icon-picker">
-          <span
-            v-for="e in ICON_PRESETS"
-            :key="e"
-            class="icon-choice"
-            :class="{ active: skillForm.icon === e }"
-            @click="skillForm.icon = e"
-          >{{ e }}</span>
-        </div>
-      </div>
-      <div class="sk-row">
-        <span class="sk-label">技能文件(SKILL.md 与附加脚本/数据,树形多文件编辑)</span>
-      </div>
-      <SkillEditor
-        :content="skillForm.content"
-        :files="skillForm.files"
-        :name="skillForm.name.trim() || 'unnamed-skill'"
-        :description="skillForm.description"
-        :readonly="skillReadonly"
-        @update:content="skillForm.content = $event"
-        @update:files="skillForm.files = $event"
-      />
-      <div class="sk-actions">
-        <n-button size="small" quaternary @click="skillModalShow = false">{{ skillReadonly ? '关闭' : '取消' }}</n-button>
-        <n-button v-if="!skillReadonly" size="small" type="primary" :disabled="!skillForm.name.trim()" @click="saveSkill">保存</n-button>
-      </div>
-    </div>
-  </n-modal>
-
-  <AutomationManager v-model:show="automationShow" />
 </template>
 
 <style scoped>
-.chat-view { display: flex; flex-direction: column; height: 100vh; height: 100dvh; background: var(--chat-bg); }
+.chat-view {
+  display: flex; flex-direction: column;
+  height: 100vh; height: 100dvh;
+  background: var(--chat-bg);
+  /* 刘海屏/手势条:顶部与底部让出安全区,避免头部与输入框被遮挡 */
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  box-sizing: border-box;
+}
 .chat-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 20px; border-bottom: 1px solid var(--border-soft);
@@ -1245,48 +608,25 @@ const virtualItems = computed<VirtualListItem[]>(() => {
 }
 .head-left { display: flex; align-items: center; gap: 10px; }
 .head-left .title { font-weight: 600; color: var(--text); font-size: 15px; }
-/* 连接状态徽标:与主题一致的小圆点 + 文字 */
+/* 连接状态徽标:主题无关的软色胶囊 + 脉冲点(参考主视图设计) */
 .conn-badge {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 2px 9px; border-radius: 10px;
-  font-size: 11px; line-height: 1.6;
-  color: var(--text-3); background: var(--surface-hover);
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 11px; border-radius: 20px;
+  font-size: 12px; line-height: 1.6; font-weight: 600;
+  color: var(--text-3); background: var(--fill-0);
   border: 1px solid var(--border-soft);
   white-space: nowrap;
 }
 .conn-dot {
-  width: 6px; height: 6px; border-radius: 50%;
-  background: var(--text-4);
-  flex-shrink: 0;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--text-4); position: relative; flex-shrink: 0;
 }
-.conn-badge.ok { color: var(--ok); }
+.conn-badge.ok { color: var(--ok); background: rgba(88, 196, 155, .14); border-color: rgba(88, 196, 155, .3); }
 .conn-badge.ok .conn-dot { background: var(--ok); }
-
-/* ---- 会话技能 / 会话 MCP 对话框(大气版) ---- */
-.picker-head { display: flex; align-items: center; gap: 14px; width: 100%; padding-right: 8px; }
-.picker-ico {
-  flex-shrink: 0; width: 44px; height: 44px; border-radius: 12px;
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 6px 18px rgba(0,0,0,.10);
+.conn-badge.ok .conn-dot::after {
+  content: ""; position: absolute; inset: -3px; border-radius: 50%;
+  background: rgba(88, 196, 155, .35); animation: conn-pulse 1.8s infinite;
 }
-.picker-ico-skill { background: linear-gradient(135deg,#4a4d55,#2a2c31); color: #fff; }
-.picker-ico-mcp { background: linear-gradient(135deg,#0ea5e9,#38bdf8); color: #fff; }
-.picker-head-text { flex: 1; min-width: 0; }
-.picker-title { font-size: 17px; font-weight: 700; color: var(--text); line-height: 1.3; }
-.picker-sub { font-size: 12px; color: var(--text-3); margin-top: 2px; }
-.picker-count { font-size: 12px; }
-
-.picker-body { padding: 4px 2px 2px; }
-/* 穿梭框选择:加高列表,分页条置底 */
-.picker-body :deep(.n-transfer-list) { height: 300px; }
-.picker-body :deep(.n-transfer-list-header__title) { font-size: 13px; font-weight: 600; }
-.picker-pager { display: flex; justify-content: flex-end; padding: 10px 2px 0; }
-.picker-desc {
-  font-size: 13px; color: var(--text-2); line-height: 1.7;
-  background: var(--surface-hover); border: 1px solid var(--border-soft);
-  border-radius: 10px; padding: 10px 14px; margin-bottom: 14px;
-}
-.picker-desc em { font-style: normal; font-weight: 600; color: var(--accent); }
 
 /* 单列分页列表 */
 .pick-list {
@@ -1343,66 +683,6 @@ const virtualItems = computed<VirtualListItem[]>(() => {
 .pick-chip:hover { background: var(--fill-2); }
 .pick-chip-empty { font-size: 13px; color: var(--text-3); }
 
-.sp-actions {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 12px; margin-top: 16px; padding-top: 14px;
-  border-top: 1px solid var(--border-soft);
-}
-.sp-tip { font-size: 12px; color: var(--text-3); }
-.sp-action-btns { display: flex; align-items: center; gap: 8px; }
-.sp-action-btns .reset-btn { margin-right: auto; }
-
-.user-skills { padding: 8px 0; }
-.us-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-.us-title { font-size: 13px; font-weight: 600; color: var(--text-2); }
-.us-empty { font-size: 12px; color: var(--text-3); padding: 12px 2px; }
-.us-card {
-  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
-  height: 80px; box-sizing: border-box; overflow: hidden;
-  border: 1px solid var(--border-soft); border-radius: 10px; margin-bottom: 8px;
-  background: var(--bg-elev); transition: border-color .15s, box-shadow .15s;
-}
-.us-card:hover { border-color: var(--accent); box-shadow: 0 2px 10px rgba(0,0,0,.05); }
-.us-card-icon {
-  width: 40px; height: 40px; flex-shrink: 0; border-radius: 10px;
-  display: flex; align-items: center; justify-content: center; font-size: 20px;
-  background: var(--fill-1); border: 1px solid var(--border-soft);
-}
-.us-card-body { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 3px; }
-.us-card-name { font-size: 13.5px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.us-card-tags { display: flex; gap: 5px; white-space: nowrap; overflow: hidden; }
-.us-tag { font-size: 10.5px; padding: 1px 6px; border-radius: 6px; flex-shrink: 0; }
-.us-tag.pub { background: rgba(82,141,245,.15); color: var(--accent-text); }
-.us-tag.pri { background: var(--surface-hover); color: var(--text-3); }
-.us-tag.own { background: rgba(88,196,155,.12); color: var(--ok); }
-.us-tag.inst { background: #f59e0b22; color: #f59e0b; }
-.us-desc { font-size: 11.5px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.us-actions { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
-.us-act {
-  font-size: 11px; line-height: 1; padding: 5px 12px; border-radius: 999px; cursor: pointer;
-  border: 1px solid var(--border-soft); background: var(--surface); color: var(--text-2);
-  transition: all .15s; white-space: nowrap;
-}
-.us-act:hover { border-color: var(--accent-text); color: var(--accent-text); background: var(--accent-soft); }
-.us-act.danger:hover { border-color: var(--error, #ec5962); color: var(--error, #ec5962); background: rgba(236,89,98,.08); }
-.us-act:disabled { opacity: .4; cursor: not-allowed; }
-.us-act:disabled:hover { border-color: var(--border-soft); color: var(--text-2); background: var(--surface); }
-
-/* 图标选择器(技能编辑弹窗) */
-.icon-picker { display: flex; flex-wrap: wrap; gap: 6px; }
-.icon-choice {
-  width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
-  font-size: 16px; border-radius: 8px; border: 1px solid var(--border-soft); cursor: pointer;
-  background: var(--surface); transition: all .15s;
-}
-.icon-choice:hover { border-color: var(--accent-text); }
-.icon-choice.active { background: var(--accent-soft); border-color: var(--accent-text); }
-
-.sk-form { display: flex; flex-direction: column; gap: 8px; }
-.sk-row { display: flex; flex-direction: column; gap: 4px; }
-.sk-label { font-size: 12px; color: var(--text-2); }
-.sk-form .skill-editor { margin-top: 2px; }
-.sk-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .conn-badge.warn { color: var(--warn); }
 .conn-badge.warn .conn-dot { background: var(--warn); animation: conn-pulse 1.2s ease-in-out infinite; }
 @keyframes conn-pulse { 0%, 100% { opacity: .4; } 50% { opacity: 1; } }
@@ -1418,9 +698,17 @@ const virtualItems = computed<VirtualListItem[]>(() => {
     flex: 1; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .head-right .ws-launcher { display: none; }
-  .head-right { flex-shrink: 0; }
-}
+    .head-right .ws-launcher { display: none; }
+    .head-right { flex-shrink: 0; }
+    /* 移动端:消息列不再限宽 860px,左右内边距收窄,避免 375px 屏上白边浪费一半 */
+    .chat-virtual-inner { max-width: none; padding: 0 12px; }
+    .chat-virtual-inner > * { padding-top: 16px; padding-bottom: 16px; }
+    /* 回到最新按钮:触摸目标放大到 44px(无 hover 设备上可点) */
+    .scroll-to-bottom-btn { width: 40px; height: 40px; }
+    .switching-mask { font-size: 13px; }
+    /* 查找条改为整行,避免与标题挤在一行 */
+    .find-bar { left: 0; right: 0; }
+  }
 
 /* 中窄屏顶栏拥挤:隐藏面板入口按钮的文字,只保留图标(悬停有 title 提示) */
 @media (max-width: 1200px) {
@@ -1435,16 +723,34 @@ const virtualItems = computed<VirtualListItem[]>(() => {
 .chat-virtual { height: 100%; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; overflow-anchor: none; }
 /* 内容整体包装层:高度随所有消息增长,由 ResizeObserver 监听以在撑高时钉底 */
 .chat-virtual-container { min-width: 0; }
+/* 窗口化占位块:代替未渲染的行,保持滚动高度与滚动条比例稳定 */
+.vw-spacer { width: 100%; pointer-events: none; }
 .chat-virtual-inner { max-width: 860px; margin: 0 auto; padding: 0 20px; }
 .chat-virtual-inner > * { padding-top: 24px; padding-bottom: 24px; }
-.composer-wrap { max-width: 860px; margin: 0 auto; width: 100%; }
-/* 任务规划悬浮卡:钉在输入框上方,轻投影与消息区区分 */
-.composer-plan { margin: 0 0 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, .08); }
-/* 「回到最新消息」下箭头:显示在输入框上方居中,未贴底时出现 */
+/* 空会话主页:占满高度以便内容垂直居中,去掉默认上下留白 */
+.wel-inner { max-width: none; height: 100%; padding: 0; }
+.wel-inner > * { padding: 0; height: 100%; }
+.composer-wrap { max-width: 860px; margin: 0 auto; width: 100%; position: relative; z-index: 2; }
+/* 任务规划卡:与输入框等宽(对齐 .chat-input 的左右 20px 内边距) */
+.composer-plan { margin: 0 20px 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, .08); }
+/* 有任务栏时:去掉与输入框之间的间隙,底部与输入框无缝相接(视觉上连成一块) */
+.composer-wrap.has-plan .composer-plan {
+  margin-bottom: 0;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-bottom-color: transparent;
+  box-shadow: none;
+}
+.composer-wrap.has-plan :deep(.chat-input) { padding-top: 0; }
+.composer-wrap.has-plan :deep(.input-card) {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+/* 「回到最新消息」下箭头:位于任务栏上方居中,未贴底时出现 */
 .scroll-to-bottom-btn {
   display: flex; align-items: center; justify-content: center;
   width: 34px; height: 34px; border-radius: 50%;
-  margin: 0 auto 16px;
+  margin: 0 auto 10px;
   color: var(--text-2);
   background: var(--card-color, var(--bg-color));
   border: 1px solid var(--border-color, rgba(128,128,128,.25));
@@ -1680,21 +986,5 @@ const virtualItems = computed<VirtualListItem[]>(() => {
 @keyframes find-flash {
   0% { background: rgba(245, 158, 11, 0.15); }
   100% { background: transparent; }
-}
-
-/* 内置技能列表(技能 tab 顶部,默认折叠、只读) */
-.builtin-collapse { margin-bottom: 2px; }
-.builtin-note { font-size: 11px; color: var(--text-3); margin-left: 8px; }
-.builtin-empty { color: var(--text-3); font-size: 12px; padding: 8px 0; }
-.builtin-list { display: flex; flex-direction: column; gap: 6px; }
-.builtin-item {
-  display: flex; flex-direction: column; gap: 2px;
-  padding: 8px 10px; border-radius: var(--radius-sm);
-  background: var(--surface); border: 1px solid var(--border-soft);
-}
-.builtin-name { font-size: 12px; font-weight: 600; color: var(--accent); }
-.builtin-desc {
-  font-size: 12px; color: var(--text-2); line-height: 1.5;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 </style>

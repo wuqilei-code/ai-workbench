@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { browserStop, sandboxInfo, type SandboxInfo } from '../api/browser'
 import { useDialog } from 'naive-ui'
 
@@ -12,6 +13,7 @@ import { useDialog } from 'naive-ui'
  * 三个视图都是对同一个沙箱容器的 iframe,文件系统共享。
  */
 
+const { t } = useI18n()
 const emit = defineEmits<{ (e: 'stopped'): void }>()
 const dialog = useDialog()
 
@@ -31,9 +33,9 @@ let retryTimer: ReturnType<typeof setTimeout> | null = null
 let attempts = 0
 
 const TABS: { key: ViewKey; label: string; icon: string }[] = [
-  { key: 'browser', label: '浏览器', icon: '🌐' },
+  { key: 'browser', label: t('browser.tabBrowser'), icon: '🌐' },
   { key: 'editor', label: 'VSCode', icon: '🖥' },
-  { key: 'terminal', label: '终端', icon: '⌨' },
+  { key: 'terminal', label: t('browser.tabTerminal'), icon: '>_' },
 ]
 
 const currentUrl = computed(() => {
@@ -53,25 +55,25 @@ async function loadInfo() {
       errorText.value = ''
       return
     }
-    errorText.value = data.error || '沙箱启动中,首次约需 10~30 秒…'
+    errorText.value = data.error || t('browser.startFailed')
   } catch {
-    errorText.value = '无法连接沙箱服务,重试中…'
+    errorText.value = t('browser.loadFailed')
   }
   attempts += 1
   if (attempts < 20) {
     retryTimer = setTimeout(loadInfo, 3000)
   } else {
     loading.value = false
-    errorText.value = errorText.value || '沙箱启动超时,请稍后重试。'
+    errorText.value = errorText.value || t('browser.timeout')
   }
 }
 
 function closeBrowser() {
   dialog.warning({
-    title: '关闭浏览器',
-    content: '将停止沙箱容器并释放资源,下次使用时自动重建。确定关闭吗?',
-    positiveText: '关闭',
-    negativeText: '取消',
+    title: t('browser.closeTitle'),
+    content: t('browser.closeContent'),
+    positiveText: t('browser.close'),
+    negativeText: t('browser.cancel'),
     onPositiveClick: async () => {
       try {
         await browserStop()
@@ -104,8 +106,8 @@ onBeforeUnmount(() => {
           <span class="bc-tab-icon">{{ t.icon }}</span>{{ t.label }}
         </button>
       </div>
-      <div v-if="info" class="bc-live">● 实时</div>
-      <button class="bc-tabbar-btn bc-power" title="关闭浏览器(停止沙箱容器并释放资源)" @click="closeBrowser">⏻</button>
+  <div v-if="info" class="bc-live">{{ t('browser.live') }}</div>
+  <button class="bc-tabbar-btn bc-power" :title="t('browser.powerTitle')" @click="closeBrowser">⏻</button>
     </div>
 
     <div class="bc-stage">
@@ -119,7 +121,7 @@ onBeforeUnmount(() => {
       ></iframe>
       <div v-else class="bc-placeholder">
         <div class="bc-spinner" v-if="loading"></div>
-        <div class="bc-msg">{{ errorText || '沙箱启动中…' }}</div>
+  <div class="bc-msg">{{ errorText || t('browser.placeholder') }}</div>
       </div>
     </div>
   </div>

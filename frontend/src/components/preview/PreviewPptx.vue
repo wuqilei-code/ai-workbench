@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, watch, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { PptxViewer } from '@aiden0z/pptx-renderer'
 
+const { t } = useI18n()
 const props = defineProps<{ blob: Blob }>()
 
 const container = ref<HTMLElement | null>(null)
@@ -32,7 +34,7 @@ async function render(blob: Blob) {
     })
     slideCount.value = (viewer as PptxViewer).slideCount || 0
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '幻灯片渲染失败'
+    error.value = e instanceof Error ? e.message : t('preview.pptxFailed')
   } finally {
     rendering.value = false
   }
@@ -51,10 +53,10 @@ onBeforeUnmount(() => {
     <div ref="container" class="pptx-container" />
     <div v-if="rendering" class="pptx-rendering">
       <span class="spinner"></span>
-      <span>正在渲染幻灯片…</span>
+      <span>{{ t('tail.pptxRendering') }}</span>
     </div>
-    <div v-if="error && !rendering" class="pptx-error">幻灯片渲染失败:{{ error }}</div>
-    <div v-if="!rendering && slideCount && !error" class="pptx-count">共 {{ slideCount }} 页</div>
+    <div v-if="error && !rendering" class="pptx-error">{{ t('preview.pptxFailed') }}:{{ error }}</div>
+    <div v-if="!rendering && slideCount && !error" class="pptx-count">{{ t('preview.pptxCount', { n: slideCount }) }}</div>
   </div>
 </template>
 

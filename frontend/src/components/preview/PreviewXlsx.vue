@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import JSZip from 'jszip'
 import ExcelJS from 'exceljs'
 import xlsxPreview from 'xlsx-preview'
 import * as XLSX from 'xlsx'
 
+const { t } = useI18n()
 const props = defineProps<{ blob: Blob; path: string }>()
 const sheets = ref<{ name: string; html: string }[]>([])
 const error = ref<string | null>(null)
@@ -33,7 +35,7 @@ async function parse(blob: Blob) {
       }
     }
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '表格解析失败'
+    error.value = e instanceof Error ? e.message : t('preview.xlsxFailed')
   } finally {
     parsing.value = false
   }
@@ -99,7 +101,7 @@ async function parseWithSheetjs(blob: Blob): Promise<{ name: string; html: strin
 
 function generateTableHtml(ws: XLSX.WorkSheet): string {
   const ref = ws['!ref']
-  if (!ref) return '<div class="xlsx-empty">空工作表</div>'
+  if (!ref) return '<div class="xlsx-empty">' + t('preview.xlsxEmpty') + '</div>'
 
   const range = XLSX.utils.decode_range(ref)
   const originalRows = range.e.r - range.s.r + 1
@@ -127,7 +129,7 @@ function generateTableHtml(ws: XLSX.WorkSheet): string {
         } else if (cell.t === 'n') {
           row.push(cell.v ?? 0)
         } else if (cell.t === 'b') {
-          row.push(cell.v ? '是' : '否')
+          row.push(cell.v ? t('preview.yes') : t('preview.no'))
         } else if (cell.t === 'd') {
           row.push(formatDate(cell.v))
         } else {
@@ -140,7 +142,7 @@ function generateTableHtml(ws: XLSX.WorkSheet): string {
     if (row.some((v) => v !== '')) rows.push(row)
   }
 
-  if (rows.length === 0) return '<div class="xlsx-empty">空工作表</div>'
+  if (rows.length === 0) return '<div class="xlsx-empty">' + t('preview.xlsxEmpty') + '</div>'
 
   const headerRow = rows[0]
   const dataRows = rows.slice(1)
@@ -165,7 +167,7 @@ function generateTableHtml(ws: XLSX.WorkSheet): string {
 
   if (truncated) {
     html =
-      `<div class="xlsx-truncate">仅显示前 ${MAX_ROWS} 行或 ${MAX_COLS} 列,完整数据请下载</div>` +
+      `<div class="xlsx-truncate">${t('preview.xlsxTruncate', { rows: MAX_ROWS, cols: MAX_COLS })}</div>` +
       html
   }
 
@@ -209,10 +211,10 @@ watch(() => props.blob, (b) => { if (b) parse(b) }, { immediate: true })
   <div class="xlsx-wrap">
     <div v-if="parsing" class="xlsx-parsing">
       <span class="xlsx-spinner"></span>
-      <span>正在解析表格…</span>
+      <span>{{ t('preview.xlsxLoading') }}</span>
     </div>
     <template v-else>
-      <div v-if="error" class="xlsx-error">表格解析失败:{{ error }}</div>
+      <div v-if="error" class="xlsx-error">{{ t('preview.xlsxFailed') }}:{{ error }}</div>
       <template v-else>
         <n-tabs v-if="sheets.length > 1" type="line" size="small" animated>
           <n-tab-pane v-for="s in sheets" :key="s.name" :name="s.name" :tab="s.name">

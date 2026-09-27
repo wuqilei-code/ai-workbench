@@ -1,9 +1,14 @@
 <script setup lang="ts">
 import { ref, watch, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 /**
  * 通用单输入弹窗:替代浏览器 prompt 的 UI 版本。
  * show 为受控;confirm 携带输入值;取消/关闭(遮罩/×)走 cancel。
+ *
+ * 注意:withDefaults 的默认值会被编译器提升到 setup() 之外,因此**不能**在这里调用 t();
+ * 未传时的兜底文案在模板里用 `props.title || t(...)` 处理(见下)。
  */
 const props = withDefaults(defineProps<{
   show?: boolean
@@ -15,8 +20,8 @@ const props = withDefaults(defineProps<{
   tip?: string
 }>(), {
   show: false,
-  title: '请输入',
-  placeholder: '请输入',
+  title: '',
+  placeholder: '',
   initial: '',
   allowEmpty: false,
   tip: '',
@@ -51,7 +56,7 @@ function cancel() {
   <n-modal
     :show="show"
     preset="card"
-    :title="title"
+    :title="title || t('promptModal2.title')"
     style="width: 420px; max-width: 92vw"
     :mask-closable="true"
     :close-on-esc="true"
@@ -62,7 +67,7 @@ function cancel() {
       <n-input
         ref="inputRef"
         v-model:value="value"
-        :placeholder="placeholder"
+        :placeholder="placeholder || t('promptModal2.placeholder')"
         size="medium"
         @keydown.enter.prevent="submit"
         @keydown.esc.prevent="cancel"
@@ -71,8 +76,8 @@ function cancel() {
     </div>
     <template #footer>
       <div class="tpm-footer">
-        <n-button size="small" quaternary @click="cancel">取消</n-button>
-        <n-button size="small" type="primary" :disabled="!allowEmpty && !value.trim()" @click="submit">确定</n-button>
+        <n-button size="small" quaternary @click="cancel">{{ t('promptModal2.cancel') }}</n-button>
+        <n-button size="small" type="primary" :disabled="!allowEmpty && !value.trim()" @click="submit">{{ t('promptModal2.ok') }}</n-button>
       </div>
     </template>
   </n-modal>

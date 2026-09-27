@@ -5,37 +5,42 @@ import { useChatStore } from '@/stores/chat'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 import { useMessage } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
+import { setLocale } from '@/i18n'
 
 const router = useRouter()
 const chat = useChatStore()
 const auth = useAuthStore()
 const theme = useThemeStore()
 const msg = useMessage()
+const { locale, t } = useI18n()
 
-/** 头像悬浮下拉:导入 / 管理(管理员) / 退出登录 */
+/** 头像悬浮下拉:导入 / 语言 / 管理(管理员) / 退出登录 */
 const userMenuOptions = computed(() => {
   const opts: any[] = [
-    { label: '导入会话', key: 'import' },
+    { label: t('userMenu.import'), key: 'import' },
+    { label: locale.value === 'zh' ? 'English' : '中文', key: 'lang' },
   ]
   if (auth.isAdmin) {
     opts.push({
-      label: '管理',
+      label: t('userMenu.admin'),
       key: 'admin',
       children: [
-        { label: '用户管理', key: '/admin/users' },
-        { label: '模型管理', key: '/admin/providers' },
-        { label: '用量统计', key: '/admin/usage' },
+        { label: t('userMenu.users'), key: '/admin/users' },
+        { label: t('userMenu.providers'), key: '/admin/providers' },
+        { label: t('userMenu.usage'), key: '/admin/usage' },
       ],
     })
   }
   opts.push({ type: 'divider', key: 'd1' })
-  opts.push({ label: '退出登录', key: 'logout' })
+  opts.push({ label: t('userMenu.logout'), key: 'logout' })
   return opts
 })
 
 function onUserMenuSelect(key: string) {
   if (key === 'logout') { auth.logout(); return }
   if (key === 'import') { importFileRef.value?.click(); return }
+  if (key === 'lang') { setLocale(locale.value === 'zh' ? 'en' : 'zh'); return }
   if (key.startsWith('/')) router.push(key)
 }
 
@@ -52,10 +57,10 @@ async function importSessionFile(e: Event) {
   try {
     const text = await file.text()
     const s = await chat.importSession(text)
-    msg.success(`已导入会话「${s.title}」`)
+    msg.success(t('userMenu2.imported', { title: s.title }))
     router.push(`/session/${s.id}`)
   } catch (err: any) {
-    msg.error(err?.message || '导入失败,请确认是导出的 JSON 文件')
+    msg.error(err?.message || t('userMenu2.importFailed'))
   } finally {
     importing.value = false
   }
@@ -64,7 +69,7 @@ async function importSessionFile(e: Event) {
 
 <template>
   <div class="user-menu">
-    <n-button size="small" quaternary :title="theme.mode === 'dark' ? '切换到浅色主题' : '切换到深色主题'" @click="theme.toggle()">
+    <n-button size="small" quaternary :title="theme.mode === 'dark' ? t('userMenu2.themeLight') : t('userMenu2.themeDark')" @click="theme.toggle()">
       <svg v-if="theme.mode === 'dark'" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
       <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
     </n-button>

@@ -1,5 +1,7 @@
 import { getCodeBlock } from './markdown'
+import { i18n } from '@/i18n'
 
+const t = (k: string) => i18n.global.t(k)
 /** 全局事件委托:点击 markdown 代码块的复制按钮时复制源码。
  *  在 main.ts 注册一次即可(所有 v-html 渲染的代码块共用)。 */
 export function handleCodeCopyClick(e: MouseEvent): void {
@@ -15,15 +17,15 @@ export function handleCodeCopyClick(e: MouseEvent): void {
     .writeText(code)
     .then(() => {
       const old = btn.textContent
-      btn.textContent = '已复制 ✓'
+      btn.textContent = t('copyBtn.copied')
       setTimeout(() => {
         if (btn.isConnected) btn.textContent = old
       }, 1200)
     })
     .catch(() => {
-      btn.textContent = '复制失败'
+      btn.textContent = t('copyBtn.failed')
       setTimeout(() => {
-        if (btn.isConnected) btn.textContent = '复制'
+        if (btn.isConnected) btn.textContent = t('copyBtn.copy')
       }, 1200)
     })
 }
