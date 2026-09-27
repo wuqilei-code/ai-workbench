@@ -14,7 +14,7 @@ import re
 from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from langgraph.types import Command
 from pydantic import BaseModel, Field
 
@@ -28,6 +28,23 @@ app = FastAPI(title="ai-workbench agent-service", version=__version__)
 
 # 排除鉴权的路径:健康检查(healthcheck/冒烟用)、以及内部工具回写无需二次鉴权。
 _PUBLIC_PATHS = {"/health"}
+
+# SSE 转发给界面的工具结果内容上限(字符)。模型侧拿到的是完整 ToolMessage,不受此限制;
+# 超限时必须显式标注"已截断 + 真实行数",否则界面会把片段行数误当成整个文件的行数。
+_SSE_TOOL_CONTENT_LIMIT = 2000
+
+
+@app.middleware("http")
+async def enforce_trusted_source(request: Request, call_next):
+    """入站网络加固:配置 INTERNAL_TRUSTED_CIDRS 后,非公开路径须来自可信网段。"""
+    from app.inbound_guard import is_trusted_client
+
+    if request.url.path not in _PUBLIC_PATHS:
+        host = request.client.host if request.client else None
+        if not is_trusted_client(host):
+            logger.warning("403 rejected: source %s not trusted for %s", host, request.url.path)
+            return JSONResponse(status_code=403, content={"detail": "来源不在可信网段"})
+    return await call_next(request)
 
 
 def verify_internal_token(
@@ -95,6 +112,8 @@ class InvokeRequest(BaseModel):
     skills: list[str] = Field(default_factory=list)
     # 该用户启用中的 MCP server(管理员公共 + 用户私有合并)
     mcp_servers: list[McpServerConfig] = Field(default_factory=list)
+    # agent 类型:chat=交互(默认,保留提问/授权);task=无人值守(关闭所有 HITL 中断,不挂 ask_user)
+    agent_type: str = Field(default="chat")
 
 
 class InvokeResponse(BaseModel):
@@ -116,6 +135,14 @@ def health() -> dict:
     }
 
 
+@app.get("/metrics")
+def metrics_endpoint() -> PlainTextResponse:
+    """进程内基础指标(Prometheus 文本格式,内网监控/排障用)。"""
+    from app import metrics
+
+    return PlainTextResponse(metrics.render())
+
+
 def _deepagents_version() -> str:
     try:
         import deepagents
@@ -128,11 +155,15 @@ def _deepagents_version() -> str:
 @app.post("/api/users/{user_id}/invoke", dependencies=[Depends(verify_internal_token)])
 def invoke(user_id: str, body: InvokeRequest) -> InvokeResponse:
     logger.info("[%s][%s] invoke: %d msgs", user_id, body.thread_id, len(body.messages))
+    from app import metrics
+
+    metrics.inc("aiwb_invoke_total")
     agent = get_manager().get_or_create(
         user_id,
         system_prompt=body.system_prompt,
         skills_override=body.skills,
         mcp_servers=[s.model_dump() for s in body.mcp_servers],
+        agent_type=body.agent_type,
     )
     result = agent.invoke(
         {"messages": [m.model_dump() for m in body.messages]},
@@ -234,7 +265,7 @@ def sandbox_stop(user_id: str) -> dict:
         return {"status": "error", "error": str(exc)}
 
 
-@app.get("/sandbox/browser-info/{user_id}")
+@app.get("/sandbox/browser-info/{user_id}", dependencies=[Depends(verify_internal_token)])
 def sandbox_browser_info(user_id: str) -> dict:
     """返回 AIO 沙箱的浏览器连接信息(VNC URL / CDP URL),供前端 iframe 实时预览。"""
     if config.AGENT_SANDBOX_BACKEND != "aio":
@@ -259,30 +290,76 @@ def sandbox_browser_info(user_id: str) -> dict:
         return {"mode": "aio", "error": str(exc), "vnc_url": None}
 
 
-@app.get("/sandbox/active-users")
+@app.get("/sandbox/active-users", dependencies=[Depends(verify_internal_token)])
 def sandbox_active_users() -> dict:
-    """返回当前活跃的 AIO 沙箱用户列表(供前端发现可用用户)。"""
+    """返回当前沙箱用户及各用户沙箱隔离态概览。
+
+    以 **Docker 容器标签**(aiwb.role=aio-sandbox)为准枚举 —— 与 worker 进程无关,
+    多 worker 下也能看到全部沙箱;每个沙箱仅服务其 aiwb.user 对应用户,体现隔离边界。
+    Docker 不可用时回退到进程内注册表(单 worker 场景)。
+    """
     if config.AGENT_SANDBOX_BACKEND != "aio":
-        return {"mode": config.AGENT_SANDBOX_BACKEND, "users": []}
+        return {"mode": config.AGENT_SANDBOX_BACKEND, "total": 0, "users": [], "sandboxes": []}
+    # 首选:Docker 标签枚举(跨 worker 一致)
     try:
+        import docker
+
+        cli = docker.from_env()
+        conts = cli.containers.list(all=True, filters={"label": "aiwb.role=aio-sandbox"})
+        sandboxes = []
+        for c in sorted(conts, key=lambda x: x.name):
+            labels = (c.attrs.get("Config", {}) or {}).get("Labels", {}) or {}
+            state = (c.attrs.get("State", {}) or {})
+            sandboxes.append({
+                "user": labels.get("aiwb.user", ""),
+                "name": c.name,
+                "status": c.status,                       # running / exited / ...
+                "startedAt": state.get("StartedAt", ""),
+            })
+        return {
+            "mode": "aio",
+            "total": len(sandboxes),
+            "users": [s["user"] for s in sandboxes if s["user"]],
+            "sandboxes": sandboxes,
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("docker label enumeration failed, fallback to registry: %s", exc)
+
+    # 回退:进程内注册表(单 worker)
+    try:
+        import time as _time
+
         from app.aio_sandbox import _ACTIVE_AIO, _ACTIVE_AIO_LOCK
 
+        now = _time.monotonic()
         with _ACTIVE_AIO_LOCK:
-            users = [sb.user_id for sb in _ACTIVE_AIO.values()]
-        return {"mode": "aio", "users": users}
+            items = [
+                {
+                    "user": sb.user_id,
+                    "name": sb.name,
+                    "idleSeconds": int(max(0, now - sb.last_used)),
+                    "ready": bool(getattr(sb, "_base_url", None)),
+                }
+                for sb in _ACTIVE_AIO.values()
+            ]
+        return {"mode": "aio", "total": len(items), "users": [i["user"] for i in items], "sandboxes": items}
     except Exception:  # noqa: BLE001
-        return {"mode": "aio", "users": []}
+        return {"mode": "aio", "total": 0, "users": [], "sandboxes": []}
 
 
 @app.post("/api/users/{user_id}/stream", dependencies=[Depends(verify_internal_token)])
 def stream(request: Request, user_id: str, body: InvokeRequest) -> StreamingResponse:
-    logger.info("[%s][%s] stream: resume=%s msgs=%d",
-                user_id, body.thread_id, body.resume_decision is not None, len(body.messages))
+    logger.info("[%s][%s] stream: resume=%s type=%s msgs=%d",
+                user_id, body.thread_id, body.resume_decision is not None, body.agent_type, len(body.messages))
+    from app import metrics
+
+    metrics.inc("aiwb_stream_total")
     agent = get_manager().get_or_create(
         user_id,
         system_prompt=body.system_prompt,
         skills_override=body.skills,
         mcp_servers=[s.model_dump() for s in body.mcp_servers],
+        agent_type=body.agent_type,
     )
     cfg = config_for(user_id, body.thread_id)
 
@@ -370,6 +447,9 @@ def stream(request: Request, user_id: str, body: InvokeRequest) -> StreamingResp
                         yield out
         except Exception as exc:  # noqa: BLE001
             logger.exception("[%s][%s] stream error", user_id, body.thread_id)
+            from app import metrics
+
+            metrics.inc("aiwb_stream_error_total")
             yield _sse("error", {"message": str(exc)})
             return
         yield _sse("done", {"status": "ok"})
@@ -646,9 +726,21 @@ def _emit_update(update, user_id: str | None = None, emitted_tools: set | None =
                             outputs = [{"path": p} for p in exec_outputs]
             payload = {
                 "name": getattr(msg, "name", ""),
-                "content": (getattr(msg, "content", "") or "")[:2000],
                 "id": tc_id,
             }
+            # SSE 只带前 2000 字符给界面展示(模型侧拿的是完整 ToolMessage,不受影响)。
+            # 必须显式标注"已截断 + 真实行数",否则前端 chip 会把片段行数当成整个文件的行数,
+            # 出现"读了 28 行"这种误导(源文件其实有 7000+ 字节)。
+            content = getattr(msg, "content", "") or ""
+            truncated = len(content) > _SSE_TOOL_CONTENT_LIMIT
+            if truncated:
+                total_lines = content.count("\n") + 1
+                shown_lines = content[:_SSE_TOOL_CONTENT_LIMIT].count("\n") + 1
+                content = (
+                    content[:_SSE_TOOL_CONTENT_LIMIT]
+                    + f"\n\n…[内容较长,此处仅显示前 {shown_lines} 行(共 {total_lines} 行)]"
+                )
+            payload["content"] = content
             if outputs:
                 payload["outputs"] = outputs
             if tc_id:

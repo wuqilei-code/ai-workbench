@@ -46,7 +46,7 @@ AGENT_PG_POOL_MAX: int = _int("AGENT_PG_POOL_MAX", 10)
 
 # --- 安全 ---
 # 打开后所有 write/edit/execute 需人工审批(deepagents interrupt_on)。
-AGENT_HITL: bool = _bool("AGENT_HITL", False)
+AGENT_HITL: bool = _bool("AGENT_HITL", True)
 
 # 内部令牌:网关/agent-service 互相调用的共享凭证(X-Internal-Token)。
 # 生产必须设置随机值;缺失即启动失败(fail-fast),不落公开默认值,防默认令牌被滥用。
@@ -55,6 +55,11 @@ if not INTERNAL_TOKEN:
     raise RuntimeError(
         "INTERNAL_TOKEN 未设置。请在环境变量中配置随机令牌,并与后端 app.internal-token 保持一致。"
     )
+
+# 入站来源网段白名单(逗号分隔的 IPv4/IPv6 或 CIDR,如 172.18.0.0/16,127.0.0.1)。
+# 非空时,除 /health 外所有请求的来源 IP 必须命中白名单,否则 403(网络层加固)。
+# 默认空 = 不限制来源,仅依赖 INTERNAL_TOKEN。
+INTERNAL_TRUSTED_CIDRS: str = os.environ.get("INTERNAL_TRUSTED_CIDRS", "")
 
 # --- 执行沙箱 ---
 # AGENT_SANDBOX_BACKEND:
@@ -104,16 +109,20 @@ AGENT_SANDBOX_PIDS: int = _int("AGENT_SANDBOX_PIDS", 256)
 AGENT_SANDBOX_IDLE_TTL: int = _int("AGENT_SANDBOX_IDLE_TTL", 1800)
 # 单条命令超时上限(秒),deepagents 传入的 timeout 会被 clamp 到该值
 AGENT_SANDBOX_MAX_TIMEOUT: int = _int("AGENT_SANDBOX_MAX_TIMEOUT", 120)
+# 同时存在的沙箱容器上限(0=不限)。超过后拒绝"新建"(复用已有不受限),防止资源耗尽。
+AGENT_SANDBOX_MAX_ACTIVE: int = _int("AGENT_SANDBOX_MAX_ACTIVE", 0)
 
 # --- 服务 ---
 AGENT_HOST: str = os.environ.get("AGENT_HOST", "0.0.0.0")
 AGENT_PORT: int = _int("AGENT_PORT", 8000)
 # 并发加固:多个 uvicorn worker 各自处理请求(进程级并行,配合 PG 连接池)。
 AGENT_WORKERS: int = max(1, _int("AGENT_WORKERS", 4))
-# 单请求步数上限(每次模型调用/工具执行各计一步)。任务规划卡片会让 AI 高频更新
-# write_todos(每次更新=1 步),复杂任务(多文件+验证+浏览器)轻松超 50 步,
-# 50 会触发 GraphRecursionError 直接掐断输出(表现为规划卡永远停在第一项转圈)。
-AGENT_MAX_TURNS: int = _int("AGENT_MAX_TURNS", 150)
+# 单请求步数上限(每次模型调用/工具执行各计一步),即 LangGraph 的 recursion_limit。
+# 注意:它限制的是「单次请求内的执行步数」,与上下文长度无关 —— 上下文超限由
+# deepagents 的自动压缩处理,不受此值影响。设得过大风险是 agent 陷入死循环时跑很久
+# (可通过前端「停止」中断);默认放宽到 10000,日常复杂任务基本等同于「不限制」,
+# 仍保留一个防跑飞的兜底。需要真正无上限/更小可改环境变量 AGENT_MAX_TURNS。
+AGENT_MAX_TURNS: int = _int("AGENT_MAX_TURNS", 10000)
 AGENT_LOG_LEVEL: str = os.environ.get("AGENT_LOG_LEVEL", "info")
 
 # --- 后端内部接口(create_skill 工具回写技能库;令牌需与后端 app.internal-token 一致) ---

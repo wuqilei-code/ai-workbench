@@ -50,6 +50,16 @@ def _normalize_fs_path(path: str) -> str:
     return "/workspace/" + path
 
 
+def _assert_writable(path: str) -> None:
+    """平台模板目录 /workspace/tpl 只读:写入/编辑/删除一律拒绝。
+
+    原用 deepagents 的 filesystem permissions 实现,但其与可执行后端(SandboxBackendProtocol)
+    不兼容(构建 agent 即抛 NotImplementedError),故改为在后端写入路径上硬拦截。"""
+    norm = _normalize_fs_path(path)
+    if norm == "/workspace/tpl" or norm.startswith("/workspace/tpl/"):
+        raise PermissionError("/workspace/tpl 为平台模板只读目录,不可写入或删除")
+
+
 class _PathNormalizingProxy:
     """轻量代理:把 CompositeBackend 的路径操作统一规范化,其余方法直通。"""
 
@@ -86,18 +96,22 @@ class _PathNormalizingProxy:
         return self._inner.aread(norm, **kw)
 
     def write(self, file_path: str, *a, **kw):
+        _assert_writable(file_path)
         norm = _normalize_fs_path(file_path)
         return self._inner.write(norm, *a, **kw)
 
     def awrite(self, file_path: str, *a, **kw):
+        _assert_writable(file_path)
         norm = _normalize_fs_path(file_path)
         return self._inner.awrite(norm, *a, **kw)
 
     def edit(self, file_path: str, *a, **kw):
+        _assert_writable(file_path)
         norm = _normalize_fs_path(file_path)
         return self._inner.edit(norm, *a, **kw)
 
     def aedit(self, file_path: str, *a, **kw):
+        _assert_writable(file_path)
         norm = _normalize_fs_path(file_path)
         return self._inner.aedit(norm, *a, **kw)
 
@@ -114,9 +128,11 @@ class _PathNormalizingProxy:
         return self._inner.agrep(pattern, _normalize_fs_path(path), **kw)
 
     def delete(self, file_path: str, *a, **kw):
+        _assert_writable(file_path)
         return self._inner.delete(_normalize_fs_path(file_path), *a, **kw)
 
     def adelete(self, file_path: str, *a, **kw):
+        _assert_writable(file_path)
         return self._inner.adelete(_normalize_fs_path(file_path), *a, **kw)
 
     # --- 非路径操作:直通 ---
@@ -404,15 +420,20 @@ def _build_backend(user_id: str, visible_skills: set[str] | None = None) -> Comp
 
 
 def _build_permissions() -> list[FilesystemPermission]:
-    # 允许 agent 在 /skills(用户技能根)内**新建**技能(create-skill 技能用);
-    # 平台内置技能若被同名覆盖,重播种会还原,风险可控。技能外目录默认无额外限制。
-    return []
+    # 平台内置模板目录 /workspace/tpl 只读:agent 只能读「平台下发模板」,不能改。
+    # (用户「做同款」产出的模板 HTML 落在 /workspace/templates,可写)
+    return [
+        FilesystemPermission(operations=["write"], paths=["/workspace/tpl", "/workspace/tpl/**"], mode="deny"),
+    ]
 
 
 _DANGEROUS_LEAD_TOKENS = {
     "rm", "rmdir", "mv", "chmod", "chown", "chgrp", "sudo", "su", "apt", "apt-get",
     "pip", "pip3", "curl", "wget", "git", "mkfs", "dd", "shutdown", "reboot",
     "kill", "pkill", "killall", "chattr", "useradd", "userdel", "passwd",
+    # 系统/服务/挂载/定时/内核模块/网络外联等高风险命令,一律要求确认
+    "systemctl", "service", "mount", "umount", "crontab", "modprobe", "insmod",
+    "nc", "ncat", "socat", "iptables", "nft", "setfacl", "usermod", "groupadd",
 }
 
 
@@ -452,8 +473,14 @@ def _dangerous_command(req) -> bool:
     return False
 
 
-def _build_interrupt_on() -> dict | None:
-    """HITL 人工确认:仅对危险/敏感操作触发(execute 危险命令 + delete + 浏览器访问)。AGENT_HITL=false 时关闭。"""
+def _build_interrupt_on(agent_type: str = "chat") -> dict | None:
+    """HITL 人工确认:仅对危险/敏感操作触发(execute 危险命令 + delete + 浏览器访问)。
+
+    - chat(默认):AGENT_HITL=false 时关闭;开启时按下方策略要求批准 / 提问。
+    - task(无人值守):**始终关闭所有中断**——定时任务没有人应答,任何提问/授权都会卡死。
+    """
+    if agent_type == "task":
+        return None
     if not config.AGENT_HITL:
         return None
     return {
@@ -505,7 +532,8 @@ _DEFAULT_SYSTEM_PROMPT = (
     "\n  scripts/        — 数据处理/生成脚本(.py)"
     "\n  data/           — 中间数据文件(.json/.csv/.xlsx 原始数据)"
     "\n  uploads/        — 用户上传的文件(保持原位)"
-    "\n  tpl/            — 模板文件"
+    "\n  templates/      — 「做同款」引用的模板 HTML 附件(可写)"
+    "\n  tpl/            — 平台内置模板(只读,不要修改)"
     "\n规则:生成文件前先创建目标目录(如 mkdir -p reports),不要把报告/脚本/数据/图表"
     "散放在根目录。pure_show_widget 的组件由工具自动存入 widgets/,组件名(name 参数)"
     "必须用业务描述命名(如 widgets/2024年销售趋势分析-xxxx.html),"
@@ -530,11 +558,6 @@ _DEFAULT_SYSTEM_PROMPT = (
     "记忆会跨会话持久化。当用户提到重要偏好/习惯/需求时主动记录。"
     "记忆超过 4KB 时自动压缩(保留最近 20 条,旧条目摘要化)。"
     "可用 read_memory 查看当前记忆,compress_memory 手动压缩,clear_section 清空分区。"
-    "\n\n向用户提问:当用户请求信息不完整、需要确认细节、或有多种实现方式需要选择时,"
-    "使用 ask_user 工具向用户提问。提问要具体明确。"
-    "如果有明确的几个选项,用 options 参数传入选项(用 | 分隔,如 options=\"Python|JavaScript|都可以\")。"
-    "需要用户选多个时设 multiple=\"true\"。没有固定选项时留空 options,用户自由输入。"
-    "只在真正需要用户输入时才提问,不要用提问代替思考。"
     "\n\n任务规划(必须遵守):凡是需要两步以上才能完成的任务——生成文档/报告/图表/网页、"
     "先查资料再产出、浏览器操作后写文件、多文件产出、跑脚本验证等——在开始动手前,必须先用 "
     "write_todos 工具列出任务清单(每项一句具体描述,如\"用 mermaid 技能绘制诉讼流程图\"),"
@@ -549,12 +572,39 @@ _DEFAULT_SYSTEM_PROMPT = (
     "首次对话时直接回应用户需求,不要用生成文件来\u201c演示能力\u201d。"
 )
 
+# chat(交互)专属:向用户提问段——任何提问都会触发确认/等待,仅交互场景可用。
+ASK_USER_PROMPT = (
+    "\n\n向用户提问:当用户请求信息不完整、需要确认细节、或有多种实现方式需要选择时,"
+    "使用 ask_user 工具向用户提问。提问要具体明确。"
+    "如果有明确的几个选项,用 options 参数传入选项(用 | 分隔,如 options=\"Python|JavaScript|都可以\")。"
+    "需要用户选多个时设 multiple=\"true\"。没有固定选项时留空 options,用户自由输入。"
+    "只在真正需要用户输入时才提问,不要用提问代替思考。"
+)
 
-def _fingerprint(user_id: str, skills: list[str], memory: list[str], system_prompt: str | None, mcp_servers=None) -> str:
+# task(无人值守)专属:任务在无人值守下运行,绝不能向用户提问或等待确认。
+AUTONOMOUS_PROMPT = (
+    "\n\n【无人值守任务模式】你在无人值守的定时任务中运行:没有用户在场,"
+    "任何提问、确认或等待授权的动作都会导致任务卡死失败。因此:"
+    "\n1. 严禁向用户提问、严禁调用 ask_user、严禁输出「请告诉我/请确认/你希望…」这类需要用户回答的语句;"
+    "\n2. 信息不完整或存在多种方案时,自行选择最合理的一种并直接执行到底,"
+    "在结果里说明你采用的假设与选择即可;"
+    "\n3. 不要请求授权:需要执行的动作直接完成(包括打开浏览器、创建/更新技能等);"
+    "\n4. 输出即最终交付:直接给出可直接使用的结果(报告/文件/结论),不要以问题结尾。"
+)
+
+
+def _build_system_prompt(agent_type: str) -> str:
+    """按 agent 类型组装系统提示词:chat 含可提问段;task 换成无人值守段。"""
+    if agent_type == "task":
+        return _DEFAULT_SYSTEM_PROMPT + AUTONOMOUS_PROMPT
+    return _DEFAULT_SYSTEM_PROMPT + ASK_USER_PROMPT
+
+
+def _fingerprint(user_id: str, skills: list[str], memory: list[str], system_prompt: str | None, mcp_servers=None, agent_type: str = "chat") -> str:
     # memory 已迁移至 PostgresStore(运行时读取),不再参与 agent 编译指纹;
     # 保留参数签名兼容,但忽略 memory 文件列表。
     mcp_sig = mcp_client.mcp_signature(mcp_servers or [])
-    parts = [user_id, system_prompt or _DEFAULT_SYSTEM_PROMPT] + skills + ["browser_open_url", mcp_sig]
+    parts = [user_id, agent_type, system_prompt or _DEFAULT_SYSTEM_PROMPT] + skills + ["browser_open_url", mcp_sig]
     return hashlib.sha256("\x1f".join(parts).encode()).hexdigest()
 
 
@@ -573,6 +623,7 @@ class AgentManager:
         extra_tools: list | None = None,
         skills_override: list[str] | None = None,
         mcp_servers: list | None = None,
+        agent_type: str = "chat",
     ):
         ws.ensure_user_dirs(user_id)
         # SkillsMiddleware 只接受 backend 虚拟路径:source 固定 /skills(根),勾选过滤由
@@ -580,19 +631,21 @@ class AgentManager:
         selected_paths = _select_skills(ws.list_skills(user_id) + ws.list_global_skills(), skills_override)
         skills = ["/skills"] if selected_paths else []
         memory = ws.memory_files(user_id)
-        effective_prompt = system_prompt or _DEFAULT_SYSTEM_PROMPT
-        key = _fingerprint(user_id, selected_paths, memory, effective_prompt, mcp_servers)
+        effective_prompt = system_prompt or _build_system_prompt(agent_type)
+        key = _fingerprint(user_id, selected_paths, memory, effective_prompt, mcp_servers, agent_type)
 
         with self._lock:
             cached = self._cache.get(key)
             if cached is not None:
                 return cached
 
-        logger.info("[%s] agent build: skills=%s", user_id, [p.rsplit("/", 2)[-2] for p in selected_paths])
+        logger.info("[%s] agent build: type=%s skills=%s", user_id, agent_type, [_skill_name(p) for p in selected_paths])
         backend = _build_backend(user_id, {_skill_name(p) for p in selected_paths})
         # 逐个加载用户配置的远程 MCP server 工具;任一失败只跳过该 server,不影响主链路。
         mcp_tools = mcp_client.build_mcp_tools(mcp_servers or [])
         model = _build_model()
+        # 无人值守(task)不挂 ask_user:任务无人应答,提问只会卡死。
+        question_tools = build_question_tools() if agent_type != "task" else []
         # 上下文用量计数器:独立构造一个压缩中间件实例(不挂执行链,零副作用),
         # 借它的 _get_effective_messages/_count_tokens 与 trigger 配置,得到与自动压缩
         # 判断完全一致的 token 数与阈值。create_summarization_middleware 与
@@ -601,7 +654,7 @@ class AgentManager:
         agent = create_deep_agent(
             model=model,
             tools=list(extra_tools or []) + build_browser_tools(user_id) + build_skill_tools(user_id)
-            + build_widget_tools(user_id) + build_memory_tools(user_id, _get_runtime().store) + build_question_tools()
+            + build_widget_tools(user_id) + build_memory_tools(user_id, _get_runtime().store) + question_tools
             + mcp_tools,
             system_prompt=effective_prompt,
             backend=backend,
@@ -619,8 +672,11 @@ class AgentManager:
                         ContextUsageMiddleware(usage_counter, _compression_threshold(usage_counter)),
                         create_summarization_tool_middleware(model, backend)]
             + ([ReloadSkillsMiddleware(backend=backend, sources=["/skills"])] if skills else []),
-            permissions=_build_permissions(),
-            interrupt_on=_build_interrupt_on(),
+            # 注意:deepagents 的 filesystem permissions 与「支持命令执行的后端」
+            # (SandboxBackendProtocol,即我们的 aio/local 沙箱)不兼容,传入会直接抛
+            # NotImplementedError 导致 agent 构建失败(任务/对话全部 500)。
+            # /workspace/tpl 只读改由 _PathNormalizingProxy 在写入路径上拦截。
+            interrupt_on=_build_interrupt_on(agent_type),
             memory=memory,
             checkpointer=_get_runtime().checkpointer,
             store=_get_runtime().store,

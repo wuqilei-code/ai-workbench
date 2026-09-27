@@ -19,8 +19,8 @@
 | `AGENT_MODEL_TEMPERATURE` | `0.0` | 采样温度 |
 | `AGENT_WS_ROOT` | `/data/users` | 每用户工作区根目录 |
 | `AGENT_PG_DSN` | — | 如 `postgresql://user:pass@host:5432/agent_workbench`;留空则内存 checkpoint(重启丢失) |
-| `AGENT_HITL` | `false` | 是否启用 human-in-the-loop(write/edit/execute 需审批) |
-| `AGENT_MAX_TURNS` | `50` | 单轮最多执行步数 |
+| `AGENT_HITL` | `true` | 是否启用 human-in-the-loop(危险 execute / delete / 浏览器访问需审批);默认开启(fail-safe) |
+| `AGENT_MAX_TURNS` | `10000` | 单请求步数上限(recursion_limit);上下文长度由自动压缩处理 |
 
 ## 接口
 

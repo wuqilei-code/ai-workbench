@@ -123,6 +123,9 @@ def _interface_tool(server: dict, server_name: str, base: str, item: dict) -> An
         if body is None and body_fields:
             body = json.dumps({n: v for n, v in body_fields}, ensure_ascii=False)
 
+        from app import net_guard
+
+        net_guard.assert_url_allowed(url)  # SSRF 防护(每次调用校验)
         with httpx.Client(timeout=60, follow_redirects=True) as client:
             resp = client.request(
                 method,

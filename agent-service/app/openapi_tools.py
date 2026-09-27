@@ -133,6 +133,9 @@ def _load_spec(server: dict) -> dict:
     url = server.get("url") or ""
     if not url.startswith(("http://", "https://")):
         raise ValueError(f"openapi url 非法: {url!r}")
+    from app import net_guard
+
+    net_guard.assert_url_allowed(url)  # SSRF 防护
     headers = server.get("headers") or {}
     with httpx.Client(timeout=30, follow_redirects=True) as client:
         resp = client.get(url, headers=headers)
@@ -290,6 +293,9 @@ def _operation_tool(server: dict, server_name: str, method: str, path: str, op: 
             bobj = {fname: val for fname, val in body_fields}
             body = json.dumps(bobj, ensure_ascii=False)
 
+        from app import net_guard
+
+        net_guard.assert_url_allowed(url)  # SSRF 防护(每次调用校验)
         with httpx.Client(timeout=60, follow_redirects=True) as client:
             resp = client.request(
                 method.upper(),

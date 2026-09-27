@@ -57,6 +57,14 @@ async def _load_one(server: dict) -> list:
     if not url.startswith(("http://", "https://")):
         logger.warning("[mcp] %s 跳过:URL 非法 %r", name, url)
         return []
+    # SSRF 防护:拒绝解析到内网/回环/保留地址的目标(可用白名单/私有放行)
+    from app import net_guard
+
+    try:
+        net_guard.assert_url_allowed(url)
+    except ValueError as exc:
+        logger.warning("[mcp] %s 跳过:%s", name, exc)
+        return []
     headers = server.get("headers") or {}
 
     from langchain_mcp_adapters.client import MultiServerMCPClient

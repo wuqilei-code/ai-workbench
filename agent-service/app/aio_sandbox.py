@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import logging
 import os
 import threading
@@ -34,6 +35,7 @@ from deepagents.backends.protocol import (
 from deepagents.backends.sandbox import BaseSandbox
 
 from app import config
+from app import metrics
 from app import workspace as ws
 
 logger = logging.getLogger(__name__)
@@ -75,6 +77,9 @@ class AioSandbox(BaseSandbox):
         self._base_url: str | None = None       # http://host.docker.internal:<port>
         self.last_used = time.monotonic()
         self._recent_changes: list[str] = []
+        # (path, offset, limit) -> 该区间上次读到的内容摘要。用于识别"模型在原地打转":
+        # 同一区间被逐字节重复读取时,在结果末尾追加提示,让它改用 offset 继续而不是反复重读。
+        self._read_seen: dict[tuple[str, int, int], tuple[str, int]] = {}
         register_aio_sandbox(self)
 
     # --- lifecycle -------------------------------------------------------
@@ -109,11 +114,13 @@ class AioSandbox(BaseSandbox):
                     self._container = c
                     self._base_url = base_url
                     self._chown_workspace(c)
+                    metrics.inc("aiwb_sandbox_reused_total")
                     return c, base_url
             except docker.errors.NotFound:
                 pass
 
             # 用户 project 目录(与前端文件树同址),bind 到 AIO 容器工作区
+            self._enforce_active_cap()
             host_dir = str(Path(config.AGENT_SANDBOX_VOLUME_ROOT) / self.user_id / "project")
             self._chown_host_workspace()
 
@@ -153,7 +160,25 @@ class AioSandbox(BaseSandbox):
 
             self._container = c
             self._base_url = base_url
+            metrics.inc("aiwb_sandbox_created_total")
+            logger.info("[%s] AIO 沙箱就绪: %s (port=%s)", self.user_id, self.name, host_port)
             return c, base_url
+
+    def _enforce_active_cap(self) -> None:
+        """并发沙箱上限保护:仅限制"新建"(复用已有容器不受限),防止资源耗尽。
+
+        计数排除自身(本实例已在 __init__ 注册),因此 max=1 时仍允许为单个用户建容器,
+        第二个用户才会被拒。
+        """
+        cap = config.AGENT_SANDBOX_MAX_ACTIVE
+        if not cap or cap <= 0:
+            return
+        others = active_sandbox_count(exclude=self)
+        if others >= cap:
+            metrics.inc("aiwb_sandbox_rejected_total")
+            logger.warning("[%s] 沙箱并发已达上限 %d(当前 %d),拒绝新建",
+                           self.user_id, cap, others)
+            raise RuntimeError(f"沙箱并发已达上限({cap}),请稍后重试或等待空闲回收")
 
     @staticmethod
     def _host_port(c) -> str | None:
@@ -231,7 +256,11 @@ class AioSandbox(BaseSandbox):
         return data.get("data") or {}
 
     def ensure(self):
-        return self._ensure_container()[0]
+        try:
+            return self._ensure_container()[0]
+        except Exception:
+            metrics.inc("aiwb_sandbox_errors_total")
+            raise
 
     def ensure_browser(self) -> None:
         """AIO 自带浏览器,无需额外启动;确保容器运行即可。"""
@@ -245,6 +274,7 @@ class AioSandbox(BaseSandbox):
                 c = self._docker().containers.get(self.name)
             if c is not None:
                 c.stop(timeout=3)
+                metrics.inc("aiwb_sandbox_stopped_total")
                 logger.info("[%s] AIO 沙箱已停止", self.user_id)
         except Exception as exc:  # noqa: BLE001
             logger.debug("[%s] 停止 AIO 失败: %s", self.user_id, exc)
@@ -254,6 +284,7 @@ class AioSandbox(BaseSandbox):
         self.stop()
         try:
             self._docker().containers.get(self.name).remove(force=True)
+            metrics.inc("aiwb_sandbox_destroyed_total")
         except Exception:  # noqa: BLE001
             pass
 
@@ -405,12 +436,42 @@ class AioSandbox(BaseSandbox):
             sliced = "\n".join(lines[offset:offset + limit])
             actual_start = max(1, offset + 1) if total > 0 else 1
             actual_end = max(actual_start, min(offset + limit, total)) if total > 0 else 1
+            next_offset = min(offset + limit, total) if offset + limit < total else None
+
+            # 原地打转保护:同一 (path, offset, limit) 区间被重复读取且内容逐字节相同
+            # —— 实测模型会对同一个技能文件重复发几十次完全相同的 read_file
+            # (args 不变、从不改 offset),因为它以为"再读一次就能拿到更多"。
+            # 这里把提示追加到内容末尾,明确告诉它"内容没变 + 想看后面请用 offset",
+            # 让它跳出循环。内容本身照常返回(只是多一行提示),不影响正常读取。
+            key = (aio_path, offset, limit)
+            digest = hashlib.sha256(sliced.encode("utf-8", "replace")).hexdigest()[:16]
+            prev = self._read_seen.get(key)
+            repeat = prev is not None and prev[0] == digest
+            self._read_seen[key] = (digest, self._read_seen.get(key, (digest, 0))[1] + (1 if repeat else 0))
+            # 只保留最近 200 条,避免长会话无限增长
+            if len(self._read_seen) > 200:
+                for k in list(self._read_seen.keys())[:100]:
+                    self._read_seen.pop(k, None)
+
+            text = sliced
+            if repeat:
+                times = self._read_seen[key][1]
+                hint = (
+                    f"\n\n[提示] 该区间(第 {actual_start}-{actual_end} 行)已重复读取 {times} 次,"
+                    "内容与上次完全相同,重复读取不会得到新信息。"
+                )
+                if next_offset is not None:
+                    hint += f"文件共 {total} 行,如需后续内容请用 offset={next_offset} 继续读取。"
+                else:
+                    hint += "该文件已读到末尾。"
+                text += hint
+
             return ReadResult(
-                file_data=FileData(content=sliced, encoding="utf-8"),
+                file_data=FileData(content=text, encoding="utf-8"),
                 total_lines=total,
                 start_line=actual_start,
                 end_line=actual_end,
-                next_offset=min(offset + limit, total) if offset + limit < total else None,
+                next_offset=next_offset,
             )
         except Exception as exc:  # noqa: BLE001
             return ReadResult(error=str(exc))
@@ -587,6 +648,7 @@ def register_aio_sandbox(sb: AioSandbox) -> None:
     global _REAPER_STARTED
     with _ACTIVE_AIO_LOCK:
         _ACTIVE_AIO[sb.name] = sb
+        metrics.set_gauge("aiwb_sandbox_active", len(_ACTIVE_AIO))
         if not _REAPER_STARTED:
             t = threading.Thread(target=_aio_reap_loop, name="aio-sandbox-reaper", daemon=True)
             t.start()
@@ -596,6 +658,13 @@ def register_aio_sandbox(sb: AioSandbox) -> None:
 def unregister_aio_sandbox(sb: AioSandbox) -> None:
     with _ACTIVE_AIO_LOCK:
         _ACTIVE_AIO.pop(sb.name, None)
+        metrics.set_gauge("aiwb_sandbox_active", len(_ACTIVE_AIO))
+
+
+def active_sandbox_count(exclude: "AioSandbox | None" = None) -> int:
+    """当前注册的沙箱数(可排除某个实例)。"""
+    with _ACTIVE_AIO_LOCK:
+        return sum(1 for sb in _ACTIVE_AIO.values() if sb is not exclude)
 
 
 def get_aio_sandbox(user_id: str) -> AioSandbox:
@@ -614,6 +683,9 @@ def _aio_reap_loop() -> None:
             stale = [sb for sb in _ACTIVE_AIO.values() if sb.last_used < cutoff]
         for sb in stale:
             try:
+                logger.info("[%s] AIO 沙箱空闲回收(>%ss): %s",
+                            sb.user_id, max(60, config.AGENT_SANDBOX_IDLE_TTL), sb.name)
                 sb.destroy()
+                metrics.inc("aiwb_sandbox_reaped_total")
             except Exception:  # noqa: BLE001
                 logger.warning("[%s] AIO 沙箱回收失败", sb.user_id, exc_info=True)
