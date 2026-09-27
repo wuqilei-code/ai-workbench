@@ -4,6 +4,7 @@ import lombok.Builder;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.Map;
 
 /** 定时任务项(供「任务面板」展示)。 */
 @Data
@@ -19,6 +20,8 @@ public class JobTaskVo {
     /** 1=非交互 --auto */
     private boolean autoApprove;
     private boolean enabled;
+    /** 任务变量(键→值):运行时替换 prompt 中的 ${key} 占位符 */
+    private Map<String, String> variables;
     /** pending / queued / running / success / failed / timeout / cancelled */
     private String status;
     private String statusText;

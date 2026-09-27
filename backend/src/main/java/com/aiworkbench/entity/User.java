@@ -26,6 +26,9 @@ public class User {
     /** Phase 1 per-user uid 隔离:uid = uidBase + id,确定性分配;注册后由 UserProvisioningService 回填 */
     private Integer uid;
 
+    /** 令牌版本:改密等操作 +1,使旧 JWT(携带旧版本号)失效 */
+    private Integer tokenVersion;
+
     /** 时间戳由 DB 默认值/ON UPDATE 管理,update 时 NEVER 不写入,避免覆盖自动值 */
     @TableField(value = "created_at", updateStrategy = FieldStrategy.NEVER)
     private LocalDateTime createdAt;

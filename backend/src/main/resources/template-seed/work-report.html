@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{周期}} · 工作周报/月报</title>
+<style>
+:root{--ink:#111827;--ink2:#3f4757;--muted:#8b93a5;--line:#e6eaf1;--acc:#334155;--acc2:#1e293b;--soft:#f1f5f9;--ok:#15803d;--warn:#b45309;--bg:#f5f6f9}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);background:var(--bg);line-height:1.75}
+.page{max-width:940px;margin:0 auto;background:#fff;box-shadow:0 10px 30px rgba(30,41,59,.07)}
+.head{padding:40px 52px 28px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:16px}
+.head h1{font-size:28px;letter-spacing:-.6px}
+.head .kicker{font-size:12px;letter-spacing:2.5px;font-weight:700;color:var(--muted);text-transform:uppercase}
+.head .sub{color:var(--muted);font-size:13px;margin-top:6px}
+.head .who{text-align:right;font-size:12px;color:var(--muted)}.head .who b{display:block;font-size:14px;color:var(--ink)}
+.body{padding:34px 52px 54px}
+h2{font-size:18px;margin:32px 0 14px;display:flex;align-items:center;gap:10px}
+h2::before{content:"";width:5px;height:19px;border-radius:3px;background:var(--acc)}
+p{color:var(--ink2);font-size:14px;margin:8px 0}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:14px 0}
+.kpi{border:1px solid var(--line);border-radius:12px;padding:14px;background:linear-gradient(180deg,#fff,#fafbfd)}
+.kpi b{display:block;font-size:22px;letter-spacing:-.4px}
+.kpi span{font-size:12px;color:var(--muted)}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+th,td{padding:11px 14px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:#f8fafc;color:var(--muted);font-size:12.5px;font-weight:700}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:nth-child(even){background:#fcfdff}
+.pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700}
+.pill.done{background:#dcfce7;color:var(--ok)}.pill.doing{background:#dbeafe;color:#1d4ed8}.pill.risk{background:#fee2e2;color:#b91c1c}
+ul.clean{list-style:none;margin:8px 0}
+ul.clean li{position:relative;padding-left:20px;margin:8px 0;font-size:14px;color:var(--ink2)}
+ul.clean li::before{content:"";position:absolute;left:2px;top:9px;width:6px;height:6px;border-radius:50%;background:var(--acc)}
+.callout{border:1px solid #fde68a;background:linear-gradient(180deg,#fffbeb,#fef3c7);border-radius:14px;padding:16px 20px;margin:16px 0;color:#92400e;font-size:14px}
+.foot{margin-top:36px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:12px;display:flex;justify-content:space-between;flex-wrap:wrap}
+@media(max-width:720px){.head,.body{padding-left:24px;padding-right:24px}.kpis{grid-template-columns:repeat(2,1fr)}}
+@media print{body{background:#fff}.page{box-shadow:none;max-width:100%}}
+</style></head><body>
+<div class="page">
+<header class="head">
+  <div>
+    <div class="kicker">Work Report</div>
+    <h1>{{周期}} 工作{{周报/月报}}</h1>
+    <div class="sub">{{起止日期}} · 部门 {{部门}}</div>
+  </div>
+  <div class="who"><b>{{姓名}}</b>{{职位}}</div>
+</header>
+<main class="body">
+  <h2>本期成果</h2>
+  <div class="kpis">
+    <div class="kpi"><b>{{完成项}}</b><span>完成事项</span></div>
+    <div class="kpi"><b>{{进行中}}</b><span>进行中</span></div>
+    <div class="kpi"><b>{{风险}}</b><span>风险项</span></div>
+    <div class="kpi"><b>{{完成率}}</b><span>目标完成率</span></div>
+  </div>
+
+  <h2>关键事项</h2>
+  <table>
+    <thead><tr><th>事项</th><th>进展</th><th>状态</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>{{事项 1}}</td><td>{{%}}</td><td><span class="pill done">已完成</span></td><td>{{说明}}</td></tr>
+      <tr><td>{{事项 2}}</td><td>{{%}}</td><td><span class="pill doing">进行中</span></td><td>{{说明}}</td></tr>
+      <tr><td>{{事项 3}}</td><td>{{%}}</td><td><span class="pill risk">有风险</span></td><td>{{说明}}</td></tr>
+    </tbody>
+  </table>
+
+  <h2>数据与亮点</h2>
+  <ul class="clean">
+    <li>{{可量化的成果/提升}}</li>
+    <li>{{值得沉淀的经验或方法}}</li>
+  </ul>
+
+  <h2>问题与风险</h2>
+  <div class="callout"><b>需要支持:</b>{{当前阻塞点、需要的资源或决策}}</div>
+
+  <h2>下期计划</h2>
+  <table>
+    <thead><tr><th>计划事项</th><th>目标</th><th>优先级</th><th>预计完成</th></tr></thead>
+    <tbody>
+      <tr><td>{{计划 1}}</td><td>{{目标}}</td><td>P0</td><td>{{日期}}</td></tr>
+      <tr><td>{{计划 2}}</td><td>{{目标}}</td><td>P1</td><td>{{日期}}</td></tr>
+    </tbody>
+  </table>
+  <div class="foot"><span>{{姓名}} · {{周期}} 工作{{周报/月报}}</span><span>生成于 {{日期}}</span></div>
+</main>
+</div></body></html>

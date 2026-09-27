@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{分析对象}} · 竞品分析报告</title>
+<style>
+:root{--ink:#0f172a;--ink2:#475569;--muted:#94a3b8;--line:#e6eaf1;--acc:#2563eb;--acc2:#1d4ed8;--soft:#eff4ff;--ok:#059669;--warn:#d97706;--bad:#dc2626;--bg:#f5f7fb}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);background:var(--bg);line-height:1.7}
+.page{max-width:960px;margin:0 auto;background:#fff;box-shadow:0 10px 30px rgba(15,23,42,.07)}
+.hero{padding:48px 56px 36px;background:linear-gradient(135deg,#1e3a8a,#2563eb);color:#fff}
+.hero .kicker{font-size:12px;letter-spacing:3px;font-weight:700;opacity:.85;text-transform:uppercase}
+.hero h1{font-size:32px;letter-spacing:-.7px;margin:12px 0 10px}
+.hero .lead{font-size:14.5px;opacity:.92;max-width:640px}
+.hero-meta{display:flex;flex-wrap:wrap;gap:24px;margin-top:22px;font-size:12.5px;opacity:.9}
+.body{padding:40px 56px 56px}
+h2{font-size:20px;margin:34px 0 14px;display:flex;align-items:center;gap:10px}
+h2 .n{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:28px;padding:0 8px;border-radius:8px;background:var(--soft);color:var(--acc2);font-size:12.5px;font-weight:700}
+p{color:var(--ink2);font-size:14px;margin:9px 0}
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin:16px 0}
+.card{border:1px solid var(--line);border-radius:14px;padding:18px;background:#fff}
+.card h4{font-size:12.5px;color:var(--acc2);letter-spacing:.4px;margin-bottom:8px}
+.card p{font-size:13px;margin:0}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+th,td{padding:11px 13px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:#f8fafc;color:var(--muted);font-size:12px;font-weight:600}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:nth-child(even){background:#fcfdff}
+.pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700}
+.pill.g{background:#ecfdf5;color:var(--ok)}.pill.y{background:#fffbeb;color:var(--warn)}.pill.r{background:#fef2f2;color:var(--bad)}.pill.b{background:var(--soft);color:var(--acc2)}
+.bars{margin:14px 0}
+.bar{display:flex;align-items:center;gap:12px;margin:10px 0;font-size:13px}
+.bar .nm{width:100px;color:var(--muted)}
+.bar .tk{flex:1;height:10px;border-radius:6px;background:#eef2f7;overflow:hidden}
+.bar .fl{height:100%;border-radius:6px;background:linear-gradient(90deg,var(--acc),#60a5fa)}
+.bar .vl{width:64px;text-align:right;font-weight:600;color:var(--ink2)}
+ul.clean{list-style:none;margin:10px 0}
+ul.clean li{position:relative;padding-left:22px;margin:8px 0;font-size:14px;color:var(--ink2)}
+ul.clean li::before{content:"";position:absolute;left:4px;top:10px;width:7px;height:7px;border-radius:50%;background:var(--acc)}
+.callout{border:1px solid #dbe7ff;background:linear-gradient(180deg,#f5f9ff,#eef4ff);border-radius:14px;padding:18px 22px;margin:18px 0;color:#1e3a8a;font-size:14px}
+.foot{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:12px;display:flex;justify-content:space-between;flex-wrap:wrap}
+@media(max-width:720px){.hero,.body{padding-left:24px;padding-right:24px}.cards{grid-template-columns:1fr}.hero h1{font-size:25px}}
+@media print{body{background:#fff}.page{box-shadow:none;max-width:100%}.hero{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style></head><body>
+<div class="page">
+<header class="hero">
+  <div class="kicker">Competitive Analysis</div>
+  <h1>{{分析对象/赛道}} · 竞品分析报告</h1>
+  <p class="lead">{{一句话说明分析目的、范围与核心结论}}</p>
+  <div class="hero-meta"><span>分析人 {{负责人}}</span><span>更新 {{日期}}</span><span>样本 {{N}} 家竞品</span></div>
+</header>
+<main class="body">
+  <h2><span class="n">摘要</span>核心发现</h2>
+  <div class="cards">
+    <div class="card"><h4>市场格局</h4><p>{{头部集中度与主要玩家}}</p></div>
+    <div class="card"><h4>差异化机会</h4><p>{{尚未被满足的需求 / 空白点}}</p></div>
+    <div class="card"><h4>对我们的启示</h4><p>{{应强化的能力与定位}}</p></div>
+  </div>
+
+  <h2><span class="n">01</span>竞品总览</h2>
+  <table>
+    <thead><tr><th>竞品</th><th>定位</th><th>目标用户</th><th>核心卖点</th><th>商业模式</th></tr></thead>
+    <tbody>
+      <tr><td>{{竞品 A}}</td><td>{{定位}}</td><td>{{人群}}</td><td>{{卖点}}</td><td>{{模式}}</td></tr>
+      <tr><td>{{竞品 B}}</td><td>{{定位}}</td><td>{{人群}}</td><td>{{卖点}}</td><td>{{模式}}</td></tr>
+      <tr><td>{{竞品 C}}</td><td>{{定位}}</td><td>{{人群}}</td><td>{{卖点}}</td><td>{{模式}}</td></tr>
+    </tbody>
+  </table>
+
+  <h2><span class="n">02</span>能力对比</h2>
+  <div class="bars">
+    <div class="bar"><span class="nm">{{能力1}}</span><span class="tk"><span class="fl" style="width:88%"></span></span><span class="vl">{{我方}}</span></div>
+    <div class="bar"><span class="nm">{{能力2}}</span><span class="tk"><span class="fl" style="width:62%"></span></span><span class="vl">{{我方}}</span></div>
+    <div class="bar"><span class="nm">{{能力3}}</span><span class="tk"><span class="fl" style="width:45%"></span></span><span class="vl">{{我方}}</span></div>
+  </div>
+
+  <h2><span class="n">03</span>优劣与机会</h2>
+  <table>
+    <thead><tr><th>维度</th><th>竞品做法</th><th>我方现状</th><th>判断</th></tr></thead>
+    <tbody>
+      <tr><td>产品体验</td><td>{{做法}}</td><td>{{现状}}</td><td><span class="pill g">领先</span></td></tr>
+      <tr><td>价格策略</td><td>{{做法}}</td><td>{{现状}}</td><td><span class="pill y">持平</span></td></tr>
+      <tr><td>生态/服务</td><td>{{做法}}</td><td>{{现状}}</td><td><span class="pill r">落后</span></td></tr>
+    </tbody>
+  </table>
+
+  <h2><span class="n">04</span>结论与建议</h2>
+  <ul class="clean">
+    <li>{{建议 1:产品/功能层面}}</li>
+    <li>{{建议 2:定价/渠道层面}}</li>
+    <li>{{建议 3:品牌/服务层面}}</li>
+  </ul>
+  <div class="callout"><b>下一步:</b>{{需要立即验证的假设与行动}}</div>
+  <div class="foot"><span>{{分析对象}} · 竞品分析</span><span>生成于 {{日期}}</span></div>
+</main>
+</div></body></html>

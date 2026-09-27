@@ -6,7 +6,11 @@ import com.aiworkbench.dto.chat.TemplateRequest;
 import com.aiworkbench.dto.chat.TemplateVo;
 import com.aiworkbench.entity.PromptTemplate;
 import com.aiworkbench.entity.UserTemplate;
+import com.aiworkbench.entity.UserTemplateFavorite;
+import com.aiworkbench.entity.UserTemplateInstall;
 import com.aiworkbench.mapper.PromptTemplateMapper;
+import com.aiworkbench.mapper.UserTemplateFavoriteMapper;
+import com.aiworkbench.mapper.UserTemplateInstallMapper;
 import com.aiworkbench.mapper.UserTemplateMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
@@ -15,7 +19,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -33,17 +39,14 @@ public class TemplateService {
 
     private final PromptTemplateMapper templateMapper;
     private final UserTemplateMapper userTemplateMapper;
+    private final UserTemplateFavoriteMapper favoriteMapper;
+    private final UserTemplateInstallMapper installMapper;
 
     /** 首页最大展示/启用数 */
     private static final int HOME_MAX = 12;
-    /** 无启用时的兜底内置数量 */
-    private static final int HOME_FALLBACK = 6;
-    /** 特殊模板(源码测试分析,由 Test 页触发,不算常规首页模板),默认不启用、也不计入默认 12 个 */
-    private static final String TEST_ANALYSIS_TITLE = "源码测试分析";
 
-    /** 当前用户的模板列表(内置 + 自建),各带 enabled 状态。 */
+    /** 当前用户的模板列表(内置 + 自建),各带 enabled/pinned 状态。 */
     public List<TemplateVo> listMine(Long userId) {
-        ensureDefaults(userId);
         List<PromptTemplate> builtin = templateMapper.selectList(
                 new LambdaQueryWrapper<PromptTemplate>()
                         .isNull(PromptTemplate::getUserId)
@@ -52,42 +55,12 @@ public class TemplateService {
                 new LambdaQueryWrapper<PromptTemplate>()
                         .eq(PromptTemplate::getUserId, userId)
                         .orderByAsc(PromptTemplate::getSortOrder));
-        Set<Long> enabledIds = enabledTemplateIds(userId);
+        Map<Long, UserTemplate> utMap = userTemplateMap(userId);
+        Set<Long> favIds = favoriteIds(userId);
 
         List<TemplateVo> out = new ArrayList<>();
-        for (PromptTemplate t : builtin) out.add(toVo(t, true, enabledIds.contains(t.getId())));
-        for (PromptTemplate t : mine) out.add(toVo(t, false, enabledIds.contains(t.getId())));
-        return out;
-    }
-
-    /** 首页展示的模板:用户启用的(最多 HOME_MAX 个);无启用时兜底内置前几个。 */
-    public List<TemplateVo> homeTemplates(Long userId) {
-        ensureDefaults(userId);
-        List<UserTemplate> uts = userTemplateMapper.selectList(
-                new LambdaQueryWrapper<UserTemplate>()
-                        .eq(UserTemplate::getUserId, userId)
-                        .eq(UserTemplate::getEnabled, 1)
-                        .orderByAsc(UserTemplate::getSortOrder)
-                        .last("limit " + HOME_MAX));
-        if (uts.isEmpty()) {
-            // 兜底:内置前几个(首启已 ensureDefaults,理论上不会走到,防御)
-            List<PromptTemplate> builtin = templateMapper.selectList(
-                    new LambdaQueryWrapper<PromptTemplate>()
-                            .isNull(PromptTemplate::getUserId)
-                            .orderByAsc(PromptTemplate::getSortOrder)
-                            .last("limit " + HOME_FALLBACK));
-            return builtin.stream().map(t -> toVo(t, true, true)).toList();
-        }
-        List<Long> ids = uts.stream().map(UserTemplate::getTemplateId).toList();
-        List<PromptTemplate> templates = templateMapper.selectByIds(ids);
-        Map<Long, PromptTemplate> byId = templates.stream().collect(Collectors.toMap(PromptTemplate::getId, t -> t));
-        List<TemplateVo> out = new ArrayList<>();
-        for (UserTemplate ut : uts) {
-            PromptTemplate t = byId.get(ut.getTemplateId());
-            if (t != null) {
-                out.add(toVo(t, t.getUserId() == null, true));
-            }
-        }
+        for (PromptTemplate t : builtin) out.add(toVo(t, true, utMap.get(t.getId()), favIds.contains(t.getId())));
+        for (PromptTemplate t : mine) out.add(toVo(t, false, utMap.get(t.getId()), favIds.contains(t.getId())));
         return out;
     }
 
@@ -132,55 +105,57 @@ public class TemplateService {
         }
     }
 
-    /** 新用户首启:若没有任何 user_template 记录,默认启用全部常规内置模板(不含「源码测试分析」特殊模板)。 */
-    public void ensureDefaults(Long userId) {
-        Long count = userTemplateMapper.selectCount(new LambdaQueryWrapper<UserTemplate>()
-                .eq(UserTemplate::getUserId, userId));
-        if (count != null && count > 0) return;
-        List<PromptTemplate> builtin = templateMapper.selectList(
-                new LambdaQueryWrapper<PromptTemplate>()
-                        .isNull(PromptTemplate::getUserId)
-                        .orderByAsc(PromptTemplate::getSortOrder));
-        int sort = 10;
-        int enabled = 0;
-        for (PromptTemplate t : builtin) {
-            if (TEST_ANALYSIS_TITLE.equals(t.getTitle())) continue;
-            UserTemplate ut = new UserTemplate();
-            ut.setUserId(userId);
-            ut.setTemplateId(t.getId());
-            ut.setEnabled(1);
-            ut.setSortOrder(sort);
-            userTemplateMapper.insert(ut);
-            sort += 10;
-            enabled++;
-        }
-        log.info("seeded default templates for user {} ({} enabled)", userId, enabled);
-    }
-
+    /** 新建个人模板。 */
     public TemplateVo create(Long userId, TemplateRequest req) {
         PromptTemplate t = new PromptTemplate();
         t.setUserId(userId);
         t.setTitle(req.getTitle());
         t.setCategory(req.getCategory());
+        t.setDescription(req.getDescription());
+        t.setTags(req.getTags());
         t.setContent(req.getContent());
+        t.setFormat(req.getFormat() != null && !req.getFormat().isBlank() ? req.getFormat() : "prompt");
+        t.setSkill(req.getSkill());
+        t.setFeatured(0);
+        t.setSource("self");
+        t.setThumb(req.getThumb());
         t.setIcon(req.getIcon() != null && !req.getIcon().isBlank() ? req.getIcon() : "📋");
         t.setSortOrder(1000);
         templateMapper.insert(t);
-        // 自建默认启用
-        setEnabled(userId, t.getId(), true);
-        return toVo(t, false, true);
+        // 自建模板默认**不自动启用**(首页启用名额有限,HOME_MAX);用户可在列表里手动启用。
+        // 已启用名额未满时可自动启用,满了也不报错。
+        try {
+            Long cnt = userTemplateMapper.selectCount(new LambdaQueryWrapper<UserTemplate>()
+                    .eq(UserTemplate::getUserId, userId)
+                    .eq(UserTemplate::getEnabled, 1));
+            if (cnt == null || cnt < HOME_MAX) {
+                setEnabled(userId, t.getId(), true);
+                return toVo(t, false, userTemplateRow(userId, t.getId()), false);
+            }
+        } catch (Exception ignored) {
+            // 自动启用失败不影响创建
+        }
+        return toVo(t, false, null, false);
     }
 
     public TemplateVo update(Long userId, Long id, TemplateRequest req) {
         PromptTemplate t = getOwned(userId, id);
+        if ("installed".equals(t.getSource())) {
+            throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "市场安装的模板只读,仅可查看/使用");
+        }
         t.setTitle(req.getTitle());
         t.setCategory(req.getCategory());
+        t.setDescription(req.getDescription());
+        t.setTags(req.getTags());
         t.setContent(req.getContent());
+        if (req.getFormat() != null && !req.getFormat().isBlank()) t.setFormat(req.getFormat());
+        if (req.getSkill() != null) t.setSkill(req.getSkill());
+        if (req.getThumb() != null) t.setThumb(req.getThumb());
         if (req.getIcon() != null && !req.getIcon().isBlank()) {
             t.setIcon(req.getIcon());
         }
         templateMapper.updateById(t);
-        return toVo(t, false, isEnabled(userId, id));
+        return toVo(t, false, userTemplateRow(userId, id), isFavorited(userId, id));
     }
 
     public void delete(Long userId, Long id) {
@@ -189,6 +164,64 @@ public class TemplateService {
         userTemplateMapper.delete(new LambdaQueryWrapper<UserTemplate>()
                 .eq(UserTemplate::getUserId, userId)
                 .eq(UserTemplate::getTemplateId, id));
+        // 若为市场安装款,同步清除安装记录,允许再次从市场安装
+        installMapper.delete(new LambdaQueryWrapper<UserTemplateInstall>()
+                .eq(UserTemplateInstall::getTemplateId, id));
+    }
+
+    /**
+     * 保存当前用户模板的自定义顺序:按传入 id 顺序重写 sort_order(每次 +10),
+     * 仅作用于归属该用户的模板(内置/他人模板忽略,防越权)。
+     */
+    public void reorder(Long userId, List<Long> ids) {
+        if (ids == null || ids.isEmpty()) return;
+        int sort = 10;
+        for (Long id : ids) {
+            if (id == null) continue;
+            templateMapper.update(null, new LambdaUpdateWrapper<PromptTemplate>()
+                    .eq(PromptTemplate::getId, id)
+                    .eq(PromptTemplate::getUserId, userId)
+                    .set(PromptTemplate::getSortOrder, sort));
+            sort += 10;
+        }
+    }
+
+    /**
+     * 置顶/取消置顶自己的模板(自建或市场安装)。置顶时间与顺序用于问答页每类「最多 3 条」的展示排序。
+     */
+    public void pin(Long userId, Long templateId, boolean pinned) {
+        PromptTemplate t = templateMapper.selectById(templateId);
+        if (t == null) throw new BusinessException(ResultCode.NOT_FOUND);
+        if (t.getUserId() == null || !t.getUserId().equals(userId)) {
+            throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "只能置顶自己的模板");
+        }
+        UserTemplate ut = userTemplateRow(userId, templateId);
+        if (pinned) {
+            if (ut == null) {
+                ut = new UserTemplate();
+                ut.setUserId(userId);
+                ut.setTemplateId(templateId);
+                ut.setEnabled(0);
+                ut.setSortOrder(nextSortOrder(userId));
+                ut.setPinned(1);
+                ut.setPinnedAt(LocalDateTime.now());
+                ut.setPinOrder(nextPinOrder(userId));
+                userTemplateMapper.insert(ut);
+            } else if (ut.getPinned() == null || ut.getPinned() != 1) {
+                int order = nextPinOrder(userId);
+                userTemplateMapper.update(null, new LambdaUpdateWrapper<UserTemplate>()
+                        .eq(UserTemplate::getUserId, userId)
+                        .eq(UserTemplate::getTemplateId, templateId)
+                        .set(UserTemplate::getPinned, 1)
+                        .set(UserTemplate::getPinnedAt, LocalDateTime.now())
+                        .set(UserTemplate::getPinOrder, order));
+            }
+        } else if (ut != null && ut.getPinned() != null && ut.getPinned() == 1) {
+            userTemplateMapper.update(null, new LambdaUpdateWrapper<UserTemplate>()
+                    .eq(UserTemplate::getUserId, userId)
+                    .eq(UserTemplate::getTemplateId, templateId)
+                    .set(UserTemplate::getPinned, 0));
+        }
     }
 
     /** 取当前用户自建模板;内置(id 属于系统)或他人模板一律拒绝。 */
@@ -201,13 +234,27 @@ public class TemplateService {
         return t;
     }
 
-    private Set<Long> enabledTemplateIds(Long userId) {
+    /** 当前用户在 user_template 中的关系行(templateId → 行)。 */
+    private Map<Long, UserTemplate> userTemplateMap(Long userId) {
         List<UserTemplate> uts = userTemplateMapper.selectList(new LambdaQueryWrapper<UserTemplate>()
+                .eq(UserTemplate::getUserId, userId));
+        Map<Long, UserTemplate> m = new HashMap<>();
+        for (UserTemplate ut : uts) m.put(ut.getTemplateId(), ut);
+        return m;
+    }
+
+    private UserTemplate userTemplateRow(Long userId, Long templateId) {
+        return userTemplateMapper.selectOne(new LambdaQueryWrapper<UserTemplate>()
                 .eq(UserTemplate::getUserId, userId)
-                .eq(UserTemplate::getEnabled, 1));
-        Set<Long> ids = new HashSet<>();
-        for (UserTemplate ut : uts) ids.add(ut.getTemplateId());
-        return ids;
+                .eq(UserTemplate::getTemplateId, templateId));
+    }
+
+    private int nextPinOrder(Long userId) {
+        UserTemplate max = userTemplateMapper.selectOne(new LambdaQueryWrapper<UserTemplate>()
+                .eq(UserTemplate::getUserId, userId)
+                .orderByDesc(UserTemplate::getPinOrder)
+                .last("limit 1"));
+        return max == null || max.getPinOrder() == null ? 1 : max.getPinOrder() + 1;
     }
 
     private boolean isEnabled(Long userId, Long templateId) {
@@ -218,6 +265,41 @@ public class TemplateService {
         return c != null && c > 0;
     }
 
+    private Set<Long> favoriteIds(Long userId) {
+        List<UserTemplateFavorite> favs = favoriteMapper.selectList(
+                new LambdaQueryWrapper<UserTemplateFavorite>().eq(UserTemplateFavorite::getUserId, userId));
+        Set<Long> ids = new HashSet<>();
+        for (UserTemplateFavorite f : favs) ids.add(f.getTemplateId());
+        return ids;
+    }
+
+    private boolean isFavorited(Long userId, Long templateId) {
+        Long c = favoriteMapper.selectCount(new LambdaQueryWrapper<UserTemplateFavorite>()
+                .eq(UserTemplateFavorite::getUserId, userId)
+                .eq(UserTemplateFavorite::getTemplateId, templateId));
+        return c != null && c > 0;
+    }
+
+    /** 收藏/取消收藏一个模板;favorite 为空时取反。返回最终是否已收藏。 */
+    public boolean toggleFavorite(Long userId, Long templateId, Boolean favorite) {
+        PromptTemplate t = templateMapper.selectById(templateId);
+        if (t == null) throw new BusinessException(ResultCode.NOT_FOUND);
+        boolean want = favorite != null ? favorite : !isFavorited(userId, templateId);
+        if (want) {
+            if (!isFavorited(userId, templateId)) {
+                UserTemplateFavorite f = new UserTemplateFavorite();
+                f.setUserId(userId);
+                f.setTemplateId(templateId);
+                favoriteMapper.insert(f);
+            }
+        } else {
+            favoriteMapper.delete(new LambdaQueryWrapper<UserTemplateFavorite>()
+                    .eq(UserTemplateFavorite::getUserId, userId)
+                    .eq(UserTemplateFavorite::getTemplateId, templateId));
+        }
+        return want;
+    }
+
     private int nextSortOrder(Long userId) {
         UserTemplate max = userTemplateMapper.selectOne(new LambdaQueryWrapper<UserTemplate>()
                 .eq(UserTemplate::getUserId, userId)
@@ -226,15 +308,28 @@ public class TemplateService {
         return max == null ? 10 : max.getSortOrder() + 10;
     }
 
-    private TemplateVo toVo(PromptTemplate t, boolean builtin, boolean enabled) {
+    private TemplateVo toVo(PromptTemplate t, boolean builtin, UserTemplate ut, boolean favorited) {
+        boolean enabled = ut != null && ut.getEnabled() != null && ut.getEnabled() == 1;
+        boolean pinned = ut != null && ut.getPinned() != null && ut.getPinned() == 1;
         return TemplateVo.builder()
                 .id(t.getId())
                 .title(t.getTitle())
                 .category(t.getCategory())
+                .description(t.getDescription())
+                .tags(t.getTags())
                 .content(t.getContent())
+                .format(t.getFormat() != null ? t.getFormat() : "prompt")
+                .skill(t.getSkill())
+                .featured(t.getFeatured() != null && t.getFeatured() == 1)
+                .thumb(t.getThumb())
                 .icon(t.getIcon() != null ? t.getIcon() : "📋")
                 .builtin(builtin)
+                .source(t.getSource() != null ? t.getSource() : "self")
                 .enabled(enabled)
+                .favorited(favorited)
+                .pinned(pinned)
+                .pinOrder(ut != null ? ut.getPinOrder() : null)
+                .pinnedAt(ut != null ? ut.getPinnedAt() : null)
                 .updatedAt(t.getUpdatedAt())
                 .build();
     }

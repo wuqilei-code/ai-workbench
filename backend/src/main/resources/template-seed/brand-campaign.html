@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{品牌}} · 品牌传播方案</title>
+<style>
+:root{--ink:#15161c;--ink2:#4a4c56;--muted:#9a9ca8;--line:#e9e9f0;--acc:#e11d48;--acc2:#9f1239;--soft:#fff1f2;--ok:#059669;--bg:#f8f7fa}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);background:var(--bg);line-height:1.75}
+.page{max-width:960px;margin:0 auto;background:#fff;box-shadow:0 10px 30px rgba(159,18,57,.08)}
+.hero{padding:52px 56px 40px;background:linear-gradient(135deg,#881337,#e11d48 70%,#fb7185);color:#fff;position:relative;overflow:hidden}
+.hero::after{content:"";position:absolute;right:-80px;top:-100px;width:300px;height:300px;border-radius:50%;background:rgba(255,255,255,.1)}
+.hero .kicker{font-size:12px;letter-spacing:4px;font-weight:800;opacity:.9;text-transform:uppercase}
+.hero h1{font-size:33px;letter-spacing:-.8px;margin:14px 0 10px;position:relative;z-index:1}
+.hero .lead{font-size:14.5px;opacity:.94;max-width:640px;position:relative;z-index:1}
+.hero-meta{display:flex;flex-wrap:wrap;gap:24px;margin-top:22px;font-size:12.5px;opacity:.92;position:relative;z-index:1}
+.body{padding:42px 56px 56px}
+h2{font-size:20px;margin:34px 0 14px;display:flex;align-items:center;gap:10px}
+h2 .n{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:28px;padding:0 8px;border-radius:8px;background:var(--soft);color:var(--acc2);font-size:12.5px;font-weight:800}
+p{color:var(--ink2);font-size:14px;margin:9px 0}
+.slogan{text-align:center;font-size:22px;font-weight:800;letter-spacing:.5px;color:var(--acc2);margin:14px 0;padding:16px;border:2px dashed #fbcfe8;border-radius:14px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.panel{border:1px solid var(--line);border-radius:14px;padding:18px 20px;background:#fff}
+.panel h4{font-size:13px;color:var(--acc2);margin-bottom:8px}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+th,td{padding:11px 13px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:#fdf5f7;color:var(--muted);font-size:12px;font-weight:700}
+tbody tr:last-child td{border-bottom:none}
+.pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:11.5px;font-weight:700;background:var(--soft);color:var(--acc2)}
+ul.clean{list-style:none;margin:10px 0}
+ul.clean li{position:relative;padding-left:20px;margin:8px 0;font-size:14px;color:var(--ink2)}
+ul.clean li::before{content:"◆";position:absolute;left:0;color:var(--acc);font-size:10px;top:6px}
+.timeline{margin:14px 0;border-left:2px solid #fecdd3;padding-left:22px}
+.timeline .ev{position:relative;margin:0 0 16px}
+.timeline .ev::before{content:"";position:absolute;left:-29px;top:6px;width:12px;height:12px;border-radius:50%;background:#fff;border:3px solid var(--acc)}
+.timeline .ev .t{font-size:12px;color:var(--muted);font-weight:700}
+.callout{border:1px solid #fecdd3;background:linear-gradient(180deg,#fff1f2,#ffe4e6);border-radius:14px;padding:18px 22px;margin:18px 0;color:#881337;font-size:14px}
+.foot{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:12px;display:flex;justify-content:space-between;flex-wrap:wrap}
+@media(max-width:720px){.hero,.body{padding-left:24px;padding-right:24px}.grid2{grid-template-columns:1fr}.hero h1{font-size:26px}}
+@media print{body{background:#fff}.page{box-shadow:none;max-width:100%}.hero{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style></head><body>
+<div class="page">
+<header class="hero">
+  <div class="kicker">Brand Campaign</div>
+  <h1>{{品牌}} · 品牌传播方案</h1>
+  <p class="lead">{{一句话说明传播目标、目标人群与传播核心}}</p>
+  <div class="hero-meta"><span>周期 {{周期}}</span><span>预算 {{预算}}</span><span>负责人 {{负责人}}</span><span>更新 {{日期}}</span></div>
+</header>
+<main class="body">
+  <h2><span class="n">01</span>品牌现状与目标</h2>
+  <div class="grid2">
+    <div class="panel"><h4>现状诊断</h4><ul class="clean"><li>{{知名度/认知/美誉度现状}}</li><li>{{核心问题}}</li></ul></div>
+    <div class="panel"><h4>传播目标</h4><ul class="clean"><li>{{认知/好感/声量目标}}</li><li>{{可量化指标}}</li></ul></div>
+  </div>
+
+  <h2><span class="n">02</span>核心主张</h2>
+  <div class="slogan">{{品牌主张 / Campaign Slogan}}</div>
+  <p>{{一句话解释为什么是这句话,它与目标人群的关联}}</p>
+
+  <h2><span class="n">03</span>传播策略</h2>
+  <table>
+    <thead><tr><th>阶段</th><th>目标</th><th>核心动作</th><th>渠道</th></tr></thead>
+    <tbody>
+      <tr><td>{{引爆期}}</td><td>{{目标}}</td><td>{{动作}}</td><td>{{渠道}}</td></tr>
+      <tr><td>{{扩散期}}</td><td>{{目标}}</td><td>{{动作}}</td><td>{{渠道}}</td></tr>
+      <tr><td>{{沉淀期}}</td><td>{{目标}}</td><td>{{动作}}</td><td>{{渠道}}</td></tr>
+    </tbody>
+  </table>
+
+  <h2><span class="n">04</span>内容与节奏</h2>
+  <div class="timeline">
+    <div class="ev"><div class="t">{{时间}}</div><p>{{关键内容/事件/物料发布}}</p></div>
+    <div class="ev"><div class="t">{{时间}}</div><p>{{关键内容/事件/物料发布}}</p></div>
+    <div class="ev"><div class="t">{{时间}}</div><p>{{关键内容/事件/物料发布}}</p></div>
+  </div>
+
+  <h2><span class="n">05</span>预算与效果</h2>
+  <table>
+    <thead><tr><th>投放</th><th>预算</th><th>预期触达</th><th>衡量指标</th></tr></thead>
+    <tbody>
+      <tr><td>{{渠道 A}}</td><td>{{金额}}</td><td>{{触达}}</td><td>{{指标}}</td></tr>
+      <tr><td>{{渠道 B}}</td><td>{{金额}}</td><td>{{触达}}</td><td>{{指标}}</td></tr>
+    </tbody>
+  </table>
+  <div class="callout"><b>风险与预案:</b>{{品牌舆情/传播不及预期的应对}}</div>
+  <div class="foot"><span>{{品牌}} · 品牌传播方案</span><span>生成于 {{日期}}</span></div>
+</main>
+</div></body></html>

@@ -5,17 +5,28 @@ import com.aiworkbench.common.SecurityUtil;
 import com.aiworkbench.service.agent.BrowserContainerManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.HashMap;
 import java.util.Map;
 
 /**
  * AIO 沙箱浏览器/工具连接信息。
  * <p>
- * GET /api/agent/browser/sandbox-info —— 返回当前用户沙箱的 VNC / VSCode / 终端 URL,
+ * GET /api/agent/browser/sandbox-info —— 返回当前用户沙箱的 VNC / VSCode / 终端地址,
  * 前端把这些地址嵌入 iframe 做实时预览与接管(AIO 自带浏览器 + VNC,无需网关注入 CDP)。
+ * <p>
+ * 单端口方案:沙箱容器在宿主上发布的是随机端口,不能直接给远端用户。这里返回**同源相对路径**
+ * (/vnc/、/code-server/、/terminal),由 app 的 nginx 把这些根路径反代到
+ * {@code aio-sandbox-u<uid>:8080}。对外只暴露本服务一个端口,且沙箱应用使用的根绝对路径
+ * 在同一 origin 下天然成立(code-server 等无需改 base path)。
+ * <p>
+ * 鉴权:nginx 对反代路径发起 auth_request 子请求到 {@link #aioAuth()}(见 docker/nginx.conf
+ * 的 /__aio_auth),由 JwtAuthFilter 校验 aiwb_token;通过后从响应头 X-Aio-Uid 取当前用户,
+ * 作为上游沙箱,客户端无法伪造。
  */
 @Slf4j
 @RestController
@@ -30,6 +41,33 @@ public class BrowserControlController {
         Long userId = SecurityUtil.currentUserId();
         // 首次打开面板时按需拉起沙箱(ensure + 等待就绪由 agent-service 内部完成)
         browserContainerManager.getOrStart(userId);
-        return R.ok(browserContainerManager.sandboxInfo(userId));
+        Map<String, Object> info = browserContainerManager.sandboxInfo(userId);
+
+        Map<String, Object> out = new HashMap<>();
+        out.put("mode", info.getOrDefault("mode", "aio"));
+        if (info.get("vnc_url") != null) {
+            // 同源相对路径:iframe 以本服务 origin 解析,nginx 反代到沙箱(含鉴权)
+            // 用 noVNC 精简版 vnc_lite.html:无顶部控制栏;scale=true 自适应面板大小。
+            out.put("vnc_url", "/vnc/vnc_lite.html?scale=true");
+            out.put("code_server_url", "/code-server/");
+            out.put("terminal_url", "/terminal");
+            out.put("base_url", "/");
+            out.put("cdp_url", info.get("cdp_url"));
+        } else {
+            out.put("vnc_url", null);
+            out.put("error", info.get("error"));
+        }
+        return R.ok(out);
+    }
+
+    /**
+     * 沙箱反代的鉴权子请求(仅 nginx auth_request 内部调用,见 docker/nginx.conf 的 /__aio_auth)。
+     * 复用 JwtAuthFilter:未认证直接 401;通过后把当前用户 id 放入响应头 X-Aio-Uid,
+     * 由 nginx 取用作为上游沙箱(aio-sandbox-u&lt;uid&gt;)——客户端无法伪造。
+     */
+    @GetMapping("/aio-auth")
+    public ResponseEntity<Void> aioAuth() {
+        Long userId = SecurityUtil.currentUserId();
+        return ResponseEntity.ok().header("X-Aio-Uid", String.valueOf(userId)).build();
     }
 }

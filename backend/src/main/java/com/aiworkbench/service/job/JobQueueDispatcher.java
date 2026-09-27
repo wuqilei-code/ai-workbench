@@ -3,6 +3,7 @@ package com.aiworkbench.service.job;
 import com.aiworkbench.config.AgentJobProperties;
 import com.aiworkbench.entity.JobTask;
 import com.aiworkbench.mapper.JobTaskMapper;
+import com.aiworkbench.service.DbLockService;
 import com.aiworkbench.service.WorkspaceService;
 import com.aiworkbench.service.notification.NotificationService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -16,9 +17,12 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -45,6 +49,8 @@ public class JobQueueDispatcher {
     private final AgentJobProperties props;
     private final WorkspaceService workspaceService;
     private final NotificationService notificationService;
+    private final DbLockService dbLock;
+    private final JobPauseState pauseState;
 
     /** 内存运行计数(配合线程池大小双重限制) */
     private final AtomicInteger runningCount = new AtomicInteger();
@@ -75,9 +81,11 @@ public class JobQueueDispatcher {
         }
     }
 
-    /** 定时扫描:并发调度。 */
+    /** 定时扫描:并发调度。多副本时仅一个实例执行(避免各自的内存并发计数叠加超发)。 */
     @Scheduled(fixedDelayString = "${agent-jobs.sweep-ms:5000}")
     public void sweep() {
+        if (pauseState.isPaused()) return; // 全局暂停:不派发新任务(运行中的照常完成)
+        if (!dbLock.tryLock("job-dispatch-sweep", 30)) return;
         dispatch();
     }
 
@@ -129,7 +137,7 @@ public class JobQueueDispatcher {
             String logFile = logPath(userId, jobId, runId);
 
             JobAgentExecutor.RunResult result = jobAgentExecutor.run(
-                    userId, jobId, runId, job.getPrompt(), logFile);
+                    userId, jobId, runId, jobTaskService.resolvePrompt(job), logFile);
 
             boolean success = result.exitCode() == 0;
             boolean timedOut = result.exitCode() == 124;
@@ -162,8 +170,28 @@ public class JobQueueDispatcher {
         }
     }
 
-    /** 终态或 cron 重排:终态记 finished_at;cron 任务回到 pending 并计算下次触发。 */
+    /** 终态或重试/重排:
+     *  - 失败且未达重试上限:立即重新入队重试(retryCount+1);
+     *  - cron 任务:本轮结束回到 pending 等下次触发;
+     *  - 其余:进入终态。成功/达上限后重置 retryCount。 */
     private void finish(JobTask job, String status, String result, String error) {
+        boolean failure = JobTaskService.FAILED.equals(status) || JobTaskService.TIMEOUT.equals(status);
+        int retry = job.getRetryCount() == null ? 0 : job.getRetryCount();
+        int maxRetries = Math.max(0, props.getMaxRetries());
+
+        if (failure && retry < maxRetries) {
+            jobTaskMapper.update(new JobTask(), new LambdaUpdateWrapper<JobTask>()
+                    .eq(JobTask::getId, job.getId())
+                    .set(JobTask::getStatus, JobTaskService.QUEUED)
+                    .set(JobTask::getQueuedAt, LocalDateTime.now())
+                    .set(JobTask::getRetryCount, retry + 1)
+                    .set(JobTask::getContainerName, null)
+                    .set(JobTask::getLastResult, result)
+                    .set(JobTask::getLastError, error));
+            log.info("job {} run {} -> retry {}/{}", job.getId(), status, retry + 1, maxRetries);
+            return;
+        }
+
         LambdaUpdateWrapper<JobTask> uw = new LambdaUpdateWrapper<JobTask>()
                 .eq(JobTask::getId, job.getId());
         if (job.getCron() != null && !job.getCron().isBlank()
@@ -175,17 +203,46 @@ public class JobQueueDispatcher {
                     .set(JobTask::getNextRunAt, next)
                     .set(JobTask::getQueuedAt, null)
                     .set(JobTask::getContainerName, null)
+                    .set(JobTask::getRetryCount, 0)
                     .set(JobTask::getLastResult, result)
                     .set(JobTask::getLastError, error));
             log.info("job {} finished {} (cron), next run at {}", job.getId(), status, next);
+            if (failure) notifyWebhook(job, status, error);
         } else {
             jobTaskMapper.update(new JobTask(), uw
                     .set(JobTask::getStatus, status)
                     .set(JobTask::getFinishedAt, LocalDateTime.now())
                     .set(JobTask::getContainerName, null)
+                    .set(JobTask::getRetryCount, failure ? retry : 0)
                     .set(JobTask::getLastResult, result)
                     .set(JobTask::getLastError, error));
             log.info("job {} finished status={}", job.getId(), status);
+            if (failure) notifyWebhook(job, status, error);
+        }
+    }
+
+    /** 可选:任务最终失败时 POST 一条 JSON 到配置的 Webhook(失败静默,不影响主流程)。 */
+    private void notifyWebhook(JobTask job, String status, String error) {
+        String url = props.getWebhookUrl();
+        if (url == null || url.isBlank()) return;
+        try {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("type", "job_failed");
+            payload.put("jobId", job.getId());
+            payload.put("jobName", job.getName());
+            payload.put("userId", job.getUserId());
+            payload.put("status", status);
+            payload.put("error", error == null ? "" : error);
+            payload.put("at", LocalDateTime.now().toString());
+            org.springframework.web.reactive.function.client.WebClient.create(url)
+                    .post()
+                    .header("Content-Type", "application/json")
+                    .bodyValue(payload)
+                    .retrieve()
+                    .toBodilessEntity()
+                    .block(Duration.ofSeconds(8));
+        } catch (Exception e) {
+            log.warn("job {} webhook notify failed: {}", job.getId(), e.toString());
         }
     }
 
@@ -213,7 +270,14 @@ public class JobQueueDispatcher {
         if (job.getCron() != null && !job.getCron().isBlank()) {
             sb.append("- **定时表达式**: `").append(job.getCron()).append("`\n");
         }
-        sb.append("- **任务提示词**: ").append(singleLine(job.getPrompt())).append("\n\n");
+        sb.append("- **任务提示词**: ").append(singleLine(jobTaskService.resolvePrompt(job))).append("\n");
+        var vars = jobTaskService.parseVars(job.getVars());
+        if (!vars.isEmpty()) {
+            sb.append("- **任务变量**: ");
+            vars.forEach((k, v) -> sb.append("`").append(k).append("=").append(v).append("` "));
+            sb.append("\n");
+        }
+        sb.append("\n");
         sb.append("## 结果摘要\n\n").append(summary == null ? "(无)" : summary).append("\n\n");
         if (error != null && !error.isBlank()) {
             sb.append("## 错误信息\n\n").append(error).append("\n\n");

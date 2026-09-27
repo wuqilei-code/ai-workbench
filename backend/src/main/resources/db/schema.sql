@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS users (
     status      TINYINT      NOT NULL DEFAULT 1,
     -- Phase 1 per-user uid 隔离:uid = uidBase + user.id,确定性分配;老用户为 NULL,登录时回填
     uid         INT          NULL,
+    -- 令牌版本:改密 +1,使旧 JWT 失效
+    token_version INT        NOT NULL DEFAULT 0,
     created_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (id),
@@ -24,6 +26,16 @@ CREATE TABLE IF NOT EXISTS users (
 -- 新库由上面 CREATE TABLE 已建好 uid 列与索引,这两条 ALTER 报错忽略即可。
 ALTER TABLE users ADD COLUMN uid INT NULL;
 ALTER TABLE users ADD UNIQUE INDEX uk_users_uid (uid);
+-- 令牌版本列(老库补齐;重复列 1060 忽略)
+ALTER TABLE users ADD COLUMN token_version INT NOT NULL DEFAULT 0;
+
+-- 轻量分布式锁(多副本部署时保证定时调度只有一个实例执行);带 TTL 自动过期。
+CREATE TABLE IF NOT EXISTS app_lock (
+    name        VARCHAR(64)  NOT NULL,
+    owner       VARCHAR(64)  NOT NULL,
+    expires_at  DATETIME(3)  NOT NULL,
+    PRIMARY KEY (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS chat_session (
     id                  BIGINT       NOT NULL AUTO_INCREMENT,
@@ -218,9 +230,10 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE TABLE IF NOT EXISTS prompt_template (
     id          BIGINT       NOT NULL AUTO_INCREMENT,
     user_id     BIGINT       NULL,
+    source      VARCHAR(16)  NOT NULL DEFAULT 'self' COMMENT 'self=自建 installed=市场安装(只读)',
     title       VARCHAR(128) NOT NULL,
     category    VARCHAR(32)  NOT NULL DEFAULT 'other',
-    content     TEXT         NOT NULL,
+    content     MEDIUMTEXT   NOT NULL,
     icon        VARCHAR(32)  NULL DEFAULT '📋',
     sort_order  INT          NOT NULL DEFAULT 0,
     created_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -234,21 +247,64 @@ CREATE TABLE IF NOT EXISTS prompt_template (
 -- 此处对老库生效,重复列 1060 错误被 spring.sql.init.continue-on-error=true 忽略)
 ALTER TABLE prompt_template ADD COLUMN icon VARCHAR(32) NULL DEFAULT '📋' AFTER content;
 
--- 内置模板种子(幂等:重复主键冲突被 continue-on-error 忽略;icon 列此时已存在)
-INSERT IGNORE INTO prompt_template (id, user_id, title, category, content, icon, sort_order) VALUES
-  (1, NULL, '写周报', '办公', '请帮我把我的工作内容整理成一份周报,包含:本周完成、下周计划、风险与求助三部分。下面是这周我做的事情:\n\n', '🗓️', 10),
-  (2, NULL, '会议纪要', '办公', '请把下面这段讨论整理成会议纪要,包含:会议主题、参会人、讨论要点、结论、待办事项(注明负责人与截止时间)。\n\n', '📝', 20),
-  (3, NULL, '写邮件', '办公', '请帮我写一封邮件。我会告诉你收件人、目的和要点,请用专业得体的语气组织成完整邮件,主题清晰、正文分段、结尾礼貌。\n\n', '📧', 30),
-  (4, NULL, '总结文档', '办公', '请总结我上传的文档:①核心要点 ②关键数据/结论 ③需要我关注的行动项。保留原始信息,不要编造内容。\n\n', '📚', 40),
-  (5, NULL, '数据分析', '办公', '我会给你一份数据文件,请帮我分析并输出:①关键指标 ②主要趋势与结论 ③值得关注的风险点。分析要条理清晰,便于汇报。\n\n', '📊', 50),
-  (6, NULL, '调试代码', '开发', '我有一段代码出了问题,请帮我:先定位报错根因,再给出修复方案,最后给出修改后的完整代码。下面是我的代码和报错:\n\n', '🐛', 60),
-  (7, NULL, '解读报错', '开发', '下面是我的报错信息,请解读:①发生了什么 ②可能的原因 ③具体的修复步骤。回答请通俗易懂,分步说明。\n\n', '🔍', 70),
-  (8, NULL, '代码审查', '开发', '请审查下面这段代码:指出潜在 bug、性能问题、可读性问题,并给出改进建议和修改后的代码。\n\n', '🛠️', 80),
-  (9, NULL, 'SQL 优化', '开发', '请优化下面这条 SQL:分析执行计划中的潜在问题(如全表扫描、索引缺失、隐式转换),给出优化后的 SQL 和建索引建议。\n\n', '💾', 90),
-  (10, NULL, '需求拆解', '开发', '请把下面这个需求拆解成可执行的开发任务:包括模块划分、接口设计要点、表结构建议、测试要点。\n\n', '🧩', 100),
-  (11, NULL, '头脑风暴', '其他', '请围绕我下面提出的问题做头脑风暴:给出多个有创意的方案,并从可行性、成本、效果三个维度做简要点评,最后给一个推荐。\n\n', '💡', 110),
-  (12, NULL, '翻译润色', '其他', '请把下面的文字翻译成[目标语言],注意保持语气自然、专业。如有更好的表达请同时给出润色建议。\n\n', '✍️', 120),
-  (13, NULL, '源码测试分析', '开发', '我上传了一个项目源码压缩包,请用 test-analysis 技能对源码做静态分析:①生成测试点清单 ②生成测试用例 ③生成测试脚本(通过语法校验) ④输出测试报告。沙箱无法安装依赖,不要运行项目,只做静态分析与语法校验。\n\n', '🧪', 130);
+-- 模板正文升级为 MEDIUMTEXT:HTML 模板文件(整篇文档)直接存库,避免 TEXT 64KB 截断(老库生效,新库同上)
+ALTER TABLE prompt_template MODIFY COLUMN content MEDIUMTEXT NOT NULL;
+-- 来源列(老库补齐):市场安装的模板置为 installed,前端/后端据此限制为只读(仅查看/使用)
+ALTER TABLE prompt_template ADD COLUMN source VARCHAR(16) NOT NULL DEFAULT 'self' AFTER user_id;
+
+-- 历史内置提示词模板(写周报/会议纪要等 13 个)已废弃:不再播种,并清理老库中的残留。
+-- 首页改为展示「当前用户自己的模板(自建/市场安装)」,因此移除这批内置提示词。
+DELETE FROM prompt_template WHERE user_id IS NULL AND (format = 'prompt' OR format IS NULL);
+
+-- 模板扩展:支持「文档型模板」(HTML/文档样板 + 介绍/标签/关联技能/精选/缩略图)。幂等补列:
+-- 新库 CREATE TABLE 未含这些列 → 这里补;老库已存在 → 报重复列 1060,被 continue-on-error 忽略。
+ALTER TABLE prompt_template ADD COLUMN description VARCHAR(512) NULL AFTER title;
+ALTER TABLE prompt_template ADD COLUMN tags VARCHAR(255) NULL AFTER category;
+ALTER TABLE prompt_template ADD COLUMN format VARCHAR(16) NOT NULL DEFAULT 'prompt' AFTER content;
+ALTER TABLE prompt_template ADD COLUMN skill VARCHAR(64) NULL AFTER format;
+ALTER TABLE prompt_template ADD COLUMN featured TINYINT NOT NULL DEFAULT 0 AFTER skill;
+ALTER TABLE prompt_template ADD COLUMN thumb VARCHAR(512) NULL AFTER featured;
+
+-- 模板收藏(用户「收藏」的模板)
+CREATE TABLE IF NOT EXISTS user_template_favorite (
+    user_id     BIGINT      NOT NULL,
+    template_id BIGINT      NOT NULL,
+    created_at  DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (user_id, template_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 模板市场:用户把自建模板(HTML 文档/提示词)分享到市场,他人可安装到自己的模板库。
+CREATE TABLE IF NOT EXISTS template_marketplace (
+    id           BIGINT       NOT NULL AUTO_INCREMENT,
+    user_id      BIGINT       NOT NULL COMMENT '发布者',
+    author_name  VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '发布者用户名(冗余)',
+    title        VARCHAR(128) NOT NULL,
+    description  VARCHAR(512) NULL,
+    category     VARCHAR(32)  NOT NULL DEFAULT 'other',
+    tags         VARCHAR(255) NULL,
+    content      MEDIUMTEXT   NOT NULL COMMENT '模板正文(HTML 或提示词)',
+    format       VARCHAR(16)  NOT NULL DEFAULT 'html' COMMENT 'html/prompt',
+    skill        VARCHAR(64)  NULL COMMENT '关联技能',
+    icon         VARCHAR(32)  NULL,
+    installs     INT          NOT NULL DEFAULT 0,
+    created_at   DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at   DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (id),
+    KEY idx_tm_user (user_id),
+    KEY idx_tm_installs (installs),
+    KEY idx_tm_category (category)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 模板安装关系:用户从市场安装到自己的模板库(prompt_template 记录 id 作为来源)。
+CREATE TABLE IF NOT EXISTS user_template_install (
+    user_id      BIGINT      NOT NULL,
+    marketplace_id BIGINT    NOT NULL,
+    template_id  BIGINT      NOT NULL COMMENT '安装后本地 prompt_template.id',
+    created_at   DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (user_id, marketplace_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
 
 -- 用户模板启用关系:用户把系统内置模板(或自建)添加到自己的首页
 CREATE TABLE IF NOT EXISTS user_template (
@@ -256,10 +312,18 @@ CREATE TABLE IF NOT EXISTS user_template (
     template_id BIGINT       NOT NULL,
     enabled     TINYINT      NOT NULL DEFAULT 1 COMMENT '是否在首页展示',
     sort_order  INT          NOT NULL DEFAULT 0,
+    pinned      TINYINT      NOT NULL DEFAULT 0 COMMENT '是否置顶(问答页每类最多展示3条)',
+    pinned_at   DATETIME(3)  NULL COMMENT '置顶时间',
+    pin_order   INT          NOT NULL DEFAULT 0 COMMENT '置顶顺序(越小越靠前)',
     created_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     PRIMARY KEY (user_id, template_id),
     KEY idx_ut_user (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 老库补齐置顶列(幂等,重复列 1060 错误被 continue-on-error 忽略)
+ALTER TABLE user_template ADD COLUMN pinned TINYINT NOT NULL DEFAULT 0;
+ALTER TABLE user_template ADD COLUMN pinned_at DATETIME(3) NULL;
+ALTER TABLE user_template ADD COLUMN pin_order INT NOT NULL DEFAULT 0;
 
 -- 技能广场:用户发布技能到广场供他人安装
 CREATE TABLE IF NOT EXISTS skill_marketplace (
@@ -334,6 +398,8 @@ CREATE TABLE IF NOT EXISTS job_task (
     finished_at  DATETIME(3)  NULL,
     last_result  TEXT         NULL COMMENT '最近一次运行结果摘要',
     last_error   VARCHAR(1000) NULL,
+    retry_count  INT          NOT NULL DEFAULT 0 COMMENT '当前已重试次数(成功/达上限后重置)',
+    vars         TEXT         NULL COMMENT '任务变量(JSON object,运行时替换 prompt 中的 ${key} 占位符)',
     container_name VARCHAR(128) NULL COMMENT '运行中的任务容器名',
     run_job_dir  VARCHAR(512) NULL COMMENT '最近一次运行的工作区目录(快照)',
     created_at   DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -345,6 +411,11 @@ CREATE TABLE IF NOT EXISTS job_task (
 
 -- 定时任务运行历史:每次执行(run)一条记录,关联到 job_task.id。
 -- 一个 cron 任务会跑出多次结果,每次运行独立记录结果/日志路径,供「定时任务结果」展示。
+-- 任务失败重试列(老库补齐;重复列 1060 忽略)
+ALTER TABLE job_task ADD COLUMN retry_count INT NOT NULL DEFAULT 0;
+-- 任务变量列(老库补齐;重复列 1060 忽略)
+ALTER TABLE job_task ADD COLUMN vars TEXT NULL COMMENT '任务变量(JSON,替换 prompt 中 ${key})';
+
 CREATE TABLE IF NOT EXISTS job_task_run (
     id          BIGINT       NOT NULL AUTO_INCREMENT,
     job_id      BIGINT       NOT NULL,
@@ -455,3 +526,32 @@ ALTER TABLE chat_session ADD UNIQUE INDEX uk_session_agent (agent_session_id);
 ALTER TABLE chat_session ADD COLUMN skills JSON NULL;
 -- 用户技能附加文件列(老库补齐,幂等)
 ALTER TABLE user_skill ADD COLUMN files JSON NULL;
+
+-- 清理孤儿关系记录:模板被删除(如历史内置提示词)后,启用/收藏关系一并清除
+DELETE ut FROM user_template ut LEFT JOIN prompt_template pt ON pt.id = ut.template_id WHERE pt.id IS NULL;
+DELETE uf FROM user_template_favorite uf LEFT JOIN prompt_template pt ON pt.id = uf.template_id WHERE pt.id IS NULL;
+
+-- 回填:已被市场安装到本地的模板标记为 installed(让历史安装款也变只读)
+UPDATE prompt_template pt JOIN user_template_install uti ON uti.template_id = pt.id
+  SET pt.source = 'installed' WHERE pt.source <> 'installed';
+
+-- 会话 SSE 事件出站表(跨副本广播;见 db/migration/V4__session_event.sql)
+CREATE TABLE IF NOT EXISTS session_event (
+    seq        BIGINT      NOT NULL AUTO_INCREMENT,
+    session_id VARCHAR(64) NOT NULL,
+    origin     VARCHAR(64) NOT NULL,
+    type       VARCHAR(48) NOT NULL,
+    data       MEDIUMTEXT  NULL,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (seq),
+    KEY idx_session_seq (session_id, seq),
+    KEY idx_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 每用户每日 token 用量(配额校验;见 db/migration/V5__user_token_daily.sql)
+CREATE TABLE IF NOT EXISTS user_token_daily (
+    user_id BIGINT   NOT NULL,
+    day     DATE     NOT NULL,
+    tokens  BIGINT   NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, day)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

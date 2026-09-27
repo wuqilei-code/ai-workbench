@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{项目名称}} · 项目复盘报告</title>
+<style>
+  :root{
+    --ink:#0f172a; --ink-2:#3f4757; --muted:#7b8494; --line:#e6eaf1;
+    --indigo:#4f46e5; --indigo-2:#4338ca; --indigo-soft:#eef2ff;
+    --ok:#15803d; --warn:#b45309; --bad:#b91c1c; --bg:#f5f6fa;
+    --radius:15px; --shadow:0 10px 30px rgba(30,41,59,.07);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);background:var(--bg);line-height:1.75}
+  .page{max-width:980px;margin:0 auto;background:#fff;box-shadow:var(--shadow)}
+  .hero{padding:48px 60px 36px;background:linear-gradient(135deg,#111827,#1f2937 60%,#312e81);color:#fff;position:relative;overflow:hidden}
+  .hero::after{content:"";position:absolute;right:-80px;bottom:-140px;width:320px;height:320px;border-radius:50%;background:rgba(99,102,241,.25)}
+  .hero .kicker{font-size:12px;letter-spacing:3px;font-weight:800;color:#c7d2fe;text-transform:uppercase}
+  .hero h1{font-size:34px;letter-spacing:-.7px;margin:12px 0 10px;position:relative;z-index:1}
+  .hero .lead{color:#cbd5e1;font-size:14.5px;max-width:640px;position:relative;z-index:1}
+  .hero-meta{display:flex;flex-wrap:wrap;gap:24px;margin-top:24px;font-size:12.5px;color:#e2e8f0;position:relative;z-index:1}
+  .hero-meta b{color:#fff}
+  .body{padding:40px 60px 56px}
+  h2{font-size:20px;margin:34px 0 14px;display:flex;align-items:center;gap:10px}
+  h2::before{content:"";width:6px;height:20px;border-radius:3px;background:linear-gradient(180deg,var(--indigo),#818cf8)}
+  p{color:var(--ink-2);font-size:14px;margin:9px 0}
+  .score{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:16px 0}
+  .score .item{border:1px solid var(--line);border-radius:var(--radius);padding:16px;text-align:center;background:linear-gradient(180deg,#fff,#fafbff)}
+  .score .item b{display:block;font-size:24px;color:var(--indigo-2);letter-spacing:-.5px}
+  .score .item span{font-size:12px;color:var(--muted)}
+  .board{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:14px 0}
+  .col{border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px}
+  .col h4{font-size:13px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+  .col h4 .tag{font-size:11px;padding:1px 8px;border-radius:999px;font-weight:700}
+  .col.good{background:linear-gradient(180deg,#f7fdf9,#fff)}
+  .col.good h4{color:var(--ok)} .col.good .tag{background:#dcfce7;color:var(--ok)}
+  .col.bad{background:linear-gradient(180deg,#fff8f8,#fff)}
+  .col.bad h4{color:var(--bad)} .col.bad .tag{background:#fee2e2;color:var(--bad)}
+  ul.clean{list-style:none;margin:6px 0}
+  ul.clean li{position:relative;padding-left:20px;margin:9px 0;font-size:13.5px;color:var(--ink-2)}
+  ul.clean li::before{content:"";position:absolute;left:2px;top:9px;width:6px;height:6px;border-radius:50%;background:var(--indigo)}
+  .timeline{margin:14px 0;border-left:2px solid #e0e7ff;padding-left:22px}
+  .timeline .ev{position:relative;margin:0 0 18px}
+  .timeline .ev::before{content:"";position:absolute;left:-29px;top:6px;width:12px;height:12px;border-radius:50%;background:#fff;border:3px solid var(--indigo)}
+  .timeline .ev .t{font-size:12px;color:var(--muted);font-weight:700}
+  .timeline .ev p{margin:2px 0}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  th,td{padding:11px 14px;text-align:left;border-bottom:1px solid var(--line)}
+  th{background:#f8f9ff;color:var(--muted);font-size:12.5px;font-weight:700}
+  tbody tr:last-child td{border-bottom:none}
+  .pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:11.5px;font-weight:700}
+  .pill.g{background:#dcfce7;color:var(--ok)} .pill.y{background:#fef3c7;color:var(--warn)} .pill.r{background:#fee2e2;color:var(--bad)}
+  .callout{border:1px solid #c7d2fe;background:linear-gradient(180deg,#f8faff,#eef2ff);border-radius:var(--radius);padding:18px 22px;margin:18px 0;color:#312e81;font-size:14px}
+  @media (max-width:720px){.hero,.body{padding-left:24px;padding-right:24px}.score{grid-template-columns:repeat(2,1fr)}.board{grid-template-columns:1fr}.hero h1{font-size:26px}}
+  @media print{body{background:#fff}.page{box-shadow:none;max-width:100%}.hero{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="hero">
+    <div class="kicker">Project Retrospective</div>
+    <h1>{{项目名称}} · 复盘报告</h1>
+    <p class="lead">{{一句话概括项目结果与本次复盘的核心结论}}</p>
+    <div class="hero-meta">
+      <span>周期 <b>{{起止}}</b></span>
+      <span>负责人 <b>{{负责人}}</b></span>
+      <span>团队 <b>{{团队}}</b></span>
+      <span>复盘日期 <b>{{日期}}</b></span>
+    </div>
+  </header>
+
+  <main class="body">
+    <h2>结果概览</h2>
+    <div class="score">
+      <div class="item"><b>{{达成率}}</b><span>目标达成</span></div>
+      <div class="item"><b>{{按期}}</b><span>是否按期</span></div>
+      <div class="item"><b>{{质量}}</b><span>质量评分</span></div>
+      <div class="item"><b>{{成本}}</b><span>成本偏差</span></div>
+    </div>
+    <p>{{用一段话说明:原定目标、实际结果与差距}}</p>
+
+    <h2>关键历程</h2>
+    <div class="timeline">
+      <div class="ev"><div class="t">{{日期}}</div><p>{{里程碑 / 关键决策 / 转折点}}</p></div>
+      <div class="ev"><div class="t">{{日期}}</div><p>{{里程碑 / 关键决策 / 转折点}}</p></div>
+      <div class="ev"><div class="t">{{日期}}</div><p>{{里程碑 / 关键决策 / 转折点}}</p></div>
+    </div>
+
+    <h2>做得好 / 待改进</h2>
+    <div class="board">
+      <div class="col good"><h4><span class="tag">Do</span>值得延续</h4>
+        <ul class="clean"><li>{{做得好 1(可复制的方法)}}</li><li>{{做得好 2}}</li><li>{{做得好 3}}</li></ul>
+      </div>
+      <div class="col bad"><h4><span class="tag">Don't</span>问题与教训</h4>
+        <ul class="clean"><li>{{问题 1(根因是什么)}}</li><li>{{问题 2}}</li><li>{{问题 3}}</li></ul>
+      </div>
+    </div>
+
+    <h2>差距归因</h2>
+    <table>
+      <thead><tr><th>差距</th><th>可能原因</th><th>本质</th><th>影响</th></tr></thead>
+      <tbody>
+        <tr><td>{{差距 A}}</td><td>{{原因}}</td><td><span class="pill y">流程</span></td><td>{{影响}}</td></tr>
+        <tr><td>{{差距 B}}</td><td>{{原因}}</td><td><span class="pill r">决策</span></td><td>{{影响}}</td></tr>
+        <tr><td>{{亮点}}</td><td>{{原因}}</td><td><span class="pill g">机制</span></td><td>{{影响}}</td></tr>
+      </tbody>
+    </table>
+
+    <h2>行动项</h2>
+    <table>
+      <thead><tr><th>行动</th><th>负责人</th><th>截止</th><th>衡量标准</th></tr></thead>
+      <tbody>
+        <tr><td>{{行动 1}}</td><td>{{负责人}}</td><td>{{日期}}</td><td>{{如何验证}}</td></tr>
+        <tr><td>{{行动 2}}</td><td>{{负责人}}</td><td>{{日期}}</td><td>{{如何验证}}</td></tr>
+      </tbody>
+    </table>
+    <div class="callout"><b>一句话总结:</b>{{如果重来一次,最想改变的一件事 + 下一步最关键的抓手}}</div>
+  </main>
+</div>
+</body>
+</html>

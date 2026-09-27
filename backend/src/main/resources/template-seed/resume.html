@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{姓名}} · 个人简历</title>
+<style>
+:root{--ink:#0f172a;--ink2:#475569;--muted:#94a3b8;--line:#e6eaf1;--acc:#0f766e;--acc2:#115e59;--soft:#f0fdfa;--bg:#f4f7f7}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);background:var(--bg);line-height:1.7}
+.page{max-width:880px;margin:0 auto;background:#fff;box-shadow:0 10px 30px rgba(15,118,110,.08)}
+.head{padding:44px 52px 30px;background:linear-gradient(135deg,#0f766e,#14b8a6);color:#fff;display:flex;justify-content:space-between;align-items:center;gap:24px;flex-wrap:wrap}
+.head .name{font-size:32px;font-weight:800;letter-spacing:-.5px}
+.head .role{font-size:14.5px;opacity:.95;margin-top:6px}
+.head .contact{font-size:12.5px;opacity:.94;line-height:2;text-align:right}
+.head .contact span{display:block}
+.body{padding:34px 52px 52px}
+h2{font-size:17px;margin:28px 0 12px;display:flex;align-items:center;gap:10px;color:var(--acc2)}
+h2::before{content:"";width:20px;height:4px;border-radius:2px;background:var(--acc)}
+p{color:var(--ink2);font-size:13.5px;margin:6px 0}
+.summary{background:var(--soft);border-radius:12px;padding:14px 18px;font-size:13.5px;color:var(--acc2)}
+.item{display:grid;grid-template-columns:130px 1fr;gap:16px;padding:12px 0;border-bottom:1px solid var(--line)}
+.item:last-child{border-bottom:none}
+.item .when{font-size:12.5px;color:var(--muted);font-weight:600}
+.item .what b{font-size:14.5px;color:var(--ink)}
+.item .what .co{font-size:13px;color:var(--acc2);margin:2px 0 6px}
+ul.clean{list-style:none;margin:6px 0}
+ul.clean li{position:relative;padding-left:18px;margin:6px 0;font-size:13px;color:var(--ink2)}
+ul.clean li::before{content:"▸";position:absolute;left:2px;color:var(--acc);font-weight:700}
+.skills{display:flex;flex-wrap:wrap;gap:8px}
+.tag{font-size:12.5px;padding:4px 12px;border-radius:999px;background:var(--soft);color:var(--acc2);border:1px solid #ccfbf1;font-weight:600}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.foot{margin-top:30px;padding-top:14px;border-top:1px solid var(--line);color:var(--muted);font-size:12px;text-align:center}
+@media(max-width:640px){.head,.body{padding-left:24px;padding-right:24px}.head .contact{text-align:left}.item{grid-template-columns:1fr}.grid2{grid-template-columns:1fr}}
+@media print{body{background:#fff}.page{box-shadow:none;max-width:100%}.head{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style></head><body>
+<div class="page">
+<header class="head">
+  <div><div class="name">{{姓名}}</div><div class="role">{{求职意向 / 当前职位}}</div></div>
+  <div class="contact">
+    <span>📱 {{手机}}</span><span>✉️ {{邮箱}}</span><span>📍 {{城市}}</span><span>🔗 {{主页/GitHub}}</span>
+  </div>
+</header>
+<main class="body">
+  <h2>个人简介</h2>
+  <div class="summary">{{用 2–3 句话概括经验年限、核心能力与代表成果,突出与岗位的匹配度}}</div>
+
+  <h2>工作经历</h2>
+  <div class="item">
+    <div class="when">{{起止时间}}</div>
+    <div class="what"><b>{{职位}}</b><div class="co">{{公司}} · {{部门}}</div>
+      <ul class="clean"><li>{{职责与关键项目}}</li><li>{{量化业绩:提升了 X%,负责 Y 规模}}</li></ul>
+    </div>
+  </div>
+  <div class="item">
+    <div class="when">{{起止时间}}</div>
+    <div class="what"><b>{{职位}}</b><div class="co">{{公司}} · {{部门}}</div>
+      <ul class="clean"><li>{{职责与关键项目}}</li><li>{{量化业绩}}</li></ul>
+    </div>
+  </div>
+
+  <h2>项目经历</h2>
+  <div class="item">
+    <div class="when">{{时间}}</div>
+    <div class="what"><b>{{项目名称}}</b><div class="co">{{角色}}</div>
+      <ul class="clean"><li>{{项目背景与我的贡献}}</li><li>{{成果与技术栈}}</li></ul>
+    </div>
+  </div>
+
+  <h2>教育背景</h2>
+  <div class="item">
+    <div class="when">{{时间}}</div>
+    <div class="what"><b>{{学校}}</b> · {{专业}} · {{学历}}</div>
+  </div>
+
+  <h2>技能标签</h2>
+  <div class="skills"><span class="tag">{{技能1}}</span><span class="tag">{{技能2}}</span><span class="tag">{{技能3}}</span><span class="tag">{{技能4}}</span><span class="tag">{{技能5}}</span></div>
+
+  <div class="foot">{{姓名}} · 简历 · 生成于 {{日期}}</div>
+</main>
+</div></body></html>

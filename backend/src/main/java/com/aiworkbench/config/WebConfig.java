@@ -3,29 +3,20 @@ package com.aiworkbench.config;
 import com.aiworkbench.common.ratelimit.RateLimitInterceptor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
- * 开发期 CORS(生产由 nginx 同源处理) + 限流拦截器注册。
+ * 限流拦截器注册。
+ * <p>
+ * CORS 统一由 {@link SecurityConfig} 的 CorsConfigurationSource 处理(按 app.cors.allowed-origins 白名单;
+ * 未配置则仅同源)。这里不再注册 MVC CORS,避免与安全层不一致。
  */
 @Configuration
 @RequiredArgsConstructor
 public class WebConfig implements WebMvcConfigurer {
 
     private final RateLimitInterceptor rateLimitInterceptor;
-
-    @Override
-    public void addCorsMappings(CorsRegistry registry) {
-        registry.addMapping("/**")
-                .allowedOriginPatterns("*")
-                .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
-                .allowedHeaders("*")
-                // 同源部署,不携带凭据跨域(与 SecurityConfig 一致)
-                .allowCredentials(false)
-                .maxAge(3600);
-    }
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {

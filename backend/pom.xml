@@ -20,9 +20,16 @@
         <java.version>21</java.version>
         <mybatis-plus.version>3.5.9</mybatis-plus.version>
         <jjwt.version>0.12.6</jjwt.version>
+        <springdoc.version>2.6.0</springdoc.version>
     </properties>
 
     <dependencies>
+        <!-- OpenAPI 文档(/v3/api-docs, Swagger UI):默认开启,受鉴权保护 -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>${springdoc.version}</version>
+        </dependency>
         <!-- Web (servlet): REST controllers + SseEmitter -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -118,6 +125,16 @@
             <groupId>com.openhtmltopdf</groupId>
             <artifactId>openhtmltopdf-pdfbox</artifactId>
             <version>1.0.10</version>
+        </dependency>
+
+        <!-- 数据库迁移:Flyway。现状(schema.sql 建成)作为基线 V1,后续结构变更进 db/migration/Vn -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-mysql</artifactId>
         </dependency>
     </dependencies>
 

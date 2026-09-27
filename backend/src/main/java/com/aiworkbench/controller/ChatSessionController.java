@@ -49,14 +49,16 @@ public class ChatSessionController {
     }
 
     @GetMapping
-    public R<List<SessionVo>> list() {
-        return R.ok(chatSessionService.list(SecurityUtil.currentUserId()));
+    public R<List<SessionVo>> list(@RequestParam(required = false) Integer limit,
+                                   @RequestParam(required = false) Integer offset) {
+        return R.ok(chatSessionService.list(SecurityUtil.currentUserId(), limit, offset));
     }
 
     /** 已归档会话列表 */
     @GetMapping("/archived")
-    public R<List<SessionVo>> listArchived() {
-        return R.ok(chatSessionService.listArchived(SecurityUtil.currentUserId()));
+    public R<List<SessionVo>> listArchived(@RequestParam(required = false) Integer limit,
+                                           @RequestParam(required = false) Integer offset) {
+        return R.ok(chatSessionService.listArchived(SecurityUtil.currentUserId(), limit, offset));
     }
 
     /** 会话搜索:标题或消息内容模糊匹配(含归档)。字面量 /search 优先于 /{id} 匹配。 */

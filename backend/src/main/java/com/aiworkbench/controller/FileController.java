@@ -80,55 +80,141 @@ public class FileController {
      *  iframe src=/api/files/raw/reports/x.html 时,内嵌的相对路径
      *  charts/a.png 会天然解析到 /api/files/raw/reports/charts/a.png,
      *  同源 HttpOnly cookie 自动完成鉴权。
-     *  未命中(路径被 HTML 引用触发而非页面主体)同样返回 inline 内容。 */
+     *  未命中(路径被 HTML 引用触发而非页面主体)同样返回 inline 内容。
+     *  支持 HTTP Range(视频/PDF 拖动、断点续传)。 */
     @GetMapping("/raw/**")
-    public ResponseEntity<InputStreamResource> raw(HttpServletRequest request) {
+    public ResponseEntity<InputStreamResource> raw(HttpServletRequest request,
+                                                   @org.springframework.web.bind.annotation.RequestHeader(value = "Range", required = false) String range) {
         String raw = request.getRequestURI();
         String prefix = "/api/files/raw/";
         String path = (raw.startsWith(prefix)) ? raw.substring(prefix.length()) : raw;
         path = java.net.URLDecoder.decode(path, StandardCharsets.UTF_8);
         Path file = workspaceService.getFilePath(SecurityUtil.currentUserId(), path);
-        String filename = file.getFileName().toString();
-        InputStream in;
+        return serveFile(file, file.getFileName().toString(), true, range);
+    }
+
+    /** 下载文件(二进制安全,作为附件下载);支持 HTTP Range。 */
+    @GetMapping("/download")
+    public ResponseEntity<InputStreamResource> download(@RequestParam String path,
+                                                        @org.springframework.web.bind.annotation.RequestHeader(value = "Range", required = false) String range) {
+        Path file = workspaceService.getFilePath(SecurityUtil.currentUserId(), path);
+        return serveFile(file, file.getFileName().toString(), false, range);
+    }
+
+    /**
+     * 统一的文件响应:按需返回 200 全量或 206 部分内容(单区间 Range),始终带 Accept-Ranges。
+     * 用有界流按需读取,避免 Range 请求把整文件写出。
+     */
+    private ResponseEntity<InputStreamResource> serveFile(Path file, String filename, boolean inline, String rangeHeader) {
+        long total;
         try {
-            in = java.nio.file.Files.newInputStream(file);
+            total = java.nio.file.Files.size(file);
         } catch (IOException e) {
             throw new com.aiworkbench.common.BusinessException(
                     com.aiworkbench.common.ResultCode.INTERNAL_ERROR.getCode(), "read file failed");
         }
-        // inline + 正确 MIME:浏览器直接渲染,不触发下载
+        // RFC 5987 编码,支持中文文件名
+        String encoded = URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20");
+        String disposition = (inline ? "inline" : "attachment") + "; filename=\"" + encoded + "\"";
+        if (!inline) disposition += "; filename*=UTF-8''" + encoded;
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.add(HttpHeaders.CONTENT_DISPOSITION, disposition);
+        headers.add(HttpHeaders.ACCEPT_RANGES, "bytes");
+        MediaType mediaType = mediaTypeFor(filename);
+
+        long start = 0;
+        long end = total - 1;
+        boolean partial = false;
+        if (total > 0 && rangeHeader != null && rangeHeader.startsWith("bytes=")) {
+            String spec = rangeHeader.substring("bytes=".length()).trim();
+            int comma = spec.indexOf(',');
+            if (comma >= 0) spec = spec.substring(0, comma).trim(); // 仅取第一个区间
+            int dash = spec.indexOf('-');
+            if (dash >= 0) {
+                String s = spec.substring(0, dash).trim();
+                String e = spec.substring(dash + 1).trim();
+                try {
+                    if (s.isEmpty()) { // 后缀区间 bytes=-N:末尾 N 字节
+                        long n = Long.parseLong(e);
+                        if (n > 0) { start = Math.max(0, total - n); end = total - 1; partial = true; }
+                    } else {
+                        start = Long.parseLong(s);
+                        end = e.isEmpty() ? total - 1 : Long.parseLong(e);
+                        if (end >= total) end = total - 1;
+                        if (start >= 0 && start <= end) partial = true;
+                    }
+                } catch (NumberFormatException ignore) {
+                    partial = false;
+                }
+                if (partial && start >= total) partial = false; // 越界区间降级为全量
+            }
+        }
+
+        InputStream in;
+        try {
+            in = java.nio.file.Files.newInputStream(file);
+            if (partial && start > 0) {
+                long skipped = 0;
+                while (skipped < start) {
+                    long k = in.skip(start - skipped);
+                    if (k <= 0) break;
+                    skipped += k;
+                }
+            }
+        } catch (IOException e) {
+            throw new com.aiworkbench.common.BusinessException(
+                    com.aiworkbench.common.ResultCode.INTERNAL_ERROR.getCode(), "read file failed");
+        }
+
+        if (partial) {
+            long len = end - start + 1;
+            headers.add(HttpHeaders.CONTENT_RANGE, "bytes " + start + "-" + end + "/" + total);
+            return ResponseEntity.status(org.springframework.http.HttpStatus.PARTIAL_CONTENT)
+                    .headers(headers).contentType(mediaType).contentLength(len)
+                    .body(new InputStreamResource(new BoundedInputStream(in, len)));
+        }
         return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION,
-                        "inline; filename=\"" + java.net.URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20") + "\"")
-                .contentType(mediaTypeFor(filename))
-                .contentLength(file.toFile().length())
+                .headers(headers).contentType(mediaType).contentLength(total)
                 .body(new InputStreamResource(in));
     }
 
-    /** 下载文件(二进制安全,作为附件下载) */
-    @GetMapping("/download")
-    public ResponseEntity<InputStreamResource> download(@RequestParam String path) {
-        Path file = workspaceService.getFilePath(SecurityUtil.currentUserId(), path);
-        String filename = file.getFileName().toString();
-        // RFC 5987 编码,支持中文文件名
-        String encoded = URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20");
-        InputStream in;
-        try {
-            in = java.nio.file.Files.newInputStream(file);
-        } catch (IOException e) {
-            throw new com.aiworkbench.common.BusinessException(
-                    com.aiworkbench.common.ResultCode.INTERNAL_ERROR.getCode(), "read file failed");
+    /** 只向下游暴露前 limit 字节的有界输入流(Range 响应使用)。 */
+    private static final class BoundedInputStream extends java.io.FilterInputStream {
+        private long remaining;
+
+        BoundedInputStream(InputStream in, long limit) {
+            super(in);
+            this.remaining = limit;
         }
-        // 按扩展名推导真实 MIME(如 application/pdf、image/png),
-        // 让前端 fetchBlob 得到的 Blob 带正确 type,iframe 才能渲染 PDF 等;
-        // Content-Disposition 仍为 attachment,直接访问也只会下载不会内联。
-        MediaType mediaType = mediaTypeFor(filename);
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION,
-                        "attachment; filename=\"" + encoded + "\"; filename*=UTF-8''" + encoded)
-                .contentType(mediaType)
-                .contentLength(file.toFile().length())
-                .body(new InputStreamResource(in));
+
+        @Override
+        public int read() throws IOException {
+            if (remaining <= 0) return -1;
+            int b = super.read();
+            if (b >= 0) remaining--;
+            return b;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            if (remaining <= 0) return -1;
+            int n = super.read(b, off, (int) Math.min(len, remaining));
+            if (n > 0) remaining -= n;
+            return n;
+        }
+
+        @Override
+        public long skip(long n) throws IOException {
+            long s = super.skip(Math.min(n, remaining));
+            remaining -= s;
+            return s;
+        }
+
+        @Override
+        public int available() throws IOException {
+            return (int) Math.min(super.available(), remaining);
+        }
     }
 
     @PostMapping

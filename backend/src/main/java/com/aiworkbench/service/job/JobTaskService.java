@@ -10,6 +10,8 @@ import com.aiworkbench.mapper.JobTaskMapper;
 import com.aiworkbench.mapper.JobTaskRunMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.support.CronExpression;
@@ -17,7 +19,11 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 定时任务 CRUD + 状态推进。
@@ -34,6 +40,7 @@ public class JobTaskService {
 
     private final JobTaskMapper jobTaskMapper;
     private final JobTaskRunMapper jobTaskRunMapper;
+    private final ObjectMapper objectMapper;
 
     // ---- 状态 ----
 
@@ -47,7 +54,8 @@ public class JobTaskService {
 
     // ---- CRUD ----
 
-    public JobTask create(Long userId, String name, String prompt, String cron, String agent, boolean autoApprove) {
+    public JobTask create(Long userId, String name, String prompt, String cron, String agent, boolean autoApprove,
+                          Map<String, String> variables) {
         validateCron(cron);
         JobTask job = new JobTask();
         job.setUserId(userId);
@@ -56,6 +64,7 @@ public class JobTaskService {
         job.setCron(normCron(cron));
         job.setAgent(agent == null || agent.isBlank() ? "chat" : agent);
         job.setAutoApprove(autoApprove ? 1 : 0);
+        job.setVars(toJsonVars(variables));
         job.setEnabled(1);
         job.setStatus(PENDING);
         if (job.getCron() == null) {
@@ -70,7 +79,8 @@ public class JobTaskService {
         return job;
     }
 
-    public void update(Long userId, Long id, String name, String prompt, String cron, String agent, Boolean autoApprove, Boolean enabled) {
+    public void update(Long userId, Long id, String name, String prompt, String cron, String agent, Boolean autoApprove,
+                       Boolean enabled, Map<String, String> variables) {
         JobTask job = getOwned(userId, id);
         validateCron(cron);
         if (name != null && !name.isBlank()) job.setName(name.trim());
@@ -79,6 +89,7 @@ public class JobTaskService {
         if (agent != null && !agent.isBlank()) job.setAgent(agent);
         if (autoApprove != null) job.setAutoApprove(autoApprove ? 1 : 0);
         if (enabled != null) job.setEnabled(enabled ? 1 : 0);
+        if (variables != null) job.setVars(toJsonVars(variables));
         // 修改 cron 时重排下次触发;手动任务(cron=null)与运行中任务不在此重排
         if (cron != null && !RUNNING.equals(job.getStatus()) && !QUEUED.equals(job.getStatus())) {
             job.setNextRunAt(nextRun(job.getCron(), null));
@@ -148,9 +159,20 @@ public class JobTaskService {
     }
 
     public List<JobTask> listByUser(Long userId) {
-        return jobTaskMapper.selectList(new LambdaQueryWrapper<JobTask>()
+        return listByUser(userId, null, null);
+    }
+
+    /** 用户任务列表(分页可选):limit<=0/空返回全部(兼容旧行为),上限 500。 */
+    public List<JobTask> listByUser(Long userId, Integer limit, Integer offset) {
+        LambdaQueryWrapper<JobTask> qw = new LambdaQueryWrapper<JobTask>()
                 .eq(JobTask::getUserId, userId)
-                .orderByDesc(JobTask::getCreatedAt));
+                .orderByDesc(JobTask::getCreatedAt);
+        if (limit != null && limit > 0) {
+            int l = Math.min(limit, 500);
+            int off = (offset == null || offset < 0) ? 0 : offset;
+            qw.last("limit " + l + " offset " + off);
+        }
+        return jobTaskMapper.selectList(qw);
     }
 
     public List<JobTaskVo> toVo(List<JobTask> jobs) {
@@ -202,6 +224,44 @@ public class JobTaskService {
                 .orderByDesc(JobTaskRun::getId));
     }
 
+    /** 该用户全部任务的运行历史(新→旧),支持 limit/offset 分页,附任务名与总数。 */
+    public Map<String, Object> listAllRuns(Long userId, int limit, int offset) {
+        int lim = Math.max(1, Math.min(limit, 200));
+        int off = Math.max(0, offset);
+        Long total = jobTaskRunMapper.selectCount(new LambdaQueryWrapper<JobTaskRun>()
+                .eq(JobTaskRun::getUserId, userId));
+        List<JobTaskRun> runs = jobTaskRunMapper.selectList(new LambdaQueryWrapper<JobTaskRun>()
+                .eq(JobTaskRun::getUserId, userId)
+                .orderByDesc(JobTaskRun::getId)
+                .last("limit " + lim + " offset " + off));
+        Map<Long, String> names = new java.util.HashMap<>();
+        for (JobTask t : jobTaskMapper.selectList(new LambdaQueryWrapper<JobTask>()
+                .eq(JobTask::getUserId, userId))) {
+            names.put(t.getId(), t.getName());
+        }
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        for (JobTaskRun r : runs) {
+            JobTaskRunVo vo = toRunVo(r);
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("id", vo.getId());
+            row.put("jobId", vo.getJobId());
+            row.put("jobName", names.getOrDefault(r.getJobId(), "任务 #" + r.getJobId()));
+            row.put("status", vo.getStatus());
+            row.put("statusText", vo.getStatusText());
+            row.put("startedAt", vo.getStartedAt());
+            row.put("finishedAt", vo.getFinishedAt());
+            row.put("changedFiles", vo.getChangedFiles());
+            row.put("result", vo.getResult());
+            row.put("error", vo.getError());
+            row.put("runningSeconds", vo.getRunningSeconds());
+            out.add(row);
+        }
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("total", total == null ? 0 : total);
+        result.put("rows", out);
+        return result;
+    }
+
     public List<JobTaskRunVo> toRunVo(List<JobTaskRun> runs) {
         return runs.stream().map(this::toRunVo).toList();
     }
@@ -246,6 +306,7 @@ public class JobTaskService {
                 .agent(j.getAgent())
                 .autoApprove(Integer.valueOf(1).equals(j.getAutoApprove()))
                 .enabled(Integer.valueOf(1).equals(j.getEnabled()))
+                .variables(parseVars(j.getVars()))
                 .status(j.getStatus())
                 .statusText(statusText(j.getStatus(), j.getLastError()))
                 .nextRunAt(j.getNextRunAt())
@@ -256,6 +317,67 @@ public class JobTaskService {
                 .lastError(j.getLastError())
                 .runningSeconds(seconds)
                 .build();
+    }
+
+    // ---- 任务变量 ----
+
+    private static final Pattern VAR_PATTERN = Pattern.compile("\\$\\{([A-Za-z0-9_.\\-]+)}");
+
+    /** Map → JSON 字符串(null/空 → null,避免写入空对象)。 */
+    private String toJsonVars(Map<String, String> variables) {
+        if (variables == null || variables.isEmpty()) {
+            return null;
+        }
+        Map<String, String> clean = new LinkedHashMap<>();
+        variables.forEach((k, v) -> {
+            if (k != null && !k.isBlank()) {
+                clean.put(k.trim(), v == null ? "" : v);
+            }
+        });
+        if (clean.isEmpty()) {
+            return null;
+        }
+        try {
+            return objectMapper.writeValueAsString(clean);
+        } catch (Exception e) {
+            log.warn("serialize job vars failed: {}", e.toString());
+            return null;
+        }
+    }
+
+    /** JSON 字符串 → Map(损坏/空 → 空 Map)。 */
+    public Map<String, String> parseVars(String json) {
+        if (json == null || json.isBlank()) {
+            return Map.of();
+        }
+        try {
+            Map<String, String> m = objectMapper.readValue(json, new TypeReference<LinkedHashMap<String, String>>() {});
+            return m == null ? Map.of() : m;
+        } catch (Exception e) {
+            log.warn("parse job vars failed: {}", e.toString());
+            return Map.of();
+        }
+    }
+
+    /** 用任务变量替换 prompt 中的 ${key} 占位符(未知变量原样保留)。 */
+    public String resolvePrompt(JobTask job) {
+        return resolvePrompt(job == null ? null : job.getPrompt(), parseVars(job == null ? null : job.getVars()));
+    }
+
+    public String resolvePrompt(String prompt, Map<String, String> vars) {
+        if (prompt == null || prompt.isEmpty() || vars == null || vars.isEmpty()) {
+            return prompt;
+        }
+        Matcher m = VAR_PATTERN.matcher(prompt);
+        StringBuilder sb = new StringBuilder();
+        while (m.find()) {
+            String key = m.group(1);
+            String val = vars.get(key);
+            // 未定义的变量保持原样,避免静默吞掉用户占位符
+            m.appendReplacement(sb, Matcher.quoteReplacement(val != null ? val : m.group(0)));
+        }
+        m.appendTail(sb);
+        return sb.toString();
     }
 
     // ---- cron ----

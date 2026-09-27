@@ -163,14 +163,17 @@ public class UserService {
         log.info("admin {} set user {} role={}", operatorId, userId, target);
     }
 
-    /** 重置用户密码。 */
+    /** 重置用户密码。改密后将其 token_version +1,使已签发的旧 JWT 立即失效。 */
     public void resetPassword(Long operatorId, Long userId, String newPassword) {
         User user = requireUser(userId);
         User upd = new User();
         upd.setId(userId);
         upd.setPassword(passwordEncoder.encode(newPassword));
         userMapper.updateById(upd);
-        log.info("admin {} reset password for user {}", operatorId, userId);
+        userMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<User>()
+                .eq(User::getId, userId)
+                .setSql("token_version = token_version + 1"));
+        log.info("admin {} reset password for user {} (token_version bumped)", operatorId, userId);
     }
 
     private User requireUser(Long userId) {
@@ -203,7 +206,7 @@ public class UserService {
     }
 
     private AuthResponse buildAuthResponse(User user) {
-        String token = jwtTokenProvider.generate(user.getId(), user.getUsername(), user.getRole());
+        String token = jwtTokenProvider.generate(user.getId(), user.getUsername(), user.getRole(), user.getTokenVersion());
         return AuthResponse.builder()
                 .token(token)
                 .user(toVo(user))

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{系统/需求}} · 技术方案设计</title>
+<style>
+:root{--ink:#0f172a;--ink2:#3f4757;--muted:#8b93a5;--line:#e6eaf1;--acc:#4f46e5;--acc2:#3730a3;--soft:#eef2ff;--ok:#15803d;--warn:#b45309;--bg:#f5f6fb}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);background:var(--bg);line-height:1.75}
+.page{max-width:980px;margin:0 auto;background:#fff;box-shadow:0 10px 30px rgba(55,48,163,.08)}
+.hero{padding:46px 56px 34px;background:linear-gradient(135deg,#312e81,#6366f1);color:#fff;position:relative;overflow:hidden}
+.hero::after{content:"";position:absolute;right:-70px;top:-90px;width:260px;height:260px;border-radius:50%;background:rgba(255,255,255,.1)}
+.hero .kicker{font-size:12px;letter-spacing:3px;font-weight:800;opacity:.9;text-transform:uppercase}
+.hero h1{font-size:30px;letter-spacing:-.6px;margin:12px 0 10px;position:relative;z-index:1}
+.hero .lead{font-size:14.5px;opacity:.94;max-width:660px;position:relative;z-index:1}
+.hero-meta{display:flex;flex-wrap:wrap;gap:22px;margin-top:20px;font-size:12.5px;opacity:.92;position:relative;z-index:1}
+.body{padding:40px 56px 56px}
+h2{font-size:20px;margin:34px 0 14px;display:flex;align-items:center;gap:10px}
+h2 .n{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:28px;padding:0 8px;border-radius:8px;background:var(--soft);color:var(--acc2);font-size:12.5px;font-weight:800}
+p{color:var(--ink2);font-size:14px;margin:9px 0}
+h3{font-size:14.5px;margin:18px 0 8px}
+pre{background:#0f172a;color:#e2e8f0;border-radius:12px;padding:16px 18px;overflow:auto;font-size:12.5px;line-height:1.6;font-family:ui-monospace,"Cascadia Code",Consolas,monospace}
+code{background:#eef2ff;color:#3730a3;padding:1px 6px;border-radius:5px;font-size:12.5px;font-family:ui-monospace,monospace}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+th,td{padding:11px 13px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:#f7f8ff;color:var(--muted);font-size:12px;font-weight:700}
+tbody tr:last-child td{border-bottom:none}
+.pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700}
+.pill.b{background:var(--soft);color:var(--acc2)}.pill.g{background:#dcfce7;color:var(--ok)}.pill.y{background:#fef3c7;color:var(--warn)}.pill.r{background:#fee2e2;color:#b91c1c}
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:12px 0}
+.flow .s{border:1px solid #e0e7ff;background:#fff;border-radius:10px;padding:9px 14px;font-size:13px;color:var(--acc2);font-weight:600}
+.flow .a{color:#a5b4fc;font-weight:800}
+ul.clean{list-style:none;margin:10px 0}
+ul.clean li{position:relative;padding-left:20px;margin:8px 0;font-size:14px;color:var(--ink2)}
+ul.clean li::before{content:"";position:absolute;left:2px;top:9px;width:6px;height:6px;border-radius:50%;background:var(--acc)}
+.callout{border:1px solid #c7d2fe;background:linear-gradient(180deg,#f8faff,#eef2ff);border-radius:14px;padding:18px 22px;margin:18px 0;color:#312e81;font-size:14px}
+.foot{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:12px;display:flex;justify-content:space-between;flex-wrap:wrap}
+@media(max-width:720px){.hero,.body{padding-left:24px;padding-right:24px}.hero h1{font-size:24px}}
+@media print{body{background:#fff}.page{box-shadow:none;max-width:100%}.hero{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style></head><body>
+<div class="page">
+<header class="hero">
+  <div class="kicker">Technical Design</div>
+  <h1>{{系统/需求}} · 技术方案设计</h1>
+  <p class="lead">{{一句话说明方案要解决的问题与核心思路}}</p>
+  <div class="hero-meta"><span>作者 {{作者}}</span><span>评审 {{日期}}</span><span>状态 {{草稿/评审通过}}</span><span>版本 v1.0</span></div>
+</header>
+<main class="body">
+  <h2><span class="n">01</span>背景与目标</h2>
+  <p>{{业务背景、要解决的问题,以及本方案要达成的技术目标与非目标}}</p>
+
+  <h2><span class="n">02</span>整体架构</h2>
+  <div class="flow">
+    <span class="s">{{客户端}}</span><span class="a">→</span>
+    <span class="s">{{网关/API}}</span><span class="a">→</span>
+    <span class="s">{{服务 A}}</span><span class="a">→</span>
+    <span class="s">{{存储}}</span>
+  </div>
+  <pre>{{架构图 / 关键流程的伪代码或 mermaid 说明}}</pre>
+
+  <h2><span class="n">03</span>核心设计</h2>
+  <h3>3.1 数据模型</h3>
+  <pre>-- 关键表结构
+CREATE TABLE example (
+  id BIGINT PRIMARY KEY,
+  ...
+);</pre>
+  <h3>3.2 关键流程</h3>
+  <ul class="clean">
+    <li>{{主流程步骤与状态流转}}</li>
+    <li>{{并发/一致性处理}}</li>
+  </ul>
+
+  <h2><span class="n">04</span>接口设计</h2>
+  <table>
+    <thead><tr><th>方法</th><th>路径</th><th>说明</th><th>鉴权</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill g">GET</span></td><td><code>/api/xxx</code></td><td>{{说明}}</td><td>{{是/否}}</td></tr>
+      <tr><td><span class="pill b">POST</span></td><td><code>/api/xxx</code></td><td>{{说明}}</td><td>{{是/否}}</td></tr>
+    </tbody>
+  </table>
+
+  <h2><span class="n">05</span>非功能性</h2>
+  <table>
+    <thead><tr><th>维度</th><th>方案</th></tr></thead>
+    <tbody>
+      <tr><td>性能</td><td>{{预估 QPS / 延迟 / 缓存策略}}</td></tr>
+      <tr><td>可用性</td><td>{{降级 / 重试 / 限流}}</td></tr>
+      <tr><td>安全</td><td>{{鉴权 / 数据脱敏 / 注入防护}}</td></tr>
+      <tr><td>可观测</td><td>{{日志 / 指标 / 告警}}</td></tr>
+    </tbody>
+  </table>
+
+  <h2><span class="n">06</span>风险与备选</h2>
+  <div class="callout"><b>风险:</b>{{主要技术风险与应对}}<br><b>备选方案:</b>{{为何不选其他方案}}</div>
+  <div class="foot"><span>{{系统/需求}} · 技术方案设计</span><span>生成于 {{日期}}</span></div>
+</main>
+</div></body></html>

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{系统}} · 数据库设计文档</title>
+<style>
+:root{--ink:#0f172a;--ink2:#3f4757;--muted:#8b93a5;--line:#e6eaf1;--acc:#0891b2;--acc2:#155e75;--soft:#ecfeff;--ok:#15803d;--bg:#f4f8fa}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);background:var(--bg);line-height:1.7}
+.page{max-width:1000px;margin:0 auto;background:#fff;box-shadow:0 10px 30px rgba(8,145,178,.07)}
+.head{padding:40px 52px 26px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:16px}
+.head .kicker{font-size:12px;letter-spacing:2.5px;font-weight:800;color:var(--acc2);text-transform:uppercase}
+.head h1{font-size:28px;letter-spacing:-.6px;margin-top:8px}
+.head .sub{color:var(--muted);font-size:13px;margin-top:6px}
+.head .ver{font-size:12px;color:var(--muted);text-align:right}.head .ver b{display:block;font-size:14px;color:var(--ink)}
+.body{padding:32px 52px 54px}
+h2{font-size:19px;margin:32px 0 14px;display:flex;align-items:center;gap:10px}
+h2::before{content:"";width:5px;height:19px;border-radius:3px;background:var(--acc)}
+p{color:var(--ink2);font-size:14px;margin:8px 0}
+.tbl{border:1px solid var(--line);border-radius:14px;overflow:hidden;margin:16px 0}
+.tbl .bar{padding:13px 18px;background:#f6fbfd;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.tbl .bar code{font-size:15px;font-weight:700;font-family:ui-monospace,monospace;color:var(--acc2)}
+.tbl .bar .cmt{color:var(--muted);font-size:12.5px}
+.tbl .in{padding:14px 18px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:#fff;color:var(--muted);font-size:12px;font-weight:700}
+tr:last-child td{border-bottom:none}
+.pk{display:inline-block;font-size:10.5px;font-weight:800;color:#b45309;background:#fef3c7;padding:1px 6px;border-radius:5px;margin-left:6px}
+.fk{display:inline-block;font-size:10.5px;font-weight:800;color:#0369a1;background:#e0f2fe;padding:1px 6px;border-radius:5px;margin-left:6px}
+pre{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:14px 16px;overflow:auto;font-size:12.5px;line-height:1.6;font-family:ui-monospace,Consolas,monospace;margin:8px 0}
+code{background:#ecfeff;color:#155e75;padding:1px 6px;border-radius:5px;font-size:12.5px;font-family:ui-monospace,monospace}
+ul.clean{list-style:none;margin:10px 0}
+ul.clean li{position:relative;padding-left:20px;margin:8px 0;font-size:14px;color:var(--ink2)}
+ul.clean li::before{content:"";position:absolute;left:2px;top:9px;width:6px;height:6px;border-radius:50%;background:var(--acc)}
+.callout{border:1px solid #a5f3fc;background:linear-gradient(180deg,#ecfeff,#cffafe);border-radius:12px;padding:16px 20px;margin:16px 0;color:#155e75;font-size:13.5px}
+.foot{margin-top:36px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:12px;display:flex;justify-content:space-between;flex-wrap:wrap}
+@media(max-width:720px){.head,.body{padding-left:24px;padding-right:24px}.head h1{font-size:23px}}
+@media print{body{background:#fff}.page{box-shadow:none;max-width:100%}}
+</style></head><body>
+<div class="page">
+<header class="head">
+  <div>
+    <div class="kicker">Database Design</div>
+    <h1>{{系统}} · 数据库设计文档</h1>
+    <div class="sub">DBMS {{MySQL 8.0}} · 字符集 utf8mb4 · 引擎 InnoDB</div>
+  </div>
+  <div class="ver"><b>v1.0</b>更新 {{日期}}</div>
+</header>
+<main class="body">
+  <h2>设计说明</h2>
+  <p>{{整体建模思路、命名规范、公共字段(created_at/updated_at/软删除)约定}}</p>
+
+  <h2>ER 关系</h2>
+  <pre>{{实体关系说明或 mermaid erDiagram,例如:
+user 1---N order
+order 1---N order_item}}</pre>
+
+  <h2>表结构</h2>
+
+  <div class="tbl">
+    <div class="bar"><code>user</code><span class="cmt">用户表</span></div>
+    <div class="in">
+      <table>
+        <thead><tr><th>字段</th><th>类型</th><th>允许空</th><th>默认</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>id<span class="pk">PK</span></td><td>BIGINT</td><td>否</td><td>-</td><td>主键,自增</td></tr>
+          <tr><td>username</td><td>VARCHAR(64)</td><td>否</td><td>-</td><td>用户名,唯一</td></tr>
+          <tr><td>status</td><td>TINYINT</td><td>否</td><td>1</td><td>1=正常 0=禁用</td></tr>
+          <tr><td>created_at</td><td>DATETIME(3)</td><td>否</td><td>NOW(3)</td><td>创建时间</td></tr>
+        </tbody>
+      </table>
+      <pre>CREATE TABLE `user` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `username` VARCHAR(64) NOT NULL,
+  `status` TINYINT NOT NULL DEFAULT 1,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_username` (`username`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;</pre>
+    </div>
+  </div>
+
+  <div class="tbl">
+    <div class="bar"><code>order</code><span class="cmt">订单表</span></div>
+    <div class="in">
+      <table>
+        <thead><tr><th>字段</th><th>类型</th><th>允许空</th><th>默认</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>id<span class="pk">PK</span></td><td>BIGINT</td><td>否</td><td>-</td><td>主键</td></tr>
+          <tr><td>user_id<span class="fk">FK</span></td><td>BIGINT</td><td>否</td><td>-</td><td>关联 user.id</td></tr>
+          <tr><td>amount</td><td>DECIMAL(12,2)</td><td>否</td><td>0.00</td><td>金额</td></tr>
+          <tr><td>status</td><td>VARCHAR(16)</td><td>否</td><td>created</td><td>订单状态</td></tr>
+        </tbody>
+      </table>
+      <pre>CREATE TABLE `order` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `user_id` BIGINT NOT NULL,
+  `amount` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  `status` VARCHAR(16) NOT NULL DEFAULT 'created',
+  PRIMARY KEY (`id`),
+  KEY `idx_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;</pre>
+    </div>
+  </div>
+
+  <h2>索引与性能</h2>
+  <ul class="clean">
+    <li>{{高频查询对应的索引与最左前缀说明}}</li>
+    <li>{{分库分表 / 归档策略(如需要)}}</li>
+  </ul>
+  <div class="callout"><b>变更约定:</b>{{DDL 变更流程与回滚方案;大表 DDL 注意事项}}</div>
+  <div class="foot"><span>{{系统}} · 数据库设计</span><span>生成于 {{日期}}</span></div>
+</main>
+</div></body></html>

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{调研主题}} · 市场调研报告</title>
+<style>
+:root{--ink:#1a1408;--ink2:#57534e;--muted:#a8a29e;--line:#eee9e1;--acc:#b45309;--acc2:#92400e;--soft:#fff7ed;--ok:#15803d;--bg:#faf8f4}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);background:var(--bg);line-height:1.75}
+.page{max-width:960px;margin:0 auto;background:#fff;box-shadow:0 10px 30px rgba(120,72,20,.08)}
+.hero{padding:50px 56px 38px;background:linear-gradient(135deg,#78350f,#d97706);color:#fff;position:relative;overflow:hidden}
+.hero::after{content:"";position:absolute;right:-60px;bottom:-120px;width:280px;height:280px;border-radius:50%;background:rgba(255,255,255,.1)}
+.hero .kicker{font-size:12px;letter-spacing:3px;font-weight:700;opacity:.9;text-transform:uppercase}
+.hero h1{font-size:32px;letter-spacing:-.7px;margin:12px 0 10px;position:relative;z-index:1}
+.hero .lead{font-size:14.5px;opacity:.95;max-width:640px;position:relative;z-index:1}
+.hero-meta{display:flex;flex-wrap:wrap;gap:24px;margin-top:22px;font-size:12.5px;opacity:.92;position:relative;z-index:1}
+.body{padding:42px 56px 56px}
+h2{font-size:20px;margin:34px 0 14px;display:flex;align-items:center;gap:10px}
+h2 .n{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:28px;padding:0 8px;border-radius:8px;background:var(--soft);color:var(--acc2);font-size:12.5px;font-weight:800}
+p{color:var(--ink2);font-size:14px;margin:9px 0}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin:16px 0}
+.kpi{border:1px dashed #edd9b8;border-radius:14px;padding:16px;text-align:center;background:#fffdf9}
+.kpi b{display:block;font-size:24px;color:var(--acc2);letter-spacing:-.5px}
+.kpi span{font-size:12px;color:var(--muted)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.panel{border:1px solid var(--line);border-radius:14px;padding:18px 20px;background:#fff}
+.panel h4{font-size:13px;color:var(--acc2);margin-bottom:8px}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+th,td{padding:11px 14px;text-align:left;border-bottom:1px solid var(--line)}
+th{background:#fdf9f3;color:var(--muted);font-size:12.5px;font-weight:700}
+tbody tr:last-child td{border-bottom:none}
+.pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:11.5px;font-weight:700;background:var(--soft);color:var(--acc2)}
+.quote{border-left:3px solid var(--acc);padding:8px 16px;margin:10px 0;color:var(--ink2);font-size:13.5px;background:#fffdf9;font-style:italic}
+ul.clean{list-style:none;margin:10px 0}
+ul.clean li{position:relative;padding-left:22px;margin:8px 0;font-size:14px;color:var(--ink2)}
+ul.clean li::before{content:"—";position:absolute;left:0;color:var(--acc);font-weight:700}
+.callout{border:1px solid #fed7aa;background:linear-gradient(180deg,#fffbeb,#fff7ed);border-radius:14px;padding:18px 22px;margin:18px 0;color:#7c2d12;font-size:14px}
+.foot{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:12px;display:flex;justify-content:space-between;flex-wrap:wrap}
+@media(max-width:720px){.hero,.body{padding-left:24px;padding-right:24px}.kpis,.grid2{grid-template-columns:1fr}.hero h1{font-size:25px}}
+@media print{body{background:#fff}.page{box-shadow:none;max-width:100%}.hero{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style></head><body>
+<div class="page">
+<header class="hero">
+  <div class="kicker">Market Research</div>
+  <h1>{{调研主题}} · 市场调研报告</h1>
+  <p class="lead">{{一句话说明调研目的、方法与核心结论}}</p>
+  <div class="hero-meta"><span>调研时间 {{周期}}</span><span>样本 {{N}} 份</span><span>方法 {{问卷/访谈}}</span><span>更新 {{日期}}</span></div>
+</header>
+<main class="body">
+  <h2><span class="n">摘要</span>核心洞察</h2>
+  <div class="kpis">
+    <div class="kpi"><b>{{关键发现1}}</b><span>一句话</span></div>
+    <div class="kpi"><b>{{关键发现2}}</b><span>一句话</span></div>
+    <div class="kpi"><b>{{关键发现3}}</b><span>一句话</span></div>
+  </div>
+
+  <h2><span class="n">01</span>调研背景与方法</h2>
+  <p>{{调研目的、抽样方式、样本量与局限}}</p>
+
+  <h2><span class="n">02</span>市场与用户画像</h2>
+  <div class="grid2">
+    <div class="panel"><h4>用户画像</h4><ul class="clean"><li>{{年龄/地域/职业分布}}</li><li>{{消费能力与行为特征}}</li></ul></div>
+    <div class="panel"><h4>市场规模</h4><ul class="clean"><li>{{规模与增速}}</li><li>{{主要细分方向}}</li></ul></div>
+  </div>
+
+  <h2><span class="n">03</span>需求与痛点</h2>
+  <table>
+    <thead><tr><th>需求/痛点</th><th>提及率</th><th>强烈程度</th><th>典型原声</th></tr></thead>
+    <tbody>
+      <tr><td>{{需求 A}}</td><td>{{%}}</td><td><span class="pill">高</span></td><td>{{原声}}</td></tr>
+      <tr><td>{{需求 B}}</td><td>{{%}}</td><td><span class="pill">中</span></td><td>{{原声}}</td></tr>
+      <tr><td>{{需求 C}}</td><td>{{%}}</td><td><span class="pill">低</span></td><td>{{原声}}</td></tr>
+    </tbody>
+  </table>
+  <div class="quote">“{{用户原声引用}}”</div>
+
+  <h2><span class="n">04</span>结论与建议</h2>
+  <ul class="clean">
+    <li>{{结论 1 与对应行动}}</li>
+    <li>{{结论 2 与对应行动}}</li>
+    <li>{{结论 3 与对应行动}}</li>
+  </ul>
+  <div class="callout"><b>下一步:</b>{{建议优先验证的方向与所需补充数据}}</div>
+  <div class="foot"><span>{{调研主题}} · 市场调研</span><span>生成于 {{日期}}</span></div>
+</main>
+</div></body></html>

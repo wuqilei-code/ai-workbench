@@ -219,6 +219,18 @@ public class WorkspaceService {
         }
     }
 
+    /** 技能目录是否已落盘(含 SKILL.md);用于「库里有、盘上没有」的自愈判断。只读,不受技能写闸限制。 */
+    public boolean skillDirExists(Long userId, String name) {
+        if (name == null || name.isBlank() || name.contains("/") || name.contains("\\") || name.contains("..")) {
+            return false;
+        }
+        try {
+            return Files.isRegularFile(Paths.get(skillsDir(userId)).resolve(name).resolve("SKILL.md"));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     public void writeFile(Long userId, String relativePath, String content) {
         assertSkillSyncAllowed(relativePath);
         Path path = safeResolve(userId, relativePath);

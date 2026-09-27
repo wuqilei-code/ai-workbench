@@ -32,22 +32,23 @@ public class JobController {
     private final WorkspaceService workspaceService;
 
     @GetMapping
-    public R<List<JobTaskVo>> list() {
-        return R.ok(jobTaskService.toVo(jobTaskService.listByUser(SecurityUtil.currentUserId())));
+    public R<List<JobTaskVo>> list(@RequestParam(required = false) Integer limit,
+                                   @RequestParam(required = false) Integer offset) {
+        return R.ok(jobTaskService.toVo(jobTaskService.listByUser(SecurityUtil.currentUserId(), limit, offset)));
     }
 
     @PostMapping
     public R<JobTaskVo> create(@RequestBody JobTaskRequest req) {
         Long userId = SecurityUtil.currentUserId();
         JobTask job = jobTaskService.create(userId, req.getName(), req.getPrompt(), req.getCron(),
-                req.getAgent(), Boolean.TRUE.equals(req.getAutoApprove()));
+                req.getAgent(), Boolean.TRUE.equals(req.getAutoApprove()), req.getVariables());
         return R.ok(jobTaskService.toVo(job));
     }
 
     @PatchMapping("/{id}")
     public R<JobTaskVo> update(@PathVariable Long id, @RequestBody JobTaskRequest req) {
         jobTaskService.update(SecurityUtil.currentUserId(), id, req.getName(), req.getPrompt(), req.getCron(),
-                req.getAgent(), req.getAutoApprove(), req.getEnabled());
+                req.getAgent(), req.getAutoApprove(), req.getEnabled(), req.getVariables());
         return R.ok(jobTaskService.toVo(jobTaskService.getOwned(SecurityUtil.currentUserId(), id)));
     }
 
@@ -93,6 +94,14 @@ public class JobController {
         return R.ok(job.getLastResult() == null ? "" : job.getLastResult());
     }
 
+    /** 全部任务的最近运行历史(执行历史页)。 */
+    @GetMapping("/runs")
+    public R<java.util.Map<String, Object>> allRuns(@RequestParam(required = false) Integer limit,
+                                                    @RequestParam(required = false) Integer offset) {
+        Long userId = SecurityUtil.currentUserId();
+        return R.ok(jobTaskService.listAllRuns(userId, limit == null ? 20 : limit, offset == null ? 0 : offset));
+    }
+
     /** 某任务的全部运行历史(结果),新→旧。 */
     @GetMapping("/{id}/runs")
     public R<List<JobTaskRunVo>> runs(@PathVariable Long id) {
@@ -117,9 +126,15 @@ public class JobController {
         } catch (Exception e) {
             content = run.getResult() == null ? "(日志不可用)" : run.getResult();
         }
-        int n = (tail == null || tail < 0) ? 12_000 : Math.min(tail, 500_000);
-        if (content.length() > n) {
-            content = content.substring(content.length() - n);
+        int n = (tail == null || tail < 0) ? 200_000 : Math.min(tail, 1_000_000);
+        boolean truncated = content.length() > n;
+        if (truncated) {
+            // 从末尾截断,但前推到下一个换行,保证首行完整(否则会看到"半行"日志)
+            int start = content.length() - n;
+            int nl = content.indexOf('\n', start);
+            if (nl >= 0) start = nl + 1;
+            content = content.substring(start);
+            content = "[…日志较长,仅显示末尾部分…]\n" + content;
         }
         return R.ok(content);
     }

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{姓名}} · 工作总结与述职</title>
+<style>
+:root{--ink:#0f172a;--ink2:#3f4757;--muted:#8b93a5;--line:#e6eaf1;--acc:#0369a1;--acc2:#075985;--soft:#f0f9ff;--ok:#15803d;--bg:#f5f8fa}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);background:var(--bg);line-height:1.75}
+.page{max-width:920px;margin:0 auto;background:#fff;box-shadow:0 10px 30px rgba(3,105,161,.07)}
+.hero{padding:46px 54px 36px;background:linear-gradient(135deg,#0c4a6e,#0ea5e9);color:#fff;position:relative;overflow:hidden}
+.hero::after{content:"";position:absolute;right:-60px;top:-90px;width:250px;height:250px;border-radius:50%;background:rgba(255,255,255,.12)}
+.hero .kicker{font-size:12px;letter-spacing:3px;font-weight:800;opacity:.9;text-transform:uppercase}
+.hero h1{font-size:30px;letter-spacing:-.6px;margin:12px 0 10px;position:relative;z-index:1}
+.hero .lead{font-size:14.5px;opacity:.94;max-width:620px;position:relative;z-index:1}
+.hero-meta{display:flex;flex-wrap:wrap;gap:24px;margin-top:20px;font-size:12.5px;opacity:.92;position:relative;z-index:1}
+.body{padding:40px 54px 54px}
+h2{font-size:19px;margin:32px 0 13px;display:flex;align-items:center;gap:10px}
+h2 .n{display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:26px;padding:0 8px;border-radius:8px;background:var(--soft);color:var(--acc2);font-size:12px;font-weight:800}
+p{color:var(--ink2);font-size:14px;margin:8px 0}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:14px 0}
+.kpi{border:1px solid var(--line);border-radius:12px;padding:14px;text-align:center;background:linear-gradient(180deg,#fff,#f8fcff)}
+.kpi b{display:block;font-size:23px;color:var(--acc2);letter-spacing:-.4px}
+.kpi span{font-size:12px;color:var(--muted)}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+th,td{padding:11px 14px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:#f6fbfe;color:var(--muted);font-size:12.5px;font-weight:700}
+tbody tr:last-child td{border-bottom:none}
+.pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700;background:var(--soft);color:var(--acc2)}
+ul.clean{list-style:none;margin:8px 0}
+ul.clean li{position:relative;padding-left:20px;margin:8px 0;font-size:14px;color:var(--ink2)}
+ul.clean li::before{content:"▸";position:absolute;left:2px;color:var(--acc);font-weight:700}
+.hl{border-left:4px solid var(--acc);background:#f6fbfe;border-radius:0 10px 10px 0;padding:12px 18px;margin:10px 0;font-size:14px;color:var(--ink2)}
+.callout{border:1px solid #bae6fd;background:linear-gradient(180deg,#f0f9ff,#e0f2fe);border-radius:14px;padding:18px 22px;margin:18px 0;color:#0c4a6e;font-size:14px}
+.foot{margin-top:36px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:12px;display:flex;justify-content:space-between;flex-wrap:wrap}
+@media(max-width:720px){.hero,.body{padding-left:24px;padding-right:24px}.kpis{grid-template-columns:repeat(2,1fr)}.hero h1{font-size:24px}}
+@media print{body{background:#fff}.page{box-shadow:none;max-width:100%}.hero{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style></head><body>
+<div class="page">
+<header class="hero">
+  <div class="kicker">Performance Review</div>
+  <h1>{{姓名}} · 工作总结与述职</h1>
+  <p class="lead">{{一句话概括本期职责、整体表现与核心贡献}}</p>
+  <div class="hero-meta"><span>周期 {{周期}}</span><span>部门 {{部门}}</span><span>职位 {{职位}}</span><span>汇报对象 {{上级}}</span></div>
+</header>
+<main class="body">
+  <h2><span class="n">01</span>职责与目标回顾</h2>
+  <p>{{本期核心职责,以及期初设定的目标}}</p>
+  <div class="kpis">
+    <div class="kpi"><b>{{完成率}}</b><span>目标达成</span></div>
+    <div class="kpi"><b>{{项目数}}</b><span>主导项目</span></div>
+    <div class="kpi"><b>{{提升}}</b><span>关键指标提升</span></div>
+    <div class="kpi"><b>{{评价}}</b><span>综合评级</span></div>
+  </div>
+
+  <h2><span class="n">02</span>核心业绩</h2>
+  <div class="hl"><b>{{业绩一}}:</b>{{做了什么、量化结果、业务价值}}</div>
+  <div class="hl"><b>{{业绩二}}:</b>{{做了什么、量化结果、业务价值}}</div>
+  <table>
+    <thead><tr><th>目标</th><th>结果</th><th>达成</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>{{目标 A}}</td><td>{{结果}}</td><td><span class="pill">120%</span></td><td>{{说明}}</td></tr>
+      <tr><td>{{目标 B}}</td><td>{{结果}}</td><td><span class="pill">95%</span></td><td>{{说明}}</td></tr>
+    </tbody>
+  </table>
+
+  <h2><span class="n">03</span>能力成长与亮点</h2>
+  <ul class="clean">
+    <li>{{专业能力/方法沉淀}}</li>
+    <li>{{协作/推动/影响力方面的亮点}}</li>
+  </ul>
+
+  <h2><span class="n">04</span>不足与反思</h2>
+  <ul class="clean">
+    <li>{{不足之处 1 与改进方向}}</li>
+    <li>{{不足之处 2 与改进方向}}</li>
+  </ul>
+
+  <h2><span class="n">05</span>下期规划</h2>
+  <table>
+    <thead><tr><th>目标</th><th>关键动作</th><th>衡量标准</th></tr></thead>
+    <tbody>
+      <tr><td>{{下期目标 1}}</td><td>{{动作}}</td><td>{{标准}}</td></tr>
+      <tr><td>{{下期目标 2}}</td><td>{{动作}}</td><td>{{标准}}</td></tr>
+    </tbody>
+  </table>
+  <div class="callout"><b>个人愿景:</b>{{一句话表达下一阶段的定位与承诺}}</div>
+  <div class="foot"><span>{{姓名}} · 工作总结与述职</span><span>生成于 {{日期}}</span></div>
+</main>
+</div></body></html>

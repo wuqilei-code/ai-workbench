@@ -2,6 +2,7 @@ package com.aiworkbench.service.job;
 
 import com.aiworkbench.entity.JobTask;
 import com.aiworkbench.mapper.JobTaskMapper;
+import com.aiworkbench.service.DbLockService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import lombok.RequiredArgsConstructor;
@@ -25,10 +26,14 @@ public class JobScheduler {
 
     private final JobTaskMapper jobTaskMapper;
     private final JobTaskService jobTaskService;
+    private final DbLockService dbLock;
+    private final JobPauseState pauseState;
 
-    /** 定时扫描:每 5s(与队列调度同频),把到期的 pending 任务推入队。 */
+    /** 定时扫描:每 5s(与队列调度同频),把到期的 pending 任务推入队。多副本时仅一个实例执行。 */
     @Scheduled(fixedDelayString = "${agent-jobs.sweep-ms:5000}")
     public void sweep() {
+        if (pauseState.isPaused()) return; // 全局暂停:不触发新任务
+        if (!dbLock.tryLock("job-scheduler-sweep", 30)) return;
         List<JobTask> due = jobTaskMapper.selectList(new LambdaQueryWrapper<JobTask>()
                 .eq(JobTask::getEnabled, 1)
                 .eq(JobTask::getStatus, JobTaskService.PENDING)

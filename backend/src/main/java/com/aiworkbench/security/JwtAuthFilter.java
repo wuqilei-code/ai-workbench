@@ -75,8 +75,16 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 SecurityContextHolder.clearContext();
                 return false;
             }
+            // 令牌版本校验:改密后库中 token_version +1,旧 token 立即失效
+            Integer tokenTv = claims.get("tv", Integer.class);
+            int expectedTv = dbUser.getTokenVersion() == null ? 0 : dbUser.getTokenVersion();
+            if ((tokenTv == null ? 0 : tokenTv) != expectedTv) {
+                SecurityContextHolder.clearContext();
+                return false;
+            }
             String username = claims.get("username", String.class);
-            String role = claims.get("role", String.class);
+            // 角色以库中最新值为准(改角色即时生效,无需等待 token 过期)
+            String role = dbUser.getRole() != null ? dbUser.getRole() : claims.get("role", String.class);
             List<SimpleGrantedAuthority> authorities =
                     List.of(new SimpleGrantedAuthority("ROLE_" + role.toUpperCase()));
 

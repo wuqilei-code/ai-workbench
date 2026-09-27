@@ -71,6 +71,9 @@ public class JobAgentExecutor {
         try {
             ObjectNode body = objectMapper.createObjectNode();
             body.put("thread_id", threadId);
+            // 无人值守任务:agent_type=task → agent-service 关闭所有 HITL 中断、不挂 ask_user,
+            // 保证任务一路执行到底(不会向用户提问/要授权)。
+            body.put("agent_type", "task");
             ArrayNode msgs = body.putArray("messages");
             ObjectNode m = msgs.addObject();
             m.put("role", "user");

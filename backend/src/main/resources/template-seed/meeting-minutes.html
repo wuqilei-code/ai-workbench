@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{会议主题}} · 会议纪要</title>
+<style>
+:root{--ink:#111827;--ink2:#3f4757;--muted:#8b93a5;--line:#e6eaf1;--acc:#0f766e;--acc2:#115e59;--soft:#f0fdfa;--ok:#15803d;--bg:#f4f7f7}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);background:var(--bg);line-height:1.75}
+.page{max-width:900px;margin:0 auto;background:#fff;box-shadow:0 10px 30px rgba(15,118,110,.07)}
+.head{padding:40px 52px 26px;border-bottom:1px solid var(--line)}
+.head .kicker{font-size:12px;letter-spacing:2.5px;font-weight:700;color:var(--acc2);text-transform:uppercase}
+.head h1{font-size:28px;letter-spacing:-.6px;margin:10px 0 12px}
+.meta{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font-size:12px;padding:3px 11px;border-radius:999px;background:var(--soft);color:var(--acc2);font-weight:600;border:1px solid #ccfbf1}
+.chip.gray{background:#f8fafc;color:var(--muted);border-color:var(--line)}
+.body{padding:32px 52px 54px}
+h2{font-size:18px;margin:30px 0 12px;display:flex;align-items:center;gap:10px}
+h2::before{content:"";width:5px;height:19px;border-radius:3px;background:var(--acc)}
+p{color:var(--ink2);font-size:14px;margin:8px 0}
+ul.clean{list-style:none;margin:8px 0}
+ul.clean li{position:relative;padding-left:20px;margin:8px 0;font-size:14px;color:var(--ink2)}
+ul.clean li::before{content:"·";position:absolute;left:4px;color:var(--acc);font-weight:800;font-size:18px;top:-2px}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+th,td{padding:11px 14px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:#f6fbfa;color:var(--muted);font-size:12.5px;font-weight:700}
+tbody tr:last-child td{border-bottom:none}
+.pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700;background:var(--soft);color:var(--acc2)}
+.decision{border-left:4px solid var(--acc);background:#f6fbfa;border-radius:0 10px 10px 0;padding:12px 18px;margin:10px 0;font-size:14px;color:var(--ink2)}
+.decision b{color:var(--acc2)}
+.foot{margin-top:36px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:12px;display:flex;justify-content:space-between;flex-wrap:wrap}
+@media(max-width:720px){.head,.body{padding-left:24px;padding-right:24px}.head h1{font-size:23px}}
+@media print{body{background:#fff}.page{box-shadow:none;max-width:100%}}
+</style></head><body>
+<div class="page">
+<header class="head">
+  <div class="kicker">Meeting Minutes</div>
+  <h1>{{会议主题}}</h1>
+  <div class="meta">
+    <span class="chip">时间 {{日期 时间}}</span>
+    <span class="chip">地点 {{地点/线上}}</span>
+    <span class="chip gray">主持 {{主持人}}</span>
+    <span class="chip gray">记录 {{记录人}}</span>
+  </div>
+</header>
+<main class="body">
+  <h2>参会人员</h2>
+  <p>{{参会人名单;缺席:{{名单}}}}</p>
+
+  <h2>会议议题</h2>
+  <ul class="clean">
+    <li>{{议题 1}}</li>
+    <li>{{议题 2}}</li>
+    <li>{{议题 3}}</li>
+  </ul>
+
+  <h2>讨论要点</h2>
+  <table>
+    <thead><tr><th>议题</th><th>核心观点</th><th>提出人</th></tr></thead>
+    <tbody>
+      <tr><td>{{议题 1}}</td><td>{{观点/数据}}</td><td>{{人}}</td></tr>
+      <tr><td>{{议题 2}}</td><td>{{观点/数据}}</td><td>{{人}}</td></tr>
+    </tbody>
+  </table>
+
+  <h2>决议结论</h2>
+  <div class="decision"><b>决议一:</b>{{结论}}</div>
+  <div class="decision"><b>决议二:</b>{{结论}}</div>
+
+  <h2>待办事项</h2>
+  <table>
+    <thead><tr><th>事项</th><th>负责人</th><th>截止</th><th>状态</th></tr></thead>
+    <tbody>
+      <tr><td>{{待办 1}}</td><td>{{负责人}}</td><td>{{日期}}</td><td><span class="pill">待开始</span></td></tr>
+      <tr><td>{{待办 2}}</td><td>{{负责人}}</td><td>{{日期}}</td><td><span class="pill">进行中</span></td></tr>
+    </tbody>
+  </table>
+  <div class="foot"><span>{{会议主题}} · 会议纪要</span><span>生成于 {{日期}}</span></div>
+</main>
+</div></body></html>

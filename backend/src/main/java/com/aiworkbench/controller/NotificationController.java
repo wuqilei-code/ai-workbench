@@ -23,8 +23,9 @@ public class NotificationController {
     private final NotificationService notificationService;
 
     @GetMapping
-    public R<List<NotificationVo>> list(@RequestParam(defaultValue = "50") int limit) {
-        return R.ok(notificationService.list(SecurityUtil.currentUserId(), limit));
+    public R<List<NotificationVo>> list(@RequestParam(defaultValue = "50") int limit,
+                                        @RequestParam(defaultValue = "0") int offset) {
+        return R.ok(notificationService.list(SecurityUtil.currentUserId(), limit, offset));
     }
 
     @GetMapping("/unread-count")

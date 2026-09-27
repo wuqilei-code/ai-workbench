@@ -38,13 +38,15 @@ public class NotificationService {
         return n.getId();
     }
 
-    /** 用户消息列表:未读优先,再按时间新→旧(limit 条)。 */
-    public List<NotificationVo> list(Long userId, int limit) {
+    /** 用户消息列表:未读优先,再按时间新→旧(limit 条,可带 offset 翻页)。 */
+    public List<NotificationVo> list(Long userId, int limit, int offset) {
+        int l = Math.max(1, Math.min(limit, 200));
+        int off = Math.max(0, offset);
         List<Notification> list = notificationMapper.selectList(new LambdaQueryWrapper<Notification>()
                 .eq(Notification::getUserId, userId)
                 .orderByAsc(Notification::getReadFlag)
                 .orderByDesc(Notification::getId)
-                .last("limit " + Math.max(1, Math.min(limit, 200))));
+                .last("limit " + l + " offset " + off));
         return list.stream().map(this::toVo).toList();
     }
 

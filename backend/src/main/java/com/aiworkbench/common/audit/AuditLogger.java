@@ -26,22 +26,18 @@ public class AuditLogger {
             rec.setUserId(userId);
             rec.setUsername(username);
             rec.setAction(action);
-            rec.setTarget(target);
+            // target/errorMsg 可能含参数文本或异常消息:脱敏后入库(审计表可在管理端查看)
+            rec.setTarget(SecretRedactor.maskAndTruncate(target, 500));
             rec.setIp(ip);
             rec.setMethod(method);
             rec.setPath(path);
             rec.setStatus(status);
             rec.setCostMs(costMs);
-            rec.setErrorMsg(truncate(errorMsg, 1000));
+            rec.setErrorMsg(SecretRedactor.maskAndTruncate(errorMsg, 1000));
             auditLogMapper.insert(rec);
         } catch (Exception e) {
             // 审计失败不应影响业务,仅告警
             log.warn("write audit log failed: {}", e.getMessage());
         }
-    }
-
-    private String truncate(String s, int max) {
-        if (s == null) return null;
-        return s.length() > max ? s.substring(0, max) : s;
     }
 }

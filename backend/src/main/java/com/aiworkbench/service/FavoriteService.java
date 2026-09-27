@@ -22,9 +22,20 @@ public class FavoriteService {
     private final FavoriteMapper favoriteMapper;
 
     public List<FavoriteVo> list(Long userId) {
-        List<Favorite> rows = favoriteMapper.selectList(new LambdaQueryWrapper<Favorite>()
+        return list(userId, null, null);
+    }
+
+    /** 收藏列表(分页可选):limit<=0/空返回全部(兼容旧行为),上限 500;offset 默认 0。 */
+    public List<FavoriteVo> list(Long userId, Integer limit, Integer offset) {
+        LambdaQueryWrapper<Favorite> qw = new LambdaQueryWrapper<Favorite>()
                 .eq(Favorite::getUserId, userId)
-                .orderByDesc(Favorite::getId));
+                .orderByDesc(Favorite::getId);
+        if (limit != null && limit > 0) {
+            int l = Math.min(limit, 500);
+            int off = (offset == null || offset < 0) ? 0 : offset;
+            qw.last("limit " + l + " offset " + off);
+        }
+        List<Favorite> rows = favoriteMapper.selectList(qw);
         List<FavoriteVo> out = new ArrayList<>(rows.size());
         for (Favorite f : rows) {
             out.add(toVo(f));

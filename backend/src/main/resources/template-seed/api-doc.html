@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{服务名}} · API 接口文档</title>
+<style>
+:root{--ink:#0f172a;--ink2:#3f4757;--muted:#8b93a5;--line:#e6eaf1;--acc:#0ea5e9;--acc2:#0369a1;--soft:#f0f9ff;--ok:#15803d;--warn:#b45309;--bad:#b91c1c;--bg:#f4f7fa}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);background:var(--bg);line-height:1.7}
+.page{max-width:1000px;margin:0 auto;background:#fff;box-shadow:0 10px 30px rgba(3,105,161,.07)}
+.head{padding:40px 52px 26px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:16px}
+.head .kicker{font-size:12px;letter-spacing:2.5px;font-weight:800;color:var(--acc2);text-transform:uppercase}
+.head h1{font-size:28px;letter-spacing:-.6px;margin-top:8px}
+.head .sub{color:var(--muted);font-size:13px;margin-top:6px}
+.head .ver{font-size:12px;color:var(--muted);text-align:right}.head .ver b{display:block;font-size:14px;color:var(--ink)}
+.body{padding:32px 52px 54px}
+h2{font-size:19px;margin:32px 0 14px;display:flex;align-items:center;gap:10px}
+h2::before{content:"";width:5px;height:19px;border-radius:3px;background:var(--acc)}
+p{color:var(--ink2);font-size:14px;margin:8px 0}
+.ep{border:1px solid var(--line);border-radius:14px;overflow:hidden;margin:16px 0}
+.ep .bar{display:flex;align-items:center;gap:12px;padding:14px 18px;background:#f8fafc;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.ep .bar .m{font-size:12px;font-weight:800;padding:3px 10px;border-radius:7px;color:#fff}
+.m.get{background:#16a34a}.m.post{background:#2563eb}.m.put{background:#d97706}.m.del{background:#dc2626}.m.patch{background:#7c3aed}
+.ep .bar code{font-size:14px;font-weight:600;font-family:ui-monospace,monospace}
+.ep .bar .desc{color:var(--muted);font-size:12.5px;margin-left:auto}
+.ep .in{padding:16px 18px}
+.kv{margin:8px 0;font-size:13px;color:var(--ink2)}
+.kv b{color:var(--ink)}
+pre{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:14px 16px;overflow:auto;font-size:12.5px;line-height:1.6;font-family:ui-monospace,Consolas,monospace;margin:8px 0}
+code{background:#e0f2fe;color:#075985;padding:1px 6px;border-radius:5px;font-size:12.5px;font-family:ui-monospace,monospace}
+table{width:100%;border-collapse:collapse;margin:10px 0;font-size:13px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+th,td{padding:10px 13px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:#f6fbfe;color:var(--muted);font-size:12px;font-weight:700}
+tbody tr:last-child td{border-bottom:none}
+.req{color:var(--bad);font-weight:700}.opt{color:var(--muted)}
+ul.clean{list-style:none;margin:10px 0}
+ul.clean li{position:relative;padding-left:20px;margin:8px 0;font-size:14px;color:var(--ink2)}
+ul.clean li::before{content:"";position:absolute;left:2px;top:9px;width:6px;height:6px;border-radius:50%;background:var(--acc)}
+.callout{border:1px solid #bae6fd;background:linear-gradient(180deg,#f0f9ff,#e0f2fe);border-radius:12px;padding:16px 20px;margin:16px 0;color:#0c4a6e;font-size:13.5px}
+.foot{margin-top:36px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:12px;display:flex;justify-content:space-between;flex-wrap:wrap}
+@media(max-width:720px){.head,.body{padding-left:24px;padding-right:24px}.head h1{font-size:23px}}
+@media print{body{background:#fff}.page{box-shadow:none;max-width:100%}}
+</style></head><body>
+<div class="page">
+<header class="head">
+  <div>
+    <div class="kicker">API Reference</div>
+    <h1>{{服务名}} · API 接口文档</h1>
+    <div class="sub">Base URL: <code>{{https://api.example.com}}</code> · 鉴权: {{Bearer Token}}</div>
+  </div>
+  <div class="ver"><b>v1.0</b>更新 {{日期}}</div>
+</header>
+<main class="body">
+  <h2>概述</h2>
+  <p>{{服务简介、通用约定(编码、时间格式、分页参数)}}</p>
+  <h2>鉴权</h2>
+  <p>请求头携带 <code>Authorization: Bearer &lt;token&gt;</code>;所有接口统一返回:</p>
+  <pre>{
+  "code": 0,
+  "message": "ok",
+  "data": { }
+}</pre>
+
+  <h2>接口列表</h2>
+  <div class="ep">
+    <div class="bar"><span class="m get">GET</span><code>/api/items</code><span class="desc">分页查询列表</span></div>
+    <div class="in">
+      <div class="kv"><b>Query 参数</b></div>
+      <table>
+        <thead><tr><th>参数</th><th>类型</th><th>必填</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>page</td><td>int</td><td class="opt">否</td><td>页码,默认 1</td></tr>
+          <tr><td>size</td><td>int</td><td class="opt">否</td><td>每页条数,默认 20</td></tr>
+          <tr><td>keyword</td><td>string</td><td class="opt">否</td><td>模糊搜索</td></tr>
+        </tbody>
+      </table>
+      <div class="kv"><b>响应示例</b></div>
+      <pre>{
+  "code": 0,
+  "data": {
+    "total": 128,
+    "list": [ { "id": 1, "name": "示例" } ]
+  }
+}</pre>
+    </div>
+  </div>
+
+  <div class="ep">
+    <div class="bar"><span class="m post">POST</span><code>/api/items</code><span class="desc">创建</span></div>
+    <div class="in">
+      <div class="kv"><b>Body 参数</b></div>
+      <table>
+        <thead><tr><th>字段</th><th>类型</th><th>必填</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>name</td><td>string</td><td class="req">是</td><td>名称</td></tr>
+          <tr><td>description</td><td>string</td><td class="opt">否</td><td>描述</td></tr>
+        </tbody>
+      </table>
+      <pre>POST /api/items
+{ "name": "示例", "description": "说明" }</pre>
+    </div>
+  </div>
+
+  <h2>错误码</h2>
+  <table>
+    <thead><tr><th>code</th><th>含义</th><th>处理建议</th></tr></thead>
+    <tbody>
+      <tr><td>0</td><td>成功</td><td>-</td></tr>
+      <tr><td>400</td><td>参数错误</td><td>校验请求参数</td></tr>
+      <tr><td>401</td><td>未授权</td><td>重新登录</td></tr>
+      <tr><td>500</td><td>服务异常</td><td>稍后重试 / 联系后端</td></tr>
+    </tbody>
+  </table>
+  <div class="callout"><b>限流:</b>{{限流规则与建议调用频率}}</div>
+  <div class="foot"><span>{{服务名}} · API 文档</span><span>生成于 {{日期}}</span></div>
+</main>
+</div></body></html>

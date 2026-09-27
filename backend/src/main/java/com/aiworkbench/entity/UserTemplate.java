@@ -15,5 +15,10 @@ public class UserTemplate {
     private Long templateId;
     private Integer enabled;
     private Integer sortOrder;
+    /** 是否置顶(问答页每类最多展示 3 条,置顶优先) */
+    private Integer pinned;
+    private LocalDateTime pinnedAt;
+    /** 置顶顺序(越小越靠前) */
+    private Integer pinOrder;
     private LocalDateTime createdAt;
 }

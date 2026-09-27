@@ -28,13 +28,15 @@ public class JwtTokenProvider {
         this.key = Keys.hmacShaKeyFor(keyBytes);
     }
 
-    public String generate(Long userId, String username, String role) {
+    public String generate(Long userId, String username, String role, Integer tokenVersion) {
         long ttlMs = props.getTtlMinutes() * 60_000L;
         Date now = new Date();
         return Jwts.builder()
                 .subject(String.valueOf(userId))
                 .claim("username", username)
                 .claim("role", role)
+                // 令牌版本:与库中 users.token_version 比对,改密后 +1 使旧 token 失效
+                .claim("tv", tokenVersion == null ? 0 : tokenVersion)
                 .issuedAt(now)
                 .expiration(new Date(now.getTime() + ttlMs))
                 .signWith(key, Jwts.SIG.HS256)

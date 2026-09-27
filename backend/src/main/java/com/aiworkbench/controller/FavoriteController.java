@@ -26,8 +26,9 @@ public class FavoriteController {
     private final FavoriteService favoriteService;
 
     @GetMapping
-    public R<List<FavoriteVo>> list() {
-        return R.ok(favoriteService.list(SecurityUtil.currentUserId()));
+    public R<List<FavoriteVo>> list(@RequestParam(required = false) Integer limit,
+                                    @RequestParam(required = false) Integer offset) {
+        return R.ok(favoriteService.list(SecurityUtil.currentUserId(), limit, offset));
     }
 
     /** 收藏/取消收藏:返回 true=已收藏,false=已取消。 */

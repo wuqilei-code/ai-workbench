@@ -43,6 +43,7 @@ public class ChatMessageService {
     private final ChatSessionService chatSessionService;
     private final AgentStreamBridge agentStreamBridge;
     private final ObjectMapper objectMapper;
+    private final com.aiworkbench.service.quota.TokenQuotaService tokenQuotaService;
 
     /**
      * 找该会话在 beforeEpochMs(含)之前最近的一条用户消息,作为后台任务的"触发消息"。
@@ -118,6 +119,8 @@ public class ChatMessageService {
      */
     public void sendUserMessage(Long sessionId, Long userId, SendMessageRequest req) {
         ChatSession s = chatSessionService.getOwned(sessionId, userId);
+        // 每日 token 配额校验(未配置则为空操作)
+        tokenQuotaService.assertWithinQuota(userId);
         persistUserMessage(s, req.getText());
         agentStreamBridge.sendMessage(s, userId, req.getText() != null ? req.getText() : "");
     }
@@ -228,6 +231,7 @@ public class ChatMessageService {
                     .eq(ChatMessage::getAgentMessageId, agentMessageId)
                     .last("limit 1"));
             boolean isNew = existing == null;
+            long oldTokenTotal = tokenTotal(existing);
             ChatMessage m = isNew ? new ChatMessage() : existing;
             if (isNew) {
                 m.setSessionId(session.getId());
@@ -275,7 +279,31 @@ public class ChatMessageService {
             } else {
                 chatMessageMapper.insert(m);
             }
+            // 每日配额累计:按本轮 token 增量的差值累加(流式多次 upsert 只累加新增部分)
+            long newTotal = usage != null ? usageTotal(usage) : oldTokenTotal;
+            long delta = newTotal - oldTokenTotal;
+            if (delta > 0) {
+                tokenQuotaService.addUsage(m.getUserId(), delta);
+            }
         }
+    }
+
+    /** 消息行已记录的 token 合计(各列可空)。 */
+    private static long tokenTotal(ChatMessage m) {
+        if (m == null) {
+            return 0;
+        }
+        return nz(m.getInputTokens()) + nz(m.getOutputTokens()) + nz(m.getReasoningTokens())
+                + nz(m.getCacheReadTokens()) + nz(m.getCacheWriteTokens());
+    }
+
+    private static long nz(Number n) {
+        return n == null ? 0 : n.longValue();
+    }
+
+    private static long usageTotal(TurnUsage u) {
+        return nz(u.inputTokens()) + nz(u.outputTokens()) + nz(u.reasoningTokens())
+                + nz(u.cacheReadTokens()) + nz(u.cacheWriteTokens());
     }
 
     private final java.util.concurrent.ConcurrentHashMap<Long, Object> partsLocks =

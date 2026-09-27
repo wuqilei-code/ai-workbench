@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{标题}} · 公众号推文</title>
+<style>
+:root{--ink:#17181c;--ink2:#3f4046;--muted:#9b9ca3;--line:#ececef;--acc:#059669;--acc2:#047857;--soft:#ecfdf5;--bg:#f6f8f7}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);background:var(--bg);line-height:1.9}
+.page{max-width:720px;margin:0 auto;background:#fff;box-shadow:0 10px 30px rgba(4,120,87,.07)}
+.cover{padding:52px 48px 30px;background:linear-gradient(135deg,#065f46,#10b981);color:#fff}
+.cover .tag{font-size:12px;letter-spacing:2px;font-weight:700;opacity:.9}
+.cover h1{font-size:28px;letter-spacing:-.5px;margin:12px 0 10px;line-height:1.35}
+.cover .sub{font-size:14px;opacity:.94}
+.cover .meta{margin-top:18px;font-size:12px;opacity:.85}
+.body{padding:34px 48px 54px}
+p{color:var(--ink2);font-size:15px;margin:14px 0}
+h2{font-size:19px;margin:30px 0 12px;padding-left:12px;border-left:4px solid var(--acc)}
+.quote{border-left:3px solid var(--acc);background:var(--soft);padding:12px 18px;margin:16px 0;color:var(--acc2);font-size:14.5px}
+ul.clean{list-style:none;margin:12px 0}
+ul.clean li{position:relative;padding-left:22px;margin:9px 0;font-size:15px;color:var(--ink2)}
+ul.clean li::before{content:"✓";position:absolute;left:0;color:var(--acc);font-weight:800}
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:16px 0}
+.card{border:1px solid var(--line);border-radius:12px;padding:16px;background:#fafdfb}
+.card h4{font-size:14px;color:var(--acc2);margin-bottom:6px}
+.card p{font-size:13.5px;margin:0}
+.cta{margin:24px 0;text-align:center;background:linear-gradient(135deg,#ecfdf5,#d1fae5);border-radius:14px;padding:20px}
+.cta b{color:var(--acc2);font-size:16px}
+.foot{margin-top:34px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:12px;text-align:center}
+@media(max-width:600px){.cover,.body{padding-left:24px;padding-right:24px}.cards{grid-template-columns:1fr}.cover h1{font-size:23px}}
+@media print{body{background:#fff}.page{box-shadow:none;max-width:100%}.cover{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style></head><body>
+<div class="page">
+  <header class="cover">
+    <div class="tag">{{栏目 · 公众号}}</div>
+    <h1>{{文章标题}}</h1>
+    <div class="sub">{{一句话摘要,抓人且点题}}</div>
+    <div class="meta">作者 {{作者}} · {{日期}} · 阅读约 {{N}} 分钟</div>
+  </header>
+  <main class="body">
+    <p>{{开篇引入:用一个场景、问题或故事把读者带入}}</p>
+
+    <h2>01 · {{小标题}}</h2>
+    <p>{{正文段落,讲清一个观点,配数据/案例增强说服力}}</p>
+    <div class="quote">“{{金句 / 用户原声}}”</div>
+
+    <h2>02 · {{小标题}}</h2>
+    <div class="cards">
+      <div class="card"><h4>{{要点一}}</h4><p>{{解释}}</p></div>
+      <div class="card"><h4>{{要点二}}</h4><p>{{解释}}</p></div>
+    </div>
+
+    <h2>03 · {{小标题}}</h2>
+    <ul class="clean">
+      <li>{{可执行的方法/清单 1}}</li>
+      <li>{{可执行的方法/清单 2}}</li>
+      <li>{{可执行的方法/清单 3}}</li>
+    </ul>
+
+    <h2>结语</h2>
+    <p>{{总结升华,回扣标题}}</p>
+    <div class="cta"><b>{{行动号召}}</b><br>{{引导点赞/在看/转发/关注}}</div>
+    <div class="foot">— {{公众号名称}} —</div>
+  </main>
+</div></body></html>

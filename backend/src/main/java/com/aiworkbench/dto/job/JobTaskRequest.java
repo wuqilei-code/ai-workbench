@@ -2,6 +2,8 @@ package com.aiworkbench.dto.job;
 
 import lombok.Data;
 
+import java.util.Map;
+
 /** 创建/更新定时任务的请求。 */
 @Data
 public class JobTaskRequest {
@@ -14,4 +16,6 @@ public class JobTaskRequest {
     /** 非交互运行是否 --auto */
     private Boolean autoApprove;
     private Boolean enabled;
+    /** 任务变量(键→值):运行时替换 prompt 中的 ${key} 占位符 */
+    private Map<String, String> variables;
 }

@@ -1,6 +1,9 @@
 package com.aiworkbench.service;
 
 import com.aiworkbench.dto.chat.SkillInfoVo;
+import com.aiworkbench.entity.UserSkill;
+import com.aiworkbench.mapper.UserSkillMapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -11,6 +14,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -25,6 +30,7 @@ public class SkillService {
 
     private final WorkspaceService workspaceService;
     private final AgentSkillSeeder agentSkillSeeder;
+    private final UserSkillMapper userSkillMapper;
 
     /** 顶部"内置技能"列表:仅平台内置(默认加载);用户自定义技能不在此列,出现在用户技能区/会话配置。 */
     public List<SkillInfoVo> builtinSkills(Long userId) {
@@ -47,9 +53,17 @@ public class SkillService {
         Path project = Paths.get(workspaceService.userDir(userId));
         Path skillsDir = project.getParent().resolve("skills");
         if (!Files.isDirectory(skillsDir)) return List.of();
+        // 以用户技能库(user_skill)为准:只返回登记过的技能名,
+        // 避免历史遗留/已卸载的技能目录(旧版平台播种、未入库)被误当作自定义技能。
+        Set<String> registered = userSkillMapper.selectList(new LambdaQueryWrapper<UserSkill>()
+                        .eq(UserSkill::getUserId, userId)
+                        .select(UserSkill::getName))
+                .stream().map(UserSkill::getName).collect(Collectors.toSet());
+        if (registered.isEmpty()) return List.of();
         try (Stream<Path> dirs = Files.list(skillsDir)) {
             return dirs.filter(Files::isDirectory)
                     .map(d -> d.getFileName().toString())
+                    .filter(registered::contains)
                     .filter(n -> !BUILTIN_NAMES.contains(n))
                     .filter(n -> Files.isRegularFile(skillsDir.resolve(n).resolve("SKILL.md")))
                     .sorted()

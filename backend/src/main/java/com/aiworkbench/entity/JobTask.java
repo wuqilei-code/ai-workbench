@@ -57,6 +57,12 @@ public class JobTask {
     @TableField(updateStrategy = FieldStrategy.IGNORED)
     private String containerName;
 
+    /** 当前已重试次数(失败重试;成功或达上限后重置为 0) */
+    private Integer retryCount;
+
+    /** 任务变量(JSON object:键→值);运行时替换 prompt 中的 ${key} 占位符。 */
+    private String vars;
+
     @TableField(updateStrategy = FieldStrategy.IGNORED)
     private String runJobDir;
 

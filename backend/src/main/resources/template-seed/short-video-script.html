@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{视频主题}} · 短视频分镜脚本</title>
+<style>
+:root{--ink:#141420;--ink2:#4b4b5a;--muted:#9a9aad;--line:#e8e8f0;--acc:#7c3aed;--acc2:#5b21b6;--soft:#f5f3ff;--ok:#059669;--bg:#f7f6fc}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);background:var(--bg);line-height:1.7}
+.page{max-width:960px;margin:0 auto;background:#fff;box-shadow:0 10px 30px rgba(91,33,182,.08)}
+.hero{padding:46px 56px 34px;background:linear-gradient(135deg,#4c1d95,#7c3aed);color:#fff;position:relative;overflow:hidden}
+.hero::after{content:"";position:absolute;right:-60px;bottom:-140px;width:280px;height:280px;border-radius:50%;background:rgba(255,255,255,.1)}
+.hero .kicker{font-size:12px;letter-spacing:3px;font-weight:800;opacity:.9;text-transform:uppercase}
+.hero h1{font-size:31px;letter-spacing:-.7px;margin:12px 0 10px;position:relative;z-index:1}
+.hero .lead{font-size:14.5px;opacity:.94;max-width:640px;position:relative;z-index:1}
+.hero-meta{display:flex;flex-wrap:wrap;gap:24px;margin-top:22px;font-size:12.5px;opacity:.92;position:relative;z-index:1}
+.body{padding:40px 56px 56px}
+h2{font-size:19px;margin:32px 0 14px;display:flex;align-items:center;gap:10px}
+h2::before{content:"";width:6px;height:20px;border-radius:3px;background:linear-gradient(180deg,var(--acc),#a78bfa)}
+p{color:var(--ink2);font-size:14px;margin:9px 0}
+.hook{border:1px solid #ddd6fe;background:linear-gradient(180deg,#faf8ff,#f5f3ff);border-radius:14px;padding:16px 20px;margin:14px 0;color:#4c1d95;font-size:14px}
+.shot{display:grid;grid-template-columns:70px 1fr;gap:16px;padding:16px 0;border-bottom:1px dashed var(--line)}
+.shot:last-child{border-bottom:none}
+.shot .no{font-weight:800;color:var(--acc2);font-size:13px}
+.shot .no small{display:block;color:var(--muted);font-weight:500;margin-top:4px}
+.shot .vc{font-size:13.5px;color:var(--ink2)}
+.shot .vc .lab{color:var(--acc2);font-weight:700;font-size:12.5px;margin-right:6px}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+th,td{padding:10px 13px;text-align:left;border-bottom:1px solid var(--line)}
+th{background:#faf9ff;color:var(--muted);font-size:12px;font-weight:700}
+tbody tr:last-child td{border-bottom:none}
+.pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700;background:var(--soft);color:var(--acc2)}
+.foot{margin-top:38px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:12px;display:flex;justify-content:space-between;flex-wrap:wrap}
+@media(max-width:720px){.hero,.body{padding-left:24px;padding-right:24px}.shot{grid-template-columns:1fr}.hero h1{font-size:24px}}
+@media print{body{background:#fff}.page{box-shadow:none;max-width:100%}.hero{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style></head><body>
+<div class="page">
+<header class="hero">
+  <div class="kicker">Short Video Script</div>
+  <h1>{{视频主题}} · 分镜脚本</h1>
+  <p class="lead">{{一句话概括视频核心信息与发布目的}}</p>
+  <div class="hero-meta"><span>时长 {{30s/60s}}</span><span>平台 {{抖音/视频号}}</span><span>账号 {{账号}}</span><span>更新 {{日期}}</span></div>
+</header>
+<main class="body">
+  <h2>3 秒钩子</h2>
+  <div class="hook">🎬 {{开场抓人的第一句话/画面,必须在 3 秒内制造好奇或共鸣}}</div>
+
+  <h2>分镜脚本</h2>
+  <div class="shot">
+    <div class="no">镜头 1<small>0–3s</small></div>
+    <div class="vc"><span class="lab">画面</span>{{画面描述/运镜}}<br><span class="lab">口播</span>{{台词}}<br><span class="lab">字幕</span>{{大字字幕}}</div>
+  </div>
+  <div class="shot">
+    <div class="no">镜头 2<small>3–12s</small></div>
+    <div class="vc"><span class="lab">画面</span>{{画面描述}}<br><span class="lab">口播</span>{{台词}}<br><span class="lab">字幕</span>{{字幕}}</div>
+  </div>
+  <div class="shot">
+    <div class="no">镜头 3<small>12–25s</small></div>
+    <div class="vc"><span class="lab">画面</span>{{画面描述}}<br><span class="lab">口播</span>{{台词}}<br><span class="lab">字幕</span>{{字幕}}</div>
+  </div>
+  <div class="shot">
+    <div class="no">镜头 4<small>25–30s</small></div>
+    <div class="vc"><span class="lab">画面</span>{{结尾画面}}<br><span class="lab">口播</span>{{引导关注/行动号召 CTA}}<br><span class="lab">字幕</span>{{字幕}}</div>
+  </div>
+
+  <h2>制作要点</h2>
+  <table>
+    <thead><tr><th>项目</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>BGM</td><td>{{风格/节奏/情绪}}</td></tr>
+      <tr><td>字幕样式</td><td>{{字体/大小/颜色}}</td></tr>
+      <tr><td>封面</td><td>{{封面文案与画面}}</td></tr>
+      <tr><td>话题标签</td><td><span class="pill">#标签1</span> <span class="pill">#标签2</span> <span class="pill">#标签3</span></td></tr>
+    </tbody>
+  </table>
+
+  <h2>发布信息</h2>
+  <p><b>标题:</b>{{视频标题}}<br><b>文案:</b>{{发布文案 + 互动引导}}<br><b>发布时间:</b>{{建议时间}}</p>
+  <div class="foot"><span>{{视频主题}} · 短视频分镜</span><span>生成于 {{日期}}</span></div>
+</main>
+</div></body></html>

@@ -5,6 +5,7 @@ import com.aiworkbench.common.SecurityUtil;
 import com.aiworkbench.common.audit.AuditLog;
 import com.aiworkbench.dto.admin.McpRequest;
 import com.aiworkbench.dto.admin.McpVo;
+import com.aiworkbench.entity.McpConfig;
 import com.aiworkbench.service.McpConfigService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -40,6 +41,23 @@ public class McpController {
     @GetMapping
     public R<List<McpVo>> list() {
         return R.ok(mcpConfigService.listUser(SecurityUtil.currentUserId()));
+    }
+
+    /**
+     * 会话勾选弹窗用:该用户**可加载的全部工具**(管理员公共 + 用户私有,仅已启用),
+     * 含类型标注(remote= MCP Server / manual= 接口工具 / openapi= OpenAPI),按 name 去重。
+     * 与 agent 实际加载集合(enabledForUser)一致,避免"弹窗看不到但默认会加载"。
+     */
+    @GetMapping("/selectable")
+    public R<List<Map<String, Object>>> selectable() {
+        Long uid = SecurityUtil.currentUserId();
+        java.util.LinkedHashMap<String, String> byName = new java.util.LinkedHashMap<>();
+        for (McpConfig c : mcpConfigService.enabledForUser(uid)) {
+            byName.putIfAbsent(c.getName(), c.getType() == null ? "remote" : c.getType());
+        }
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        byName.forEach((n, t) -> out.add(Map.of("name", n, "type", t)));
+        return R.ok(out);
     }
 
     @PostMapping

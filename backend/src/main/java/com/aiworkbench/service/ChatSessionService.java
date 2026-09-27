@@ -108,12 +108,40 @@ public class ChatSessionService {
     }
 
     public List<SessionVo> list(Long userId) {
-        List<ChatSession> list = chatSessionMapper.selectList(new LambdaQueryWrapper<ChatSession>()
+        return list(userId, null, null);
+    }
+
+    /** 会话列表(分页可选):limit==null/<=0 返回全部(兼容旧行为),上限 1000;offset 默认 0。 */
+    public List<SessionVo> list(Long userId, Integer limit, Integer offset) {
+        LambdaQueryWrapper<ChatSession> qw = new LambdaQueryWrapper<ChatSession>()
                 .eq(ChatSession::getUserId, userId)
                 .eq(ChatSession::getArchived, 0)
                 .orderByDesc(ChatSession::getPinned)
-                .orderByDesc(ChatSession::getUpdatedAt));
-        return list.stream().map(this::toVo).toList();
+                .orderByDesc(ChatSession::getUpdatedAt);
+        appendPage(qw, limit, offset);
+        return chatSessionMapper.selectList(qw).stream().map(this::toVo).toList();
+    }
+
+    /** 已归档会话列表(分页可选,按更新时间倒序) */
+    public List<SessionVo> listArchived(Long userId) {
+        return listArchived(userId, null, null);
+    }
+
+    public List<SessionVo> listArchived(Long userId, Integer limit, Integer offset) {
+        LambdaQueryWrapper<ChatSession> qw = new LambdaQueryWrapper<ChatSession>()
+                .eq(ChatSession::getUserId, userId)
+                .eq(ChatSession::getArchived, 1)
+                .orderByDesc(ChatSession::getUpdatedAt);
+        appendPage(qw, limit, offset);
+        return chatSessionMapper.selectList(qw).stream().map(this::toVo).toList();
+    }
+
+    /** 通用可选分页:仅当 limit>0 时追加 limit/offset(单页上限 1000)。 */
+    private void appendPage(LambdaQueryWrapper<ChatSession> qw, Integer limit, Integer offset) {
+        if (limit == null || limit <= 0) return;
+        int l = Math.min(limit, 1000);
+        int off = (offset == null || offset < 0) ? 0 : offset;
+        qw.last("limit " + l + " offset " + off);
     }
 
     /**
@@ -130,15 +158,6 @@ public class ChatSessionService {
                                 like, like))
                 .orderByDesc(ChatSession::getUpdatedAt)
                 .last("limit 50"));
-        return list.stream().map(this::toVo).toList();
-    }
-
-    /** 已归档会话列表(按更新时间倒序) */
-    public List<SessionVo> listArchived(Long userId) {
-        List<ChatSession> list = chatSessionMapper.selectList(new LambdaQueryWrapper<ChatSession>()
-                .eq(ChatSession::getUserId, userId)
-                .eq(ChatSession::getArchived, 1)
-                .orderByDesc(ChatSession::getUpdatedAt));
         return list.stream().map(this::toVo).toList();
     }
 

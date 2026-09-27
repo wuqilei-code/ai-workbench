@@ -34,10 +34,39 @@ public class UserSkillService {
 
     private static final Pattern SLUG = Pattern.compile("^[a-z0-9][a-z0-9-]{0,63}$");
 
+    /**
+     * 我的技能列表。
+     * <p>
+     * 同时做一次<b>磁盘自愈</b>:user_skill 是事实源,但历史上可能因发布路径缺陷
+     * (只写市场表、没落盘)导致"库里���、盘上没有"。这里对缺失目录的记录补写一次,
+     * 让「工作区技能」与「选择技能」(/skills/custom 走 磁盘 ∩ user_skill) 保持一致。
+     */
     public List<UserSkillVo> list(Long userId) {
-        return userSkillMapper.selectList(new LambdaQueryWrapper<UserSkill>()
+        List<UserSkill> rows = userSkillMapper.selectList(new LambdaQueryWrapper<UserSkill>()
                 .eq(UserSkill::getUserId, userId)
-                .orderByDesc(UserSkill::getId)).stream().map(this::toVo).toList();
+                .orderByDesc(UserSkill::getId));
+        resyncMissingOnDisk(userId, rows);
+        return rows.stream().map(this::toVo).toList();
+    }
+
+    /** 库里有、盘上没有的技能补写一次(幂等;失败仅记日志,不阻断列表)。 */
+    private void resyncMissingOnDisk(Long userId, List<UserSkill> rows) {
+        for (UserSkill s : rows) {
+            try {
+                if (workspaceService.skillDirExists(userId, s.getName())) continue;
+                WorkspaceService.SkillSyncScope sync = workspaceService.openSkillSync();
+                try {
+                    writeSkillFiles(userId, s.getName(),
+                            ensureFrontmatter(s.getName(), s.getDescription(), s.getContent()),
+                            decodeFiles(s.getFiles()));
+                    log.info("[skill] 磁盘缺失已自愈: user={} name={}", userId, s.getName());
+                } finally {
+                    sync.close();
+                }
+            } catch (Exception e) {
+                log.warn("[skill] 磁盘自愈失败: user={} name={} err={}", userId, s.getName(), e.toString());
+            }
+        }
     }
 
     public UserSkill getOwned(Long userId, Long id) {
