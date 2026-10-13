@@ -185,6 +185,22 @@ ai-workbench/
 
 整改与待办清单见 [`TASKS.md`](TASKS.md)。
 
+## 常见问题
+
+- **启动报 `Access denied for user 'aiworkbench'@...` / 数据库密码验证失败**
+  MySQL 的 `MYSQL_PASSWORD`/`MYSQL_ROOT_PASSWORD` **仅在数据卷首次初始化时生效**。若之前跑过(存在旧卷)或重新执行过 `gen-env`(生成了新密码),旧卷里的密码与当前 `.env` 不一致就会鉴权失败。解决——删除 MySQL 数据卷后重启(会清空业务库,首次启动自动重建表):
+
+  ```bash
+  docker compose rm -sf mysql
+  docker volume rm "$(basename "$PWD")_mysql-data"   # 卷名 = <目录名>_mysql-data;不确定用 docker volume ls 查
+  docker compose up -d
+  ```
+  > 注意:`docker compose down -v` 会同时删除工作区/Postgres 等**所有**数据卷,谨慎使用。
+
+- **`jwt.secret 必须至少 32 字节`**:`.env` 的 `JWT_SECRET` 太短或仍是占位符,用 `gen-env` 生成或 `openssl rand -hex 32` 填入。
+
+- **沙箱工具报错(执行/文件/浏览器)**:未拉取 `aio-sandbox:latest`(见「快速开始」第 2 步)。
+
 ## 贡献
 
 欢迎提交 Issue 与 PR。开始前请阅读:
