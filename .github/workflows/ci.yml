@@ -45,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
       - name: Install deps
@@ -74,7 +74,7 @@ jobs:
       - name: npm audit (frontend)
         working-directory: frontend
         run: npm ci && (npm audit --audit-level=high || true)
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
       - name: pip-audit (agent-service)
