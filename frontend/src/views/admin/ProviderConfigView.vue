@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { adminApi } from '@/api/admin'
 import { useMessage, useDialog } from 'naive-ui'
 import type { ProviderVo } from '@/types'
+import { MODEL_PRESETS, type ModelPreset } from '@/constants/modelPresets'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -19,8 +20,27 @@ const rowBusy = ref<string | null>(null)
 
 const showProvider = ref(false)
 const newProvider = ref({ providerId: '', name: '', baseUrl: '', npm: '', apiKey: '', envVarName: '', enabled: 1 })
+/** 当前选中的厂商预设 id(用于高亮) */
+const selectedPreset = ref('')
 const showModelFor = ref<string | null>(null)
 const newModel = ref({ providerId: '', modelId: '', name: '' })
+
+/** 打开新增 Provider 弹窗:重置表单 */
+function openProviderModal() {
+  newProvider.value = { providerId: '', name: '', baseUrl: '', npm: '', apiKey: '', envVarName: '', enabled: 1 }
+  selectedPreset.value = ''
+  showProvider.value = true
+}
+
+/** 选中厂商预设:带出 Base URL 等默认配置(仍可编辑,便于改内网/自建地址) */
+function applyPreset(p: ModelPreset) {
+  selectedPreset.value = p.id
+  newProvider.value.providerId = p.id === 'custom' ? '' : p.id
+  newProvider.value.name = p.name
+  newProvider.value.baseUrl = p.baseUrl
+  newProvider.value.npm = p.npm
+  newProvider.value.envVarName = p.envVarName
+}
 
 // n-modal v-model:show 需可写引用;showModelFor 兼作"当前添加模型的 providerId",
 // 用 computed 桥接为布尔可见性(null=关闭, 非null=打开;关闭时回写 null)
@@ -106,7 +126,7 @@ onMounted(load)
       <n-button @click="router.push('/')">{{ t('common.back') }}</n-button>
       <h2>{{ t('admin.provider.title') }}</h2>
       <div class="spacer" />
-      <n-button type="primary" @click="showProvider = true">{{ t('admin.provider.addProvider') }}</n-button>
+      <n-button type="primary" @click="openProviderModal()">{{ t('admin.provider.addProvider') }}</n-button>
     </div>
 
     <n-spin :show="loading">
@@ -138,16 +158,35 @@ onMounted(load)
       <n-empty v-if="!providers.length && !loading" :description="t('admin.provider.emptyProviders')" />
     </n-spin>
 
-    <!-- 新增 Provider -->
-    <n-modal v-model:show="showProvider" preset="card" :title="t('admin.provider.addProviderTitle')" style="width: 480px">
-      <n-form label-placement="top">
-        <n-form-item :label="t('admin.provider.providerIdLabel')"><n-input v-model:value="newProvider.providerId" /></n-form-item>
+    <!-- 新增 Provider:先选厂商(带出默认配置),通常只需填 API Key -->
+    <n-modal v-model:show="showProvider" preset="card" :title="t('admin.provider.addProviderTitle')" style="width: 560px; max-width: 94vw">
+      <p class="preset-hint">{{ t('admin.provider.pickPresetHint') }}</p>
+      <div class="preset-grid">
+        <button
+          v-for="p in MODEL_PRESETS"
+          :key="p.id"
+          type="button"
+          class="preset-item"
+          :class="{ active: selectedPreset === p.id }"
+          :title="p.note || p.baseUrl"
+          @click="applyPreset(p)"
+        >
+          <span class="preset-icon">{{ p.icon }}</span>
+          <span class="preset-name">{{ p.name }}</span>
+        </button>
+      </div>
+      <n-form label-placement="top" style="margin-top: 14px">
         <n-form-item :label="t('admin.provider.nameLabel')"><n-input v-model:value="newProvider.name" /></n-form-item>
-        <n-form-item :label="t('admin.provider.baseUrlLabel')"><n-input v-model:value="newProvider.baseUrl" placeholder="http://127.0.0.1:11434/v1" /></n-form-item>
-        <n-form-item :label="t('admin.provider.npmLabel')"><n-input v-model:value="newProvider.npm" placeholder="@ai-sdk/openai-compatible" /></n-form-item>
-        <n-form-item :label="t('admin.provider.apiKeyLabel')"><n-input v-model:value="newProvider.apiKey" type="password" /></n-form-item>
-        <n-form-item :label="t('admin.provider.envLabel')"><n-input v-model:value="newProvider.envVarName" placeholder="OPENAI_API_KEY" /></n-form-item>
-        <n-button type="primary" :loading="savingProvider" :disabled="savingProvider" @click="addProvider">{{ t('admin.provider.add') }}</n-button>
+        <n-form-item :label="t('admin.provider.baseUrlLabel')"><n-input v-model:value="newProvider.baseUrl" placeholder="https://api.example.com/v1" /></n-form-item>
+        <n-form-item :label="t('admin.provider.apiKeyLabel')"><n-input v-model:value="newProvider.apiKey" type="password" show-password-on="click" /></n-form-item>
+        <n-collapse>
+          <n-collapse-item :title="t('admin.provider.advanced')" name="adv">
+            <n-form-item :label="t('admin.provider.providerIdLabel')"><n-input v-model:value="newProvider.providerId" /></n-form-item>
+            <n-form-item :label="t('admin.provider.npmLabel')"><n-input v-model:value="newProvider.npm" placeholder="@ai-sdk/openai-compatible" /></n-form-item>
+            <n-form-item :label="t('admin.provider.envLabel')"><n-input v-model:value="newProvider.envVarName" placeholder="OPENAI_API_KEY" /></n-form-item>
+          </n-collapse-item>
+        </n-collapse>
+        <n-button type="primary" :loading="savingProvider" :disabled="savingProvider" @click="addProvider" style="margin-top: 10px">{{ t('admin.provider.add') }}</n-button>
       </n-form>
     </n-modal>
 
@@ -177,6 +216,37 @@ onMounted(load)
 .spacer { flex: 1; }
 .provider-card { margin-bottom: 16px; }
 .meta { display: flex; gap: 20px; font-size: 12px; color: var(--text-2); margin-bottom: 12px; flex-wrap: wrap; }
+
+/* 厂商预设 */
+.preset-hint { margin: 0 0 10px; font-size: 12px; color: var(--text-3); line-height: 1.6; }
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  max-height: 236px;
+  overflow-y: auto;
+}
+.preset-item {
+  display: flex; align-items: center; gap: 7px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border-soft);
+  background: var(--fill-0);
+  color: var(--text-2);
+  font-size: 12.5px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color .15s, background .15s, color .15s;
+}
+.preset-item:hover { border-color: var(--border); color: var(--text); }
+.preset-item.active {
+  border-color: var(--accent);
+  background: var(--accent-soft, rgba(79, 110, 247, .12));
+  color: var(--accent-text, var(--accent));
+  font-weight: 600;
+}
+.preset-icon { font-size: 15px; flex-shrink: 0; }
+.preset-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* 卡片表面:略亮于页面背景,保持深色主题统一 */
 .admin-view :deep(.n-card) {

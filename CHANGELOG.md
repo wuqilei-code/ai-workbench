@@ -19,6 +19,10 @@
 - **模板体系**:模板库、模板市场、收藏、上传 HTML、一键「做同款」。
 - **工具库**:MCP / OpenAPI / 手动接口工具,统一管理、卡片化表单与在线调试。
 - **自动化**:定时任务(6 段 cron)、执行历史、深色终端日志、结果文件预览与下载。
+- **模型配置**:内置常用厂商预设(DeepSeek / OpenAI / 通义千问 / 智谱 / Kimi / 火山方舟 /
+  千帆 / 混元 / 硅基流动 / MiniMax / 阶跃 / 百川 / 零一万物 / 星火 / OpenRouter / Groq /
+  Gemini / Ollama / 自定义),选中即带出 Base URL 等默认配置,通常只需填 API Key;
+  Base URL 可改为内网 / 自建网关地址。
 - **前端**:Vue 3 + Vite + TS + Naive UI,全站国际化、统一交互组件与分页。
 - **文档**:README 界面预览截图,以及 `CONTRIBUTING` / `SECURITY` / `CODE_OF_CONDUCT` /
   `THIRD_PARTY_NOTICES`、Issue/PR 模板。

@@ -1027,6 +1027,11 @@ export const messages = {
         apiKeyLabel: 'API Key',
         envLabel: 'Env 变量名(留空自动生成 <PROVIDER>_API_KEY)',
         add: '添加',
+        pickPreset: '选择厂商',
+        pickPresetHint: '选择后自动带出 Base URL 等默认配置,通常只需填写 API Key;Base URL 可改为内网 / 自定义地址。',
+        advanced: '高级(Provider ID / NPM / Env)',
+        custom: '自定义(OpenAI 兼容)',
+        presetApplied: '已带出默认配置,填写 API Key 即可',
       },
       usage: {
         title: '用量统计',
@@ -2649,6 +2654,11 @@ export const messages = {
         apiKeyLabel: 'API Key',
         envLabel: 'Env var name (auto-generated as <PROVIDER>_API_KEY if empty)',
         add: 'Add',
+        pickPreset: 'Choose a provider',
+        pickPresetHint: 'Selecting one fills in the Base URL and defaults — usually you only need the API key. Base URL can be changed to an internal / custom endpoint.',
+        advanced: 'Advanced (Provider ID / NPM / Env)',
+        custom: 'Custom (OpenAI-compatible)',
+        presetApplied: 'Defaults filled in — just add the API key',
       },
       usage: {
         title: 'Usage',
