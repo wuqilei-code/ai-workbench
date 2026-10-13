@@ -1,4 +1,4 @@
-deepagents>=0.7.7
+deepagents>=0.7.23
 langchain-openai>=0.3
 langgraph-checkpoint-postgres>=3.0
 psycopg[binary]>=3.2
