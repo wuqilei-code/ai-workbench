@@ -6,6 +6,7 @@
 **/*.log
 data/
 workspace/
+docs/
 .git
 .gitignore
 README.md

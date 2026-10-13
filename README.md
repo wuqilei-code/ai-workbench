@@ -6,12 +6,32 @@
 多用户通用 AI 工作台(类 Trae):**对话 + 智能体编排 + 浏览器接管 + 动态 UI 可视化 + 技能/模板体系**一体化。
 服务端部署,浏览器访问;多用户注册与会话隔离;每个用户独立工作区与沙箱容器;面向内网私有化部署。
 
-<!-- 界面预览:补充截图后取消注释(建议放在 docs/screenshots/,勿提交敏感数据)
 ## 界面预览
-| 对话与可视化 | 浏览器接管 |
+
+### 智能对话与动态 UI 可视化
+对话即工作台:流式回答、工具调用卡片,以及由 AI 现场生成的交互式图表/组件。
+
+![对话与动态 UI 可视化](docs/screenshots/chat-dynamic-ui.png)
+
+### 技能市场
+浏览、安装、分享技能(`SKILL.md` 指令 + 可选脚本/参考/模板),一键装进工作台,按会话勾选加载。
+
+![技能市场](docs/screenshots/skills.png)
+
+| 模板库 | 工具库(MCP / 接口内联) |
 |---|---|
-| ![chat](docs/screenshots/chat.png) | ![browser](docs/screenshots/browser.png) |
--->
+| ![模板库](docs/screenshots/templates.png) | ![工具库](docs/screenshots/tools.png) |
+
+| 定时自动化 | 个人驾驶舱 |
+|---|---|
+| ![自动化](docs/screenshots/automation.png) | ![驾驶舱](docs/screenshots/dashboard.png) |
+
+<details>
+<summary>登录页</summary>
+
+![登录](docs/screenshots/login.png)
+
+</details>
 
 
 ## 架构
