@@ -3,16 +3,6 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
-
-### 安全
-- 移除仓库内泄漏的模型 API Key 及内部测试脚本(`docker/.smoke`)。
-- 以开源字体 **Noto Sans SC**(SIL OFL 1.1)替换内置的专有字体 SimHei。
-
-### 新增
-- 开源配套:`LICENSE`(Apache-2.0)、`CONTRIBUTING.md`、`SECURITY.md`、
-  `CODE_OF_CONDUCT.md`、`THIRD_PARTY_NOTICES.md`、Issue/PR 模板。
-
 ## [0.1.0] - 2026-10-13
 
 首个公开版本。多用户通用 AI 工作台:对话 + 智能体编排 + 浏览器接管 +
@@ -30,6 +20,16 @@
 - **工具库**:MCP / OpenAPI / 手动接口工具,统一管理、卡片化表单与在线调试。
 - **自动化**:定时任务(6 段 cron)、执行历史、深色终端日志、结果文件预览与下载。
 - **前端**:Vue 3 + Vite + TS + Naive UI,全站国际化、统一交互组件与分页。
+- **文档**:README 界面预览截图,以及 `CONTRIBUTING` / `SECURITY` / `CODE_OF_CONDUCT` /
+  `THIRD_PARTY_NOTICES`、Issue/PR 模板。
 
-[Unreleased]: https://github.com/wuqilei-code/ai-workbench/compare/v0.1.0...HEAD
+### 安全
+- 移除仓库内泄漏的模型 API Key 及内部测试脚本(`docker/.smoke`)。
+- 以开源字体 **Noto Sans SC**(SIL OFL 1.1)替换内置的专有字体 SimHei。
+
+### 工程
+- 采用 **Apache-2.0** 许可证。
+- 修复 agent-service 的 pytest 无法导入 `app`(新增根级 `conftest.py`)。
+- 应用 `npm audit` 非破坏性依赖修复(markdown-it / nanoid / source-map-js 等)。
+
 [0.1.0]: https://github.com/wuqilei-code/ai-workbench/releases/tag/v0.1.0
