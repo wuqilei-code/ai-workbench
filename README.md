@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File .\gen-env.ps1
 | `APP_AES_KEY` | Base64 的 32 字节 | `openssl rand -base64 32` |
 | `INTERNAL_TOKEN` | 随机 | `openssl rand -hex 32` |
 | `SPRING_DATASOURCE_PASSWORD` / `MYSQL_PASSWORD` / `MYSQL_ROOT_PASSWORD` / `POSTGRES_PASSWORD` | 随机 | `openssl rand -hex 16` |
-| `AGENT_MODEL` / `AGENT_MODEL_API_KEY` | 模型与 Key | 见模型服务商 |
+| `AGENT_MODEL` / `AGENT_MODEL_API_KEY` | 默认模型与 Key(可选回退;推荐在「模型配置」页添加 provider/model) | 见模型服务商 |
 
 > Windows 无 `openssl` 时可用 PowerShell,例如 `JWT_SECRET`:
 > `-join ((1..32) | % { '{0:x2}' -f (Get-Random -Maximum 256) })`
@@ -117,7 +117,7 @@ docker compose up --build
 
 - 浏览器打开 `http://localhost:8080/`
 - **首个注册用户自动成为管理员**
-- 管理员在「管理 → 模型配置」添加 provider/model 并 Apply 后即可对话
+- 管理员在「管理 → 模型配置」添加 provider/model(内置常用厂商预设,通常只需填 API Key),之后在对话里选用即可;未配置时回退到 `.env` 的 `AGENT_MODEL*`
 - 未拉取沙箱镜像时服务仍可启动、纯对话可用,但**沙箱类工具会失败**(见上)
 - 默认自带 MySQL/Postgres 容器,首次启动自动建表(`schema.sql`);如需改用外部 MySQL,把 `.env` 的 `MYSQL_HOST` 指向它
 
@@ -165,7 +165,7 @@ CI 见 `.github/workflows/ci.yml`(后端 package、前端 typecheck+test+build�
 | `SSE_RELAY_ENABLED` / `SSE_RELAY_POLL_MS` | 会话事件跨副本中继开关/轮询间隔 |
 | `SPRING_DATASOURCE_*` / `MYSQL_HOST` | 业务库连接(dev 默认宿主机 MySQL,经 `host.docker.internal`) |
 | `POSTGRES_PASSWORD` | agent checkpoint 库密码 |
-| `AGENT_MODEL` / `AGENT_MODEL_BASE_URL` / `AGENT_MODEL_API_KEY` | 模型与密钥 |
+| `AGENT_MODEL` / `AGENT_MODEL_BASE_URL` / `AGENT_MODEL_API_KEY` | 默认模型与密钥(仅在未配置任何 provider 时作为回退) |
 | `AGENT_HITL` | 危险操作是否需人工确认(默认 `true`) |
 | `AGENT_WORKERS` / `AGENT_MAX_TURNS` | agent 并发 worker / 单请求步数上限 |
 | `AGENT_SANDBOX_*` | 沙箱镜像、网络、内存/CPU、空闲回收等 |

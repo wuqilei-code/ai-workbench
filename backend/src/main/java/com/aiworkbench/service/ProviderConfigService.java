@@ -75,6 +75,48 @@ public class ProviderConfigService {
         return result;
     }
 
+    // ---------- 运行时模型解析 ----------
+
+    /** 供 agent 调用使用的运行时模型配置(baseUrl/解密后的 apiKey/modelId)。 */
+    public record RuntimeModel(String providerId, String modelId, String baseUrl, String apiKey) {}
+
+    /**
+     * 解析「实际调用」应使用的模型运行时配置。
+     * <p>
+     * 入参为会话所选的 providerId / modelId;缺失或不可用时,回退到第一个启用的 provider
+     * 及其第一个启用模型。若系统尚未配置任何启用的 provider,返回 {@code null}
+     * (交由 agent-service 回退到自身环境变量 AGENT_MODEL*)。
+     * <p>
+     * apiKey 在此解密为明文,仅经内网(X-Internal-Token 保护)传递给 agent-service。
+     */
+    public RuntimeModel resolveRuntimeModel(String providerId, String modelId) {
+        ProviderConfig p = null;
+        if (providerId != null && !providerId.isBlank()) {
+            p = providerConfigMapper.selectOne(new LambdaQueryWrapper<ProviderConfig>()
+                    .eq(ProviderConfig::getProviderId, providerId)
+                    .eq(ProviderConfig::getEnabled, 1));
+        }
+        if (p == null) {
+            p = providerConfigMapper.selectOne(new LambdaQueryWrapper<ProviderConfig>()
+                    .eq(ProviderConfig::getEnabled, 1)
+                    .orderByAsc(ProviderConfig::getSortOrder)
+                    .last("LIMIT 1"));
+        }
+        if (p == null) {
+            return null;
+        }
+        String mid = (modelId != null && !modelId.isBlank()) ? modelId : null;
+        if (mid == null) {
+            ModelConfig m = modelConfigMapper.selectOne(new LambdaQueryWrapper<ModelConfig>()
+                    .eq(ModelConfig::getProviderId, p.getProviderId())
+                    .eq(ModelConfig::getEnabled, 1)
+                    .orderByAsc(ModelConfig::getSortOrder)
+                    .last("LIMIT 1"));
+            mid = (m != null) ? m.getModelId() : null;
+        }
+        return new RuntimeModel(p.getProviderId(), mid, p.getBaseUrl(), crypto.decrypt(p.getApiKey()));
+    }
+
     // ---------- Provider CRUD ----------
 
     public ProviderVo createProvider(ProviderRequest req) {

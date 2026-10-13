@@ -114,6 +114,10 @@ class InvokeRequest(BaseModel):
     mcp_servers: list[McpServerConfig] = Field(default_factory=list)
     # agent 类型:chat=交互(默认,保留提问/授权);task=无人值守(关闭所有 HITL 中断,不挂 ask_user)
     agent_type: str = Field(default="chat")
+    # 运行时模型覆盖(由网关按会话所选 provider 解析后传入;缺省则回退服务端环境变量)
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
 
 
 class InvokeResponse(BaseModel):
@@ -164,6 +168,7 @@ def invoke(user_id: str, body: InvokeRequest) -> InvokeResponse:
         skills_override=body.skills,
         mcp_servers=[s.model_dump() for s in body.mcp_servers],
         agent_type=body.agent_type,
+        model_override={"model": body.model, "base_url": body.base_url, "api_key": body.api_key},
     )
     result = agent.invoke(
         {"messages": [m.model_dump() for m in body.messages]},
@@ -360,6 +365,7 @@ def stream(request: Request, user_id: str, body: InvokeRequest) -> StreamingResp
         skills_override=body.skills,
         mcp_servers=[s.model_dump() for s in body.mcp_servers],
         agent_type=body.agent_type,
+        model_override={"model": body.model, "base_url": body.base_url, "api_key": body.api_key},
     )
     cfg = config_for(user_id, body.thread_id)
 

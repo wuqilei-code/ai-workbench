@@ -91,7 +91,7 @@ services:
       # 不要暴露到 0.0.0.0 —— agent-service 无自身鉴权,user_id 即身份。
       - "127.0.0.1:${AGENT_SERVICE_PORT:-8000}:8000"
     environment:
-      AGENT_MODEL: "${AGENT_MODEL:?set in .env}"
+      AGENT_MODEL: "${AGENT_MODEL:-deepseek-chat}"
       AGENT_MODEL_BASE_URL: "${AGENT_MODEL_BASE_URL:-}"
       AGENT_MODEL_API_KEY: "${AGENT_MODEL_API_KEY:-}"
       # 并发加固:多 worker + PG checkpoint 连接池

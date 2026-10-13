@@ -342,10 +342,19 @@ class ReasoningChatOpenAI(ChatOpenAI):
         return gen
 
 
-def _build_model() -> BaseChatModel:
-    if config.AGENT_MODEL_BASE_URL:
-        # 支持 deepseek/ollama/自建网关等 OpenAI 兼容接口:AGENT_MODEL 里剥掉 provider: 前缀
-        model = config.AGENT_MODEL.split(":", 1)[-1]
+def _build_model(override: dict | None = None) -> BaseChatModel:
+    """构建聊天模型。
+
+    override 为网关按会话所选 provider 解析出的运行时模型(model / base_url / api_key);
+    缺省则回退到服务端环境变量(AGENT_MODEL*)。
+    """
+    ov = override or {}
+    base_url = ov.get("base_url") or config.AGENT_MODEL_BASE_URL
+    api_key = ov.get("api_key") or config.AGENT_MODEL_API_KEY
+    model_name = ov.get("model") or config.AGENT_MODEL
+    if base_url:
+        # 支持 deepseek/ollama/自建网关等 OpenAI 兼容接口:model 里剥掉 provider: 前缀
+        model = model_name.split(":", 1)[-1]
         # DeepSeek V4 思维链控制:关闭时可减少输出长度与延迟/成本
         extra_body: dict = {}
         if config.AGENT_MODEL_THINKING:
@@ -355,17 +364,24 @@ def _build_model() -> BaseChatModel:
         extra_body["reasoning_effort"] = config.AGENT_MODEL_REASONING_EFFORT
         return ReasoningChatOpenAI(
             model=model,
-            base_url=config.AGENT_MODEL_BASE_URL,
-            api_key=config.AGENT_MODEL_API_KEY or "not-needed",
+            base_url=base_url,
+            api_key=api_key or "not-needed",
             temperature=config.AGENT_MODEL_TEMPERATURE,
             extra_body=extra_body,
         )
     from langchain.chat_models import init_chat_model
 
     return init_chat_model(
-        config.AGENT_MODEL,
+        model_name,
         temperature=config.AGENT_MODEL_TEMPERATURE,
     )
+
+
+def _model_signature(override: dict | None) -> str:
+    """运行时模型的指纹片段:模型 / 端点 / 密钥任一变化都会触发 agent 重建。"""
+    ov = override or {}
+    raw = "|".join(str(ov.get(k) or "") for k in ("model", "base_url", "api_key"))
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
 def _build_backend(user_id: str, visible_skills: set[str] | None = None) -> CompositeBackend:
@@ -600,11 +616,11 @@ def _build_system_prompt(agent_type: str) -> str:
     return _DEFAULT_SYSTEM_PROMPT + ASK_USER_PROMPT
 
 
-def _fingerprint(user_id: str, skills: list[str], memory: list[str], system_prompt: str | None, mcp_servers=None, agent_type: str = "chat") -> str:
+def _fingerprint(user_id: str, skills: list[str], memory: list[str], system_prompt: str | None, mcp_servers=None, agent_type: str = "chat", model_sig: str = "") -> str:
     # memory 已迁移至 PostgresStore(运行时读取),不再参与 agent 编译指纹;
     # 保留参数签名兼容,但忽略 memory 文件列表。
     mcp_sig = mcp_client.mcp_signature(mcp_servers or [])
-    parts = [user_id, agent_type, system_prompt or _DEFAULT_SYSTEM_PROMPT] + skills + ["browser_open_url", mcp_sig]
+    parts = [user_id, agent_type, system_prompt or _DEFAULT_SYSTEM_PROMPT, model_sig] + skills + ["browser_open_url", mcp_sig]
     return hashlib.sha256("\x1f".join(parts).encode()).hexdigest()
 
 
@@ -624,6 +640,7 @@ class AgentManager:
         skills_override: list[str] | None = None,
         mcp_servers: list | None = None,
         agent_type: str = "chat",
+        model_override: dict | None = None,
     ):
         ws.ensure_user_dirs(user_id)
         # SkillsMiddleware 只接受 backend 虚拟路径:source 固定 /skills(根),勾选过滤由
@@ -632,7 +649,8 @@ class AgentManager:
         skills = ["/skills"] if selected_paths else []
         memory = ws.memory_files(user_id)
         effective_prompt = system_prompt or _build_system_prompt(agent_type)
-        key = _fingerprint(user_id, selected_paths, memory, effective_prompt, mcp_servers, agent_type)
+        key = _fingerprint(user_id, selected_paths, memory, effective_prompt, mcp_servers, agent_type,
+                           _model_signature(model_override))
 
         with self._lock:
             cached = self._cache.get(key)
@@ -643,7 +661,7 @@ class AgentManager:
         backend = _build_backend(user_id, {_skill_name(p) for p in selected_paths})
         # 逐个加载用户配置的远程 MCP server 工具;任一失败只跳过该 server,不影响主链路。
         mcp_tools = mcp_client.build_mcp_tools(mcp_servers or [])
-        model = _build_model()
+        model = _build_model(model_override)
         # 无人值守(task)不挂 ask_user:任务无人应答,提问只会卡死。
         question_tools = build_question_tools() if agent_type != "task" else []
         # 上下文用量计数器:独立构造一个压缩中间件实例(不挂执行链,零副作用),

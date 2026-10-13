@@ -22,7 +22,9 @@
 - **模型配置**:内置常用厂商预设(DeepSeek / OpenAI / 通义千问 / 智谱 / Kimi / 火山方舟 /
   千帆 / 混元 / 硅基流动 / MiniMax / 阶跃 / 百川 / 零一万物 / 星火 / OpenRouter / Groq /
   Gemini / Ollama / 自定义),选中即带出 Base URL 等默认配置,通常只需填 API Key;
-  Base URL 可改为内网 / 自建网关地址。
+  Base URL 可改为内网 / 自建网关地址。对话与定时任务实际调用即使用所选 provider 的
+  Base URL +(加密存储、解密后下发的)API Key + 模型 ID;未配置任何 provider 时回退
+  `.env` 的 `AGENT_MODEL*`。
 - **前端**:Vue 3 + Vite + TS + Naive UI,全站国际化、统一交互组件与分页。
 - **文档**:README 界面预览截图,以及 `CONTRIBUTING` / `SECURITY` / `CODE_OF_CONDUCT` /
   `THIRD_PARTY_NOTICES`、Issue/PR 模板。
@@ -43,5 +45,7 @@
 
 ### 修复
 - 注册页「邮箱 / 密码」标签与输入框错位。
+- 「模型配置」此前不生效:实际调用固定使用 `.env` 的 `AGENT_MODEL*`,UI 里配的 key 被忽略
+  (表现为 401)。现已改为按会话所选 provider 下发模型配置。
 
 [0.1.0]: https://github.com/wuqilei-code/ai-workbench/releases/tag/v0.1.0

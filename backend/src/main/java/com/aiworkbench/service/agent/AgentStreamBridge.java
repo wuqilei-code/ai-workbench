@@ -4,6 +4,7 @@ import com.aiworkbench.entity.ChatSession;
 import com.aiworkbench.entity.McpConfig;
 import com.aiworkbench.service.ChatMessageService;
 import com.aiworkbench.service.McpConfigService;
+import com.aiworkbench.service.ProviderConfigService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -52,6 +53,7 @@ public class AgentStreamBridge {
     private final WebClient webClient;
     private final java.util.concurrent.Executor executor;
     private final McpConfigService mcpConfigService;
+    private final ProviderConfigService providerConfigService;
 
     /** 在途生成状态,key = 会话外部 id("da-" 前缀)。 */
     private final Map<String, TurnStream> streams = new ConcurrentHashMap<>();
@@ -63,6 +65,7 @@ public class AgentStreamBridge {
             SessionEventHub hub,
             ObjectMapper objectMapper,
             McpConfigService mcpConfigService,
+            ProviderConfigService providerConfigService,
             @org.springframework.beans.factory.annotation.Qualifier("taskExecutor")
                     java.util.concurrent.Executor taskExecutor) {
         String base = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
@@ -74,6 +77,7 @@ public class AgentStreamBridge {
                 .build();
         this.executor = taskExecutor;
         this.mcpConfigService = mcpConfigService;
+        this.providerConfigService = providerConfigService;
     }
 
     /**
@@ -89,6 +93,12 @@ public class AgentStreamBridge {
         ts.userId = userId;
         ts.skills = parseSkillIds(session.getSkills());
         ts.mcpServers = enabledMcpServers(userId, session.getMcpServers());
+        try {
+            ts.runtimeModel = providerConfigService.resolveRuntimeModel(
+                    session.getProviderId(), session.getModelId());
+        } catch (Exception e) {
+            log.warn("resolveRuntimeModel failed (session={}): {}", sessionId, e.toString());
+        }
         streams.put(sessionId, ts);
         hub.dispatchJson(sessionId, "start", "{\"threadId\":\"" + sessionId + "\"}");
         executor.execute(() -> stream(ts, userId, text));
@@ -245,6 +255,8 @@ public class AgentStreamBridge {
         volatile java.util.List<String> skills;
         /** 本用户启用中的 MCP server 配置(管理员公共 + 用户私有) */
         volatile java.util.List<McpConfig> mcpServers;
+        /** 本会话应使用的模型运行时配置(provider 解析;null=交由 agent-service 回退 env) */
+        volatile ProviderConfigService.RuntimeModel runtimeModel;
         /** HITL 暂停:true=正等待用户确认(消息保持 streaming,不落定稿) */
         volatile boolean pausedOnPermission;
         volatile String pendingPermissionRequestId;
@@ -270,6 +282,7 @@ public class AgentStreamBridge {
         try {
             ObjectNode body = objectMapper.createObjectNode();
             body.put("thread_id", ts.sessionId);
+            applyRuntimeModel(body, ts);
             ArrayNode msgs = body.putArray("messages");
             ObjectNode m = msgs.addObject();
             m.put("role", "user");
@@ -305,6 +318,7 @@ public class AgentStreamBridge {
         try {
             ObjectNode body = objectMapper.createObjectNode();
             body.put("thread_id", ts.sessionId);
+            applyRuntimeModel(body, ts);
             body.putArray("messages");
             body.set("resume_decision", resumeDecision);
             subscribeStream(ts, userId, body);
@@ -312,6 +326,17 @@ public class AgentStreamBridge {
             log.warn("resume stream subscribe failed (session={}): {}", ts.sessionId, e.toString());
             onStreamError(ts, e);
         }
+    }
+
+    /** 把会话解析出的模型运行时配置写入请求体(agent-service 优先使用,缺失则回退其环境变量)。 */
+    private void applyRuntimeModel(ObjectNode body, TurnStream ts) {
+        ProviderConfigService.RuntimeModel rm = ts.runtimeModel;
+        if (rm == null) {
+            return;
+        }
+        if (rm.modelId() != null && !rm.modelId().isBlank()) body.put("model", rm.modelId());
+        if (rm.baseUrl() != null && !rm.baseUrl().isBlank()) body.put("base_url", rm.baseUrl());
+        if (rm.apiKey() != null && !rm.apiKey().isBlank()) body.put("api_key", rm.apiKey());
     }
 
     private void subscribeStream(TurnStream ts, Long userId, ObjectNode body) {

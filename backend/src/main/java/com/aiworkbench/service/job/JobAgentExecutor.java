@@ -1,6 +1,7 @@
 package com.aiworkbench.service.job;
 
 import com.aiworkbench.config.AgentJobProperties;
+import com.aiworkbench.service.ProviderConfigService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -37,14 +38,17 @@ public class JobAgentExecutor {
     private final AgentJobProperties props;
     private final ObjectMapper objectMapper;
     private final WebClient webClient;
+    private final ProviderConfigService providerConfigService;
 
     public JobAgentExecutor(
             AgentJobProperties props,
             @Value("${deepagents.base-url:http://localhost:8000}") String baseUrl,
             @Value("${app.internal-token:}") String internalToken,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            ProviderConfigService providerConfigService) {
         this.props = props;
         this.objectMapper = objectMapper;
+        this.providerConfigService = providerConfigService;
         String base = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
         this.webClient = WebClient.builder().baseUrl(base)
                 .defaultHeader("X-Internal-Token", internalToken)
@@ -71,6 +75,17 @@ public class JobAgentExecutor {
         try {
             ObjectNode body = objectMapper.createObjectNode();
             body.put("thread_id", threadId);
+            // 任务用系统默认模型(第一个启用的 provider + 其首个启用模型);未配置则回退 agent-service env
+            try {
+                ProviderConfigService.RuntimeModel rm = providerConfigService.resolveRuntimeModel(null, null);
+                if (rm != null) {
+                    if (rm.modelId() != null && !rm.modelId().isBlank()) body.put("model", rm.modelId());
+                    if (rm.baseUrl() != null && !rm.baseUrl().isBlank()) body.put("base_url", rm.baseUrl());
+                    if (rm.apiKey() != null && !rm.apiKey().isBlank()) body.put("api_key", rm.apiKey());
+                }
+            } catch (Exception e) {
+                log.warn("resolve runtime model for job failed: {}", e.toString());
+            }
             // 无人值守任务:agent_type=task → agent-service 关闭所有 HITL 中断、不挂 ask_user,
             // 保证任务一路执行到底(不会向用户提问/要授权)。
             body.put("agent_type", "task");
