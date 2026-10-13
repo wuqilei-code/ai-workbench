@@ -192,7 +192,7 @@ ai-workbench/
 
   ```bash
   docker compose rm -sf mysql
-  docker volume rm "$(basename "$PWD")_mysql-data"   # 卷名 = <目录名>_mysql-data;不确定用 docker volume ls 查
+  docker volume rm ai-workbench_mysql-data   # 卷名 = ai-workbench_mysql-data
   docker compose up -d
   ```
   > 注意:`docker compose down -v` 会同时删除工作区/Postgres 等**所有**数据卷,谨慎使用。

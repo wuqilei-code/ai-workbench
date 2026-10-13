@@ -86,14 +86,14 @@ def _resolve_volume_root() -> str:
         import docker as _docker
 
         cli = _docker.from_env()
-        # compose 卷命名规则: <project>_workspace
-        vol_name = os.environ.get("COMPOSE_PROJECT_NAME", "docker") + "_workspace"
+        # compose 卷命名规则: <project>_workspace(本项目名固定为 ai-workbench)
+        vol_name = os.environ.get("COMPOSE_PROJECT_NAME", "ai-workbench") + "_workspace"
         vol = cli.volumes.get(vol_name)
-        mount_point = vol.attrs["Mountpoint"]  # 如 /var/lib/docker/volumes/docker_workspace/_data
+        mount_point = vol.attrs["Mountpoint"]  # 如 /var/lib/docker/volumes/ai-workbench_workspace/_data
         return mount_point + "/users"
     except Exception:
         # 回退:常见 Linux Docker 默认路径
-        return "/var/lib/docker/volumes/docker_workspace/_data/users"
+        return "/var/lib/docker/volumes/ai-workbench_workspace/_data/users"
 
 
 # 宿主(daemon 视角)workspace 卷下 users 根:用于按用户 bind 子目录到沙箱工作区。

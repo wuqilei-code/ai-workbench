@@ -34,5 +34,6 @@
 - `docker compose` 默认自带 MySQL 容器并自动建表;补充沙箱镜像拉取与密钥生成说明
   (README / `.env.example`)。
 - 新增 `docker/gen-env.sh` / `docker/gen-env.ps1`:一键生成带随机密钥的 `.env`。
+- 固定 compose 项目名为 `ai-workbench`:容器/卷/网络统一 `ai-workbench-*` 前缀,便于辨识。
 
 [0.1.0]: https://github.com/wuqilei-code/ai-workbench/releases/tag/v0.1.0

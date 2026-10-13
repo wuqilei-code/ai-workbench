@@ -1,3 +1,7 @@
+# 固定 compose 项目名:容器/卷/网络统一以 ai-workbench 前缀,与解压目录名无关,便于辨识。
+# 可用 `docker compose -p <名字>` 覆盖。
+name: ai-workbench
+
 # 容器日志轮转(json-file):限制磁盘占用,避免长期运行日志无限增长
 x-logging: &default-logging
   driver: json-file
@@ -116,8 +120,8 @@ services:
       AGENT_SANDBOX_IMAGE: "${AGENT_SANDBOX_IMAGE:-aio-sandbox:latest}"
       AGENT_SANDBOX_NETWORK: "${AGENT_SANDBOX_NETWORK:-true}"
       AGENT_SANDBOX_NETWORK_NAME: "${AGENT_SANDBOX_NETWORK_NAME:-aiwb-agents}"
-      # daemon 视角的 workspace 卷数据根(卷名 = <compose项目名>_workspace)
-      AGENT_SANDBOX_VOLUME_ROOT: "${AGENT_SANDBOX_VOLUME_ROOT:-/var/lib/docker/volumes/docker_workspace/_data/users}"
+      # daemon 视角的 workspace 卷数据根(卷名 = <项目名>_workspace;本项目名固定 ai-workbench)
+      AGENT_SANDBOX_VOLUME_ROOT: "${AGENT_SANDBOX_VOLUME_ROOT:-/var/lib/docker/volumes/ai-workbench_workspace/_data/users}"
       # AIO 容器内工作区归 gem(uid 1000)
       AGENT_SANDBOX_UID: "${AGENT_SANDBOX_UID:-1000}"
       # 浏览器 + VNC + VSCode 需要更多内存/CPU

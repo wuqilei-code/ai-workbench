@@ -5,16 +5,16 @@
 #   bash scripts/backup.sh [输出目录]        # 默认 ./backups
 #
 # 说明:
-#   - MySQL 为宿主机数据库(compose 中 app 经 host.docker.internal 访问),
-#     因此用一次性 mysql 容器连宿主机导出;如改回容器 MySQL,把 MYSQL_HOST 指向容器名即可。
-#   - Postgres 为 compose 服务 docker-postgres-1(checkpoint/store)。
-#   - 工作区卷名默认为 docker_workspace(compose 项目名 + "_workspace")。
+#   - MySQL:默认是 compose 自带的容器 ai-workbench-mysql-1(项目名固定 ai-workbench);
+#     若为宿主机 MySQL,把 MYSQL_HOST 指向 host.docker.internal(一次性容器需能访问到它)。
+#   - Postgres 为 compose 服务 ai-workbench-postgres-1(checkpoint/store)。
+#   - 工作区卷名默认为 ai-workbench_workspace(<项目名>_workspace)。
 #   - 过期清理:默认保留最近 KEEP 份(见下方 KEEP)。
 #
 # 恢复(示例):
 #   gunzip -c mysql-<ts>.sql.gz    | docker run --rm -i mysql:8.4 mysql -h host.docker.internal -uaiworkbench -p"$PW" ai_workbench
-#   gunzip -c postgres-<ts>.sql.gz | docker exec -i docker-postgres-1 psql -U aiworkbench -d agent_workbench
-#   docker run --rm -v docker_workspace:/ws -v "$PWD/backups":/in alpine sh -c "tar xzf /in/workspace-<ts>.tar.gz -C /ws"
+#   gunzip -c postgres-<ts>.sql.gz | docker exec -i ai-workbench-postgres-1 psql -U aiworkbench -d agent_workbench
+#   docker run --rm -v ai-workbench_workspace:/ws -v "$PWD/backups":/in alpine sh -c "tar xzf /in/workspace-<ts>.tar.gz -C /ws"
 set -euo pipefail
 
 OUT="${1:-./backups}"
@@ -25,10 +25,10 @@ MYSQL_HOST="${MYSQL_HOST:-host.docker.internal}"
 MYSQL_USER="${SPRING_DATASOURCE_USERNAME:-aiworkbench}"
 MYSQL_PASS="${SPRING_DATASOURCE_PASSWORD:-aiworkbench-pass}"
 MYSQL_DB="${MYSQL_DB:-ai_workbench}"
-PG_CONTAINER="${PG_CONTAINER:-docker-postgres-1}"
+PG_CONTAINER="${PG_CONTAINER:-ai-workbench-postgres-1}"
 PG_USER="${POSTGRES_USER:-aiworkbench}"
 PG_DB="${PG_DB:-agent_workbench}"
-WS_VOLUME="${WS_VOLUME:-docker_workspace}"
+WS_VOLUME="${WS_VOLUME:-ai-workbench_workspace}"
 
 mkdir -p "$OUT"
 echo "[backup] -> $OUT/$TS"

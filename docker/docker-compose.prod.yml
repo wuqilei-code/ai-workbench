@@ -5,6 +5,8 @@
 # 前提:已 docker load 导入 ai-workbench-app / ai-workbench-agent-service 两个镜像,
 #       并已准备 AIO 沙箱镜像(AGENT_SANDBOX_IMAGE,如 aio-sandbox:latest)。
 # ============================================================================
+name: ai-workbench
+
 services:
   app:
     image: ai-workbench-app:latest      # 已 docker load 导入的 app 镜像
@@ -83,7 +85,7 @@ services:
       AGENT_SANDBOX_IMAGE: "${AGENT_SANDBOX_IMAGE:-aio-sandbox:latest}"
       AGENT_SANDBOX_NETWORK: "${AGENT_SANDBOX_NETWORK:-true}"
       AGENT_SANDBOX_NETWORK_NAME: "${AGENT_SANDBOX_NETWORK_NAME:-aiwb-agents}"
-      AGENT_SANDBOX_VOLUME_ROOT: "${AGENT_SANDBOX_VOLUME_ROOT:-/var/lib/docker/volumes/docker_workspace/_data/users}"
+      AGENT_SANDBOX_VOLUME_ROOT: "${AGENT_SANDBOX_VOLUME_ROOT:-/var/lib/docker/volumes/ai-workbench_workspace/_data/users}"
       AGENT_SANDBOX_UID: "${AGENT_SANDBOX_UID:-1000}"
       AGENT_SANDBOX_MEM_MB: "${AGENT_SANDBOX_MEM_MB:-4096}"
       AGENT_SANDBOX_CPUS: "${AGENT_SANDBOX_CPUS:-2.0}"
