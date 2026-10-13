@@ -33,5 +33,6 @@
 - 应用 `npm audit` 非破坏性依赖修复(markdown-it / nanoid / source-map-js 等)。
 - `docker compose` 默认自带 MySQL 容器并自动建表;补充沙箱镜像拉取与密钥生成说明
   (README / `.env.example`)。
+- 新增 `docker/gen-env.sh` / `docker/gen-env.ps1`:一键生成带随机密钥的 `.env`。
 
 [0.1.0]: https://github.com/wuqilei-code/ai-workbench/releases/tag/v0.1.0

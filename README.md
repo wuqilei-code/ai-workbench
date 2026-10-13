@@ -70,10 +70,22 @@
 
 ```bash
 cd docker
-cp .env.example .env
 ```
 
-**1) 生成并填入必填密钥/密码**(`docker/.env`;缺失或过短会导致启动失败):
+**1) 生成 `docker/.env` 并填入随机密钥**(缺失或过短会导致启动失败)。
+
+推荐用内置脚本一键生成(自动复制 `.env.example` 并把 `JWT_SECRET / APP_AES_KEY / INTERNAL_TOKEN / 各数据库密码`填成随机值):
+
+```bash
+# Linux / macOS / Git Bash
+sh gen-env.sh
+```
+```powershell
+# Windows PowerShell
+powershell -ExecutionPolicy Bypass -File .\gen-env.ps1
+```
+
+也可手动 `cp .env.example .env` 后按下表填入:
 
 | 变量 | 要求 | 生成命令 |
 |---|---|---|
