@@ -82,14 +82,14 @@ const features = [
                 </template>
               </n-input>
             </n-form-item>
-      <n-form-item :label="t('auth.labelPass')">
+      <n-form-item :label="t('auth.labelEmail')">
               <n-input v-model:value="form.email" placeholder="email@example.com" size="large">
                 <template #prefix>
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>
                 </template>
               </n-input>
             </n-form-item>
-      <n-form-item :label="t('auth.labelEmail')">
+      <n-form-item :label="t('auth.labelPass')">
       <n-input v-model:value="form.password" type="password" show-password-on="click" :placeholder="t('auth.phPassword')" size="large">
                 <template #prefix>
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>

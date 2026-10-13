@@ -23,7 +23,7 @@
   `agent-service` 无自身鉴权,`user_id` 即身份。
 - 为 `JWT_SECRET` / `APP_AES_KEY` / `INTERNAL_TOKEN` / 数据库密码注入**随机值**
   (`openssl rand -hex 32` 等),不要使用示例占位值。
-- 生产环境将 `APP_REGISTRATION_ENABLED=false`,按需开启注册。
+- 若服务可被公网访问,建议将 `APP_REGISTRATION_ENABLED=false`(默认 `true` 便于内网建号)。
 - 视需要配置 `INTERNAL_TRUSTED_CIDRS`(内部接口来源白名单)与
   `AGENT_OUTBOUND_ALLOWLIST`(出站 SSRF 白名单)。
 - 沙箱以 `seccomp=unconfined` 运行且共享宿主卷,请确保运行宿主本身可信、仅限受控网络访问。

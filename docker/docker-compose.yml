@@ -40,7 +40,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:?set in .env}
       JWT_TTL_MINUTES: "1440"
       # --- 注册开关(生产默认关,防批量滥用;需要开放时设 true) ---
-      APP_REGISTRATION_ENABLED: "${APP_REGISTRATION_ENABLED:-false}"
+      APP_REGISTRATION_ENABLED: "${APP_REGISTRATION_ENABLED:-true}"
       # 每用户每日 token 配额(0=不限);超限发送消息返回 429
       APP_QUOTA_DAILY_TOKENS: "${APP_QUOTA_DAILY_TOKENS:-0}"
       # --- AES 加密密钥(Base64 编码 32 字节);生产务必替换为随机密钥 ---

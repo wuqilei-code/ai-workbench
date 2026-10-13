@@ -159,7 +159,7 @@ CI 见 `.github/workflows/ci.yml`(后端 package、前端 typecheck+test+build�
 |---|---|
 | `JWT_SECRET` | JWT 签名密钥(`openssl rand -hex 32`;缺失启动失败) |
 | `APP_AES_KEY` | AES-256 密钥(Base64 的 32 字节;加密存储 provider key 等) |
-| `APP_REGISTRATION_ENABLED` | 是否开放注册(生产默认 `false`) |
+| `APP_REGISTRATION_ENABLED` | 是否开放注册(默认 `true`,便于建号;公网部署建议 `false`) |
 | `INTERNAL_TOKEN` | app ⇄ agent-service 内部令牌(两服务一致;`openssl rand -hex 32`) |
 | `INTERNAL_TRUSTED_CIDRS` | 内部接口可选来源白名单(IPv4/CIDR;空=仅校验令牌) |
 | `SSE_RELAY_ENABLED` / `SSE_RELAY_POLL_MS` | 会话事件跨副本中继开关/轮询间隔 |

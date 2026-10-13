@@ -68,7 +68,7 @@ jwt:
 # 应用
 app:
   registration:
-    enabled: ${APP_REGISTRATION_ENABLED:false}
+    enabled: ${APP_REGISTRATION_ENABLED:true}
   # agent-service 内部调用令牌(create_skill 工具回写技能库);compose 两容器注入同一值。
   # 生产必须在环境注入随机值;缺失时 agent-service 对内部接口会 401,防默认令牌滥用。
   internal-token: ${INTERNAL_TOKEN:}

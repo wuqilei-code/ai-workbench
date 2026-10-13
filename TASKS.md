@@ -110,7 +110,7 @@
 - `APP_AES_KEY`:`openssl rand -base64 32`。
 - `INTERNAL_TOKEN`:`openssl rand -hex 32`,app 与 agent-service 必须一致。
 - `AGENT_MODEL_API_KEY`:真实 DeepSeek/模型 Key,仅存于部署环境,不入库。
-- `APP_REGISTRATION_ENABLED`:生产按需设为 `false`。
+- `APP_REGISTRATION_ENABLED`:默认 `true`;公网部署建议设为 `false`。
 
 ### B4 docker.sock 说明(需部署方决策)
 - `app` 与 `agent-service` 均挂载 `/var/run/docker.sock`,用于按需创建/回收 per-user 沙箱容器。
