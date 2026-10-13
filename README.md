@@ -70,13 +70,44 @@
 
 ```bash
 cd docker
-# 首次:复制并按需修改 .env(见 docker/.env;密钥务必替换为随机值)
+cp .env.example .env
+```
+
+**1) 生成并填入必填密钥/密码**(`docker/.env`;缺失或过短会导致启动失败):
+
+| 变量 | 要求 | 生成命令 |
+|---|---|---|
+| `JWT_SECRET` | **≥ 32 字节** | `openssl rand -hex 32` |
+| `APP_AES_KEY` | Base64 的 32 字节 | `openssl rand -base64 32` |
+| `INTERNAL_TOKEN` | 随机 | `openssl rand -hex 32` |
+| `SPRING_DATASOURCE_PASSWORD` / `MYSQL_PASSWORD` / `MYSQL_ROOT_PASSWORD` / `POSTGRES_PASSWORD` | 随机 | `openssl rand -hex 16` |
+| `AGENT_MODEL` / `AGENT_MODEL_API_KEY` | 模型与 Key | 见模型服务商 |
+
+> Windows 无 `openssl` 时可用 PowerShell,例如 `JWT_SECRET`:
+> `-join ((1..32) | % { '{0:x2}' -f (Get-Random -Maximum 256) })`
+
+**2) 拉取每用户「执行沙箱」镜像(约 13GB)并打上默认 tag** —— agent 的
+执行命令 / 读写文件 / 浏览器都在该容器内运行,不拉取则这些能力不可用:
+
+```bash
+docker pull ghcr.io/agent-infra/sandbox:1.11.0
+docker tag  ghcr.io/agent-infra/sandbox:1.11.0 aio-sandbox:latest
+# 国内镜像加速:
+# docker pull enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:1.11.0
+# docker tag  enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:1.11.0 aio-sandbox:latest
+```
+
+**3) 启动**:
+
+```bash
 docker compose up --build
 ```
 
 - 浏览器打开 `http://localhost:8080/`
 - **首个注册用户自动成为管理员**
 - 管理员在「管理 → 模型配置」添加 provider/model 并 Apply 后即可对话
+- 未拉取沙箱镜像时服务仍可启动、纯对话可用,但**沙箱类工具会失败**(见上)
+- 默认自带 MySQL/Postgres 容器,首次启动自动建表(`schema.sql`);如需改用外部 MySQL,把 `.env` 的 `MYSQL_HOST` 指向它
 
 ## 本地开发
 

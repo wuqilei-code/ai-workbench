@@ -46,7 +46,8 @@ services:
       # 内部接口 /api/internal/** 可选来源白名单(IPv4/CIDR,逗号分隔;空=仅校验令牌)
       INTERNAL_TRUSTED_CIDRS: ${INTERNAL_TRUSTED_CIDRS:-}
       # --- MySQL(数据源:宿主机 MySQL,经 host.docker.internal 访问;见 .env 的 MYSQL_HOST) ---
-      SPRING_DATASOURCE_URL: jdbc:mysql://${MYSQL_HOST:-host.docker.internal}:3306/ai_workbench?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8&useUnicode=true
+      # 默认连 compose 自带的 mysql 容器;如需外部 MySQL,把 .env 的 MYSQL_HOST 指向它
+      SPRING_DATASOURCE_URL: jdbc:mysql://${MYSQL_HOST:-mysql}:3306/ai_workbench?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8&useUnicode=true
       SPRING_DATASOURCE_USERNAME: aiworkbench
       SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:?set in .env}
       # 浏览器面板链路排查用 DEBUG(稳定后可删)
@@ -58,6 +59,10 @@ services:
       - user-data:/data/users
       # 网关按需创建/回收每用户浏览器容器(复用旧 opencode 实施方案;适用单机管理员部署)
       - /var/run/docker.sock:/var/run/docker.sock
+    # 默认等待自带 MySQL 就绪(使用外部 MySQL 时该依赖无副作用)
+    depends_on:
+      mysql:
+        condition: service_healthy
     # 运行期加固:禁止提权(setuid/setgid 二进制失效),降低被攻破后的影响半径;
     # docker.sock 仍需保留(管理沙箱容器),如需更强隔离请改用受限的容器管理边车(见 TASKS B4)。
     security_opt:
@@ -166,26 +171,25 @@ services:
     logging: *default-logging
     restart: unless-stopped
 
-  # 容器化 MySQL 已停用:本机使用宿主机 MySQL80(127.0.0.1:3306,库 ai_workbench,数据保留),
-  # app 经 host.docker.internal 访问(见 .env 的 MYSQL_HOST)。如需回到容器 MySQL,
-  # 注意 mysql:8.4 默认不加载 mysql_native_password,需加 command: --mysql-native-password=ON。
-  # mysql:
-  #   image: docker.m.daocloud.io/mysql:8.4
-  #   environment:
-  #     MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set in .env}
-  #     MYSQL_DATABASE: ai_workbench
-  #     MYSQL_USER: aiworkbench
-  #     MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set in .env}
-  #   volumes:
-  #     - mysql-data:/var/lib/mysql
-  #   healthcheck:
-  #     test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
-  #     interval: 5s
-  #     timeout: 5s
-  #     retries: 30
-  #     start_period: 30s
-  #   logging: *default-logging
-  #   restart: unless-stopped
+  # 业务库 MySQL(默认自带,首次启动由 app 的 schema.sql 自动建表)。
+  # 如需改用外部 MySQL:把 .env 的 MYSQL_HOST 指向它即可(本服务可保留不用或删除)。
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set in .env}
+      MYSQL_DATABASE: ai_workbench
+      MYSQL_USER: aiworkbench
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set in .env}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    logging: *default-logging
+    restart: unless-stopped
 
 volumes:
   workspace:
