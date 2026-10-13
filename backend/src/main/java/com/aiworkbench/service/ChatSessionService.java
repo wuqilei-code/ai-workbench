@@ -210,6 +210,11 @@ public class ChatSessionService {
         return toVo(s);
     }
 
+    /** 持久化会话所选模型(providerId/modelId);由 sendUserMessage 在每轮带模型时调用。 */
+    public void persistModelRef(ChatSession s) {
+        chatSessionMapper.updateById(s);
+    }
+
     public void delete(Long sessionId, Long userId) {
         ChatSession s = getOwned(sessionId, userId);
         chatSessionMapper.deleteById(sessionId);

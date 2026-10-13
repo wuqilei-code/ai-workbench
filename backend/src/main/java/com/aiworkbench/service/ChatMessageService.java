@@ -119,6 +119,19 @@ public class ChatMessageService {
      */
     public void sendUserMessage(Long sessionId, Long userId, SendMessageRequest req) {
         ChatSession s = chatSessionService.getOwned(sessionId, userId);
+        // 每轮消息可选携带所选模型(前端模型选择器):更新会话并立即用于本轮调用
+        boolean modelChanged = false;
+        if (req.getProviderId() != null && !req.getProviderId().isBlank()) {
+            s.setProviderId(req.getProviderId());
+            modelChanged = true;
+        }
+        if (req.getModelId() != null && !req.getModelId().isBlank()) {
+            s.setModelId(req.getModelId());
+            modelChanged = true;
+        }
+        if (modelChanged) {
+            chatSessionService.persistModelRef(s);
+        }
         // 每日 token 配额校验(未配置则为空操作)
         tokenQuotaService.assertWithinQuota(userId);
         persistUserMessage(s, req.getText());
