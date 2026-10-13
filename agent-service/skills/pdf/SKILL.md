@@ -6,7 +6,7 @@ description: 处理 PDF 文档时使用:读取文本/表格、创建(PDF 报告)
 # PDF 处理
 
 环境:Python3,已装 `pypdf`、`pypdf2`、`pdfplumber`、`reportlab`、`matplotlib`。
-中文字体 simhei.ttf(`/usr/share/fonts/truetype/simhei.ttf`,TrueType)。交付用 `[结果文件] <相对路径>`。
+中文字体 Noto Sans SC(`/usr/share/fonts/truetype/noto/NotoSansSC-Regular.ttf`,TrueType,SIL OFL 1.1)。交付用 `[结果文件] <相对路径>`。
 
 ## 读取(文本 / 表格)
 ```python
@@ -27,7 +27,7 @@ with pdfplumber.open("a.pdf") as pdf:
 2. 用关键词/正则逐页命中后,把**命中页完整文本**作为上下文;
 3. 命中在页首/页尾时带上相邻一页;去重已用过的页。
 
-## 创建 PDF(reportlab + SimHei)
+## 创建 PDF(reportlab + Noto Sans SC)
 ```python
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
@@ -37,12 +37,12 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
 from reportlab.lib.units import cm
 import os
 
-font_path = "/usr/share/fonts/truetype/simhei.ttf"
-pdfmetrics.registerFont(TTFont("SimHei", font_path))  # 中文必须注册字体
+font_path = "/usr/share/fonts/truetype/noto/NotoSansSC-Regular.ttf"
+pdfmetrics.registerFont(TTFont("NotoSansSC", font_path))  # 中文必须注册字体
 
-body = ParagraphStyle("body", fontName="SimHei", fontSize=11, leading=18,
+body = ParagraphStyle("body", fontName="NotoSansSC", fontSize=11, leading=18,
                       wordWrap="CJK", spaceAfter=10)
-title = ParagraphStyle("title", fontName="SimHei", fontSize=24, leading=30,
+title = ParagraphStyle("title", fontName="NotoSansSC", fontSize=24, leading=30,
                        alignment=1, spaceAfter=20, wordWrap="CJK")
 
 doc = SimpleDocTemplate("output.pdf", pagesize=A4,
@@ -56,7 +56,7 @@ doc.build(story)
 reportlab 不支持部分 Unicode 破折号,写入前替换:–—―－ 等 -> `-`。
 
 ### 中文图表
-matplotlib(SimHei,见 xlsx 技能)+ `savefig("chart.png")`,再 `Image` 插入 PDF。
+matplotlib(Noto Sans SC,见 xlsx 技能)+ `savefig("chart.png")`,再 `Image` 插入 PDF。
 
 ## 合并 / 拆分
 ```python

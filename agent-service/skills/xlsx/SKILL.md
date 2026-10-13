@@ -54,14 +54,14 @@ wb.save("output.xlsx")
 - openpyxl 索引从 1 开始(A1=row1,col1)。
 - 数据清洗/批量:优先 pandas,回写用 openpyxl。
 
-## 图表(pandas + matplotlib,SimHei)
+## 图表(pandas + matplotlib,Noto Sans SC)
 ```python
 import matplotlib
 matplotlib.use("Agg")
 from matplotlib import font_manager
-font_manager.fontManager.addfont("/usr/share/fonts/truetype/simhei.ttf")
+font_manager.fontManager.addfont("/usr/share/fonts/truetype/noto/NotoSansSC-Regular.ttf")
 import matplotlib.pyplot as plt
-plt.rcParams["font.family"]="SimHei"; plt.rcParams["axes.unicode_minus"]=False
+plt.rcParams["font.family"]="Noto Sans SC"; plt.rcParams["axes.unicode_minus"]=False
 df.plot(kind="bar", x="月份", y="销售额")
 plt.tight_layout(); plt.savefig("chart.png", dpi=150); plt.close()
 ```

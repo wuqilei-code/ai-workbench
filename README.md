@@ -1,7 +1,18 @@
 # AI Workbench
 
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![CI](https://github.com/wuqilei-code/ai-workbench/actions/workflows/ci.yml/badge.svg)](https://github.com/wuqilei-code/ai-workbench/actions/workflows/ci.yml)
+
 多用户通用 AI 工作台(类 Trae):**对话 + 智能体编排 + 浏览器接管 + 动态 UI 可视化 + 技能/模板体系**一体化。
 服务端部署,浏览器访问;多用户注册与会话隔离;每个用户独立工作区与沙箱容器;面向内网私有化部署。
+
+<!-- 界面预览:补充截图后取消注释(建议放在 docs/screenshots/,勿提交敏感数据)
+## 界面预览
+| 对话与可视化 | 浏览器接管 |
+|---|---|
+| ![chat](docs/screenshots/chat.png) | ![browser](docs/screenshots/browser.png) |
+-->
+
 
 ## 架构
 
@@ -110,3 +121,17 @@ ai-workbench/
 ```
 
 整改与待办清单见 [`TASKS.md`](TASKS.md)。
+
+## 贡献
+
+欢迎提交 Issue 与 PR。开始前请阅读:
+
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — 开发环境、CI 门禁与提交规范
+- [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) — 社区行为准则
+- [`SECURITY.md`](SECURITY.md) — 漏洞披露方式与部署安全须知
+
+## 许可证
+
+本项目以 **Apache License 2.0** 发布,见 [`LICENSE`](LICENSE)。
+内置的开源字体 Noto Sans SC 等第三方资产的许可见
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。

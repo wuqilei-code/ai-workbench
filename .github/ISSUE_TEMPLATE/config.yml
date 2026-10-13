@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全问题 / 漏洞披露
+    url: https://github.com/wuqilei-code/ai-workbench/security/advisories/new
+    about: 请勿用公开 Issue 报告安全漏洞,改用私密渠道(见 SECURITY.md)。
+  - name: 使用与部署问题
+    url: https://github.com/wuqilei-code/ai-workbench/blob/deepagents/README.md
+    about: 先查阅 README 与 docker/.env.example 中的配置说明。

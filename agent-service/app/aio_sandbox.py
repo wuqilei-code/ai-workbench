@@ -46,6 +46,11 @@ _AIO_REQUEST_TIMEOUT = 120      # 单次 API 调用超时
 _AIO_INNER_WORKSPACE = "/home/gem/workspace"   # AIO 容器内工作区
 _AIO_HTTP_PORT = 8080                          # AIO server 容器内端口
 
+# 开源中文字体(Noto Sans SC,SIL OFL 1.1):注入沙箱以替代镜像自带的专有 SimHei。
+_FONT_SRC = Path(__file__).resolve().parent.parent / "assets" / "fonts" / "NotoSansSC-Regular.ttf"
+_FONT_DEST_DIR = "/usr/share/fonts/truetype/noto"
+_FONT_FILENAME = "NotoSansSC-Regular.ttf"
+
 
 def _safe_rel(path: str) -> PurePosixPath:
     """校验并归一化路径(剥离 /workspace 前缀,拒绝目录穿越)。"""
@@ -114,6 +119,7 @@ class AioSandbox(BaseSandbox):
                     self._container = c
                     self._base_url = base_url
                     self._chown_workspace(c)
+                    self._provision_cjk_font(c)
                     metrics.inc("aiwb_sandbox_reused_total")
                     return c, base_url
             except docker.errors.NotFound:
@@ -157,6 +163,7 @@ class AioSandbox(BaseSandbox):
 
             self._wait_ready(base_url)
             self._chown_workspace(c)
+            self._provision_cjk_font(c)
 
             self._container = c
             self._base_url = base_url
@@ -210,6 +217,37 @@ class AioSandbox(BaseSandbox):
                        user="root")
         except Exception as exc:  # noqa: BLE001
             logger.debug("[%s] 容器内 chown 失败: %s", self.user_id, exc)
+
+    def _provision_cjk_font(self, c) -> None:
+        """把开源中文字体(Noto Sans SC)注入沙箱,替代镜像自带的专有 SimHei。
+
+        沙箱镜像自带 simhei.ttf(专有授权);这里以 root 通过 docker put_archive 写入
+        开源字体,使 docx/pdf/pptx/xlsx 技能引用的 /usr/share/fonts/truetype/noto/ 路径可用。
+        幂等:已存在则跳过;失败仅告警,不影响沙箱主流程。
+        """
+        if not _FONT_SRC.exists():
+            return
+        dest = f"{_FONT_DEST_DIR}/{_FONT_FILENAME}"
+        try:
+            if c.exec_run(["test", "-f", dest], user="root").exit_code == 0:
+                return
+            c.exec_run(["mkdir", "-p", _FONT_DEST_DIR], user="root")
+            import io
+            import tarfile
+
+            data = _FONT_SRC.read_bytes()
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w") as tar:
+                info = tarfile.TarInfo(_FONT_FILENAME)
+                info.size = len(data)
+                info.mode = 0o644
+                tar.addfile(info, io.BytesIO(data))
+            buf.seek(0)
+            c.put_archive(_FONT_DEST_DIR, buf)
+            c.exec_run(["fc-cache", "-f", _FONT_DEST_DIR], user="root")
+            logger.info("[%s] 已注入开源中文字体: %s", self.user_id, dest)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[%s] 注入中文字体失败(继续): %s", self.user_id, exc)
 
     def _wait_ready(self, base_url: str) -> None:
         deadline = time.monotonic() + _AIO_STARTUP_WAIT

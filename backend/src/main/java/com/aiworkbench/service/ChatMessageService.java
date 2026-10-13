@@ -515,7 +515,7 @@ public class ChatMessageService {
         return root.toPrettyString();
     }
 
-    /** 导出会话为 Word(docx,POI 生成;中文字体名 SimHei,由打开端渲染)。 */
+    /** 导出会话为 Word(docx,POI 生成;中文字体名 Noto Sans SC,由打开端渲染)。 */
     public byte[] exportDocx(Long sessionId, Long userId, String title) {
         List<ChatMessage> msgs = allBySession(sessionId, userId);
         try (XWPFDocument doc = new XWPFDocument();
@@ -568,14 +568,14 @@ public class ChatMessageService {
         }
     }
 
-    /** 导出会话为 PDF(openhtmltopdf + 内置 simhei.ttf,中文正常渲染)。 */
+    /** 导出会话为 PDF(openhtmltopdf + 内置 NotoSansSC-Regular.ttf,中文正常渲染)。 */
     public byte[] exportPdf(Long sessionId, Long userId, String title) {
         List<ChatMessage> msgs = allBySession(sessionId, userId);
         String html = buildExportHtml(title, msgs);
         try {
             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
             com.openhtmltopdf.pdfboxout.PdfRendererBuilder builder = new com.openhtmltopdf.pdfboxout.PdfRendererBuilder();
-            builder.useFont(() -> getClass().getResourceAsStream("/fonts/simhei.ttf"), "SimHei");
+            builder.useFont(() -> getClass().getResourceAsStream("/fonts/NotoSansSC-Regular.ttf"), "Noto Sans SC");
             builder.withHtmlContent(html, null);
             builder.toStream(out);
             builder.run();
@@ -585,12 +585,12 @@ public class ChatMessageService {
         }
     }
 
-    /** 会话内容渲染为 HTML(PDF 导出用;内嵌 SimHei 字体)。 */
+    /** 会话内容渲染为 HTML(PDF 导出用;内嵌 Noto Sans SC 字体)。 */
     private String buildExportHtml(String title, List<ChatMessage> msgs) {
         StringBuilder sb = new StringBuilder();
         sb.append("<!DOCTYPE html><html><head><meta charset='utf-8'/><style>")
                 .append("@page{size:A4;margin:2cm}")
-                .append("body{font-family:'SimHei',sans-serif;font-size:11px;color:#222;line-height:1.8}")
+                .append("body{font-family:'Noto Sans SC',sans-serif;font-size:11px;color:#222;line-height:1.8}")
                 .append("h1{font-size:18px;border-bottom:2px solid #ccc;padding-bottom:8px}")
                 .append(".meta{color:#888;font-size:10px;margin-bottom:18px}")
                 .append(".msg{margin:12px 0;padding:8px 10px;border-left:3px solid #999;background:#f6f6f6;page-break-inside:avoid}")
@@ -629,7 +629,7 @@ public class ChatMessageService {
 
     /** 设置 docx 段落的字体与字号(ascii/hAnsi;中文由打开端按默认中文字体回退渲染)。 */
     private static void setDocxFont(XWPFRun run, int size, boolean bold) {
-        run.setFontFamily("SimHei");
+        run.setFontFamily("Noto Sans SC");
         run.setFontSize(size);
         run.setBold(bold);
     }

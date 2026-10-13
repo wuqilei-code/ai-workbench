@@ -5,7 +5,7 @@ description: 创建/编辑/分析 Word(.docx)文档时使用:修订、批注、�
 
 # Word 文档(docx)处理
 
-环境:Python3,已装 `python-docx`。中文字体统一用 `/usr/share/fonts/truetype/simhei.ttf`(SimHei)。
+环境:Python3,已装 `python-docx`。中文字体统一用 `Noto Sans SC`(字体名,由打开端渲染)。
 所有文件写在工作区内,交付时必须用 `[结果文件] <相对路径>` 标记。
 
 ## 读取 / 分析
@@ -31,7 +31,7 @@ doc = Document()
 style = doc.styles["Normal"]
 style.font.name = "Arial"
 style.font.size = Pt(12)
-style.element.rPr.rFonts.set(qn("w:eastAsia"), "SimHei")
+style.element.rPr.rFonts.set(qn("w:eastAsia"), "Noto Sans SC")
 
 doc.add_heading("标题", level=1)          # 标题用内置样式
 p = doc.add_paragraph()
@@ -47,7 +47,7 @@ doc.save("output.docx")
 ```
 
 ## 关键规则
-- 中文不乱码:每个用到中文的 run/style 都要设 `w:eastAsia` = SimHei(仅 font.name 不够)。
+- 中文不乱码:每个用到中文的 run/style 都要设 `w:eastAsia` = Noto Sans SC(仅 font.name 不够)。
 - 不用 `\n` 拼段落,用 `add_paragraph`;空行用 `add_paragraph()`。
 - 图片:`doc.add_picture("img.png", width=Cm(12))`。
 - 页边距/纸张:`section.left_margin = Cm(2.5)` 等。

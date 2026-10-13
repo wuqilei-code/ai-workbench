@@ -16,6 +16,14 @@
     <version>0.1.0</version>
     <name>ai-workbench-backend</name>
 
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
     <properties>
         <java.version>21</java.version>
         <mybatis-plus.version>3.5.9</mybatis-plus.version>
@@ -120,7 +128,7 @@
             <artifactId>poi-ooxml</artifactId>
             <version>5.2.5</version>
         </dependency>
-        <!-- 会话导出:PDF(openhtmltopdf + pdfbox;中文用内置 simhei.ttf) -->
+        <!-- 会话导出:PDF(openhtmltopdf + pdfbox;中文用内置 NotoSansSC-Regular.ttf) -->
         <dependency>
             <groupId>com.openhtmltopdf</groupId>
             <artifactId>openhtmltopdf-pdfbox</artifactId>
