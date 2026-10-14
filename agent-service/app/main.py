@@ -19,7 +19,7 @@ from langgraph.types import Command
 from pydantic import BaseModel, Field
 
 from app import __version__, config
-from app.agent_factory import config_for, get_manager
+from app.agent_factory import config_for, get_manager, repair_dangling_tool_calls
 
 logging.basicConfig(level=config.AGENT_LOG_LEVEL.upper())
 logger = logging.getLogger(__name__)
@@ -175,9 +175,11 @@ def invoke(user_id: str, body: InvokeRequest) -> InvokeResponse:
         agent_type=body.agent_type,
         model_override={"model": body.model, "base_url": body.base_url, "api_key": body.api_key},
     )
+    _cfg = config_for(user_id, body.thread_id)
+    repair_dangling_tool_calls(agent, _cfg)
     result = agent.invoke(
         {"messages": [m.model_dump() for m in body.messages]},
-        config=config_for(user_id, body.thread_id),
+        config=_cfg,
     )
     last = result["messages"][-1]
     content = last.content if hasattr(last, "content") else str(last)
@@ -388,6 +390,9 @@ def stream(request: Request, user_id: str, body: InvokeRequest) -> StreamingResp
         model_override={"model": body.model, "base_url": body.base_url, "api_key": body.api_key},
     )
     cfg = config_for(user_id, body.thread_id)
+    if body.resume_decision is None:
+        # 新消息:先修复线程里悬空的 tool_calls(中断/报错残留),避免 400 与续跑旧任务
+        repair_dangling_tool_calls(agent, cfg)
 
     async def gen():
         emitted_tools: set[str] = set()

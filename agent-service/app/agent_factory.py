@@ -732,3 +732,57 @@ def config_for(user_id: str, thread_id: str) -> dict:
             "checkpoint_id": None,
         },
     }
+
+
+def repair_dangling_tool_calls(agent, cfg: dict) -> int:
+    """清理线程历史里"悬空"的 tool_calls,返回清理的消息条数。
+
+    悬空 = 某条 assistant 消息声明了 tool_calls,但后面缺少对应的 tool 结果消息。
+    这种半截状态通常来自 HITL 中断 / 用户中途停止 / 上一轮报错。它会导致:
+      1) 模型调用报 400("assistant message with 'tool_calls' must be followed by tool messages");
+      2) 下一条消息把被中断的旧任务当"待办"续跑。
+    这里把这些悬空的 assistant(tool_calls) 及其残留的部分 tool 消息一并移除,使历史重新合法。
+    在**非中断恢复**(用户发新消息)时调用;best-effort,失败不影响主流程。
+    """
+    from langchain_core.messages import AIMessage, RemoveMessage, ToolMessage
+
+    try:
+        snap = agent.get_state(cfg)
+    except Exception:  # noqa: BLE001
+        return 0
+    values = getattr(snap, "values", None) or {}
+    msgs = list(values.get("messages", []) or [])
+    if not msgs:
+        return 0
+
+    to_remove: list = []
+    i, n = 0, len(msgs)
+    while i < n:
+        m = msgs[i]
+        tcs = getattr(m, "tool_calls", None)
+        if isinstance(m, AIMessage) and tcs:
+            ids = {tc.get("id") for tc in tcs if isinstance(tc, dict)}
+            j = i + 1
+            covered: set = set()
+            while j < n and isinstance(msgs[j], ToolMessage):
+                covered.add(getattr(msgs[j], "tool_call_id", None))
+                j += 1
+            if ids - covered:
+                # 悬空:连同其残留的部分 tool 消息一起移除,避免出现"孤儿 tool 消息"
+                for k in range(i, j):
+                    mid = getattr(msgs[k], "id", None)
+                    if mid:
+                        to_remove.append(RemoveMessage(id=mid))
+            i = j
+        else:
+            i += 1
+
+    if not to_remove:
+        return 0
+    try:
+        agent.update_state(cfg, {"messages": to_remove})
+        logger.info("repaired %d dangling tool-call message(s)", len(to_remove))
+        return len(to_remove)
+    except Exception:  # noqa: BLE001
+        logger.warning("repair dangling tool_calls failed", exc_info=True)
+        return 0

@@ -134,6 +134,8 @@ public class ChatMessageService {
         }
         // 每日 token 配额校验(未配置则为空操作)
         tokenQuotaService.assertWithinQuota(userId);
+        // 上一轮若因中断/报错残留 streaming 消息,先定稿(避免永久转圈 + 污染下一轮)
+        markStreamingAborted(sessionId);
         persistUserMessage(s, req.getText());
         agentStreamBridge.sendMessage(s, userId, req.getText() != null ? req.getText() : "");
     }

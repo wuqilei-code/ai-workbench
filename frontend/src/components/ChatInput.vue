@@ -553,6 +553,11 @@ function buildPayload(): string {
 async function onSend() {
   const payload = buildPayload()
   if (!payload) return
+  // 有未处理的确认/提问时,禁止发送新消息(否则会续跑被中断的旧任务,导致步骤错乱)
+  if (hasPending.value) {
+    msg.warning(t('input2.answerPendingFirst'))
+    return
+  }
   if (chat.isStreaming) {
     if (chat.streamingStuckSeconds > 0) {
       await chat.forceReleaseStreaming()
