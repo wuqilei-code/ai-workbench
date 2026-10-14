@@ -1,42 +1,86 @@
 version: 2
+# 依赖更新策略(仅「版本更新」;安全更新/漏洞告警由仓库 Settings 控制,与本文件无关,已开启)。
+# 目标:减少噪音——只保留 npm/pip/maven 三个主要生态,每周一次,每个生态最多 3 个 PR;
+# minor/patch 合并成一个 PR;易产生破坏性的 major 默认忽略,需要时手动升级。
+# 容器基础镜像(docker)不自动提级;CI 工作流(github-actions)每月检查一次、最多 2 个 PR。
 updates:
   # 前端(npm)
   - package-ecosystem: npm
     directory: /frontend
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
     groups:
       frontend-minor:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "vite"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@vitejs/plugin-vue"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "vitest"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "vue"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "vue-router"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "vue-i18n"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "pinia"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "naive-ui"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "unplugin-vue-components"
+        update-types: ["version-update:semver-major"]
 
   # 后端(Maven)
   - package-ecosystem: maven
     directory: /backend
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
     groups:
       backend-minor:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "org.springframework.boot:spring-boot-starter-parent"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "org.springdoc:springdoc-openapi-starter-webmvc-ui"
+        update-types: ["version-update:semver-major"]
 
   # agent-service(pip)
   - package-ecosystem: pip
     directory: /agent-service
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
+    groups:
+      agent-minor:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "fastapi"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "deepagents"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "langchain-openai"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "langchain-mcp-adapters"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "langgraph-checkpoint-postgres"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "websockets"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "docker"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "mcp"
+        update-types: ["version-update:semver-major"]
 
-  # 容器基础镜像(Dockerfile)
-  - package-ecosystem: docker
-    directory: /docker
-    schedule:
-      interval: monthly
-
-  # CI 工作流自身
+  # CI 工作流自身(每月,最多 2 个 PR)
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
+    open-pull-requests-limit: 2
