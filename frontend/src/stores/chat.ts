@@ -285,6 +285,10 @@ export const useChatStore = defineStore('chat', () => {
     closeStream()
     currentSessionId.value = id
     draft.value = false
+    // 模型选择器回填:切到某会话时,显示该会话所选模型(未指定则保留当前默认)
+    const sess = sessions.value.find((x) => x.id === id)
+    if (sess?.providerId) selectedProviderId.value = sess.providerId
+    if (sess?.modelId) selectedModelId.value = sess.modelId
     messages.value = []
     streamingText.value = ''
     liveReasoning.value = ''
