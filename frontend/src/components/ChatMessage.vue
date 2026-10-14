@@ -378,6 +378,17 @@ async function submitEdit() {
 }
 .att-link:hover { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
 .att-link.busy { opacity: .55; pointer-events: none; }
+/* 用户蓝色气泡内的附件 chip:半透明白底 + 白字,保证可读 */
+.msg.user .content-area.card .att-link {
+  background: rgba(255, 255, 255, 0.18);
+  color: var(--accent-contrast);
+  border-color: rgba(255, 255, 255, 0.38);
+}
+.msg.user .content-area.card .att-link:hover {
+  background: rgba(255, 255, 255, 0.32);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.6);
+}
 
 /* 消息中的技能标签(内联) */
 :deep(.skill-tag-inline) {
