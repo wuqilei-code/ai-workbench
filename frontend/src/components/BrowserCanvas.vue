@@ -30,11 +30,13 @@ let attempts = 0
 // ---- 导入登录态(cookie) ----
 const showImport = ref(false)
 const importText = ref('')
+const siteUrl = ref('')
 const importing = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 
 function openImport() {
   importText.value = ''
+  siteUrl.value = ''
   showImport.value = true
 }
 
@@ -47,11 +49,48 @@ function onFile(ev: Event) {
   ;(ev.target as HTMLInputElement).value = ''
 }
 
-function parseCookies(text: string): unknown[] {
-  const data = JSON.parse(text)
-  if (Array.isArray(data)) return data
-  if (data && Array.isArray(data.cookies)) return data.cookies
-  throw new Error('not a cookie array')
+/** 把多种输入(JSON / Copy as cURL / Cookie 请求头)统一解析为 cookie 数组。 */
+function parseCookiesInput(text: string, url: string): unknown[] {
+  const t = text.trim()
+  if (!t) throw new Error('empty')
+  // 1) JSON(数组,或含 cookies 数组的对象)
+  if (t[0] === '[' || t[0] === '{') {
+    try {
+      const d = JSON.parse(t)
+      if (Array.isArray(d)) return d
+      if (d && Array.isArray(d.cookies)) return d.cookies
+    } catch { /* 不是 JSON,继续按 cURL / Cookie 头解析 */ }
+  }
+  // 2) cURL 或 Cookie 头
+  let site = url.trim()
+  let header = ''
+  const looksCurl = /curl\s/i.test(t) || /-[Hh]\s+['"]?Cookie:/i.test(t) || /Cookie:\s*/i.test(t)
+  if (looksCurl) {
+    const cm = t.match(/Cookie:\s*([^\r\n'"]+)/i)
+    if (cm) header = cm[1].trim()
+  }
+  if (!header) header = t.replace(/^\s*Cookie:\s*/i, '').trim()
+  if (!header) throw new Error('no-cookie')
+  // 域名:优先用 cURL 里的 URL
+  const curlUrl = t.match(/https?:\/\/[^\s'"\\]+/)
+  if (curlUrl) site = curlUrl[0]
+  if (!site) throw new Error('need-url')
+  let domain = ''
+  let secure = true
+  try {
+    const u = new URL(site)
+    domain = u.hostname
+    secure = u.protocol === 'https:'
+  } catch {
+    domain = site.replace(/^https?:\/\//, '').split('/')[0]
+  }
+  if (!domain) throw new Error('need-url')
+  return header.split(';').map((s) => s.trim()).filter(Boolean).map((pair) => {
+    const i = pair.indexOf('=')
+    const name = (i >= 0 ? pair.slice(0, i) : pair).trim()
+    const value = i >= 0 ? pair.slice(i + 1).trim() : ''
+    return { name, value, domain, path: '/', secure }
+  })
 }
 
 async function doImport() {
@@ -59,9 +98,9 @@ async function doImport() {
   if (!text) { msg.warning(t('browser.needCookies')); return }
   let cookies: unknown[]
   try {
-    cookies = parseCookies(text)
-  } catch {
-    msg.error(t('browser.invalidJson'))
+    cookies = parseCookiesInput(text, siteUrl.value)
+  } catch (e: any) {
+    msg.warning(e?.message === 'need-url' ? t('browser.needUrl') : t('browser.invalidJson'))
     return
   }
   importing.value = true
@@ -138,6 +177,10 @@ onBeforeUnmount(() => {
       style="width: 560px; max-width: 94vw"
     >
       <p class="bc-import-hint">{{ t('browser.importHint') }}</p>
+      <div class="bc-import-field">
+        <span class="bc-import-label">{{ t('browser.siteUrlLabel') }}</span>
+        <n-input v-model:value="siteUrl" size="small" :placeholder="t('browser.siteUrlPlaceholder')" />
+      </div>
       <n-input
         v-model:value="importText"
         type="textarea"
@@ -228,6 +271,15 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: var(--text-3);
   line-height: 1.6;
+}
+.bc-import-field {
+  margin-bottom: 8px;
+}
+.bc-import-label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-3);
+  margin-bottom: 4px;
 }
 .bc-import-actions {
   display: flex;
