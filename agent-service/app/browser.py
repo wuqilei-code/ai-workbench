@@ -79,6 +79,81 @@ def _open_cdp(user_id: str) -> _Cdp:
     return _Cdp(ws_url)
 
 
+def _normalize_cookie(c: dict) -> dict:
+    """把常见导出格式的 cookie 归一化到 CDP Network.setCookies 的字段。"""
+    name = c.get("name")
+    if not name:
+        raise ValueError("cookie 缺少 name")
+    out: dict = {"name": str(name), "value": str(c.get("value", ""))}
+    if c.get("url"):
+        out["url"] = str(c["url"])
+    else:
+        if not c.get("domain"):
+            raise ValueError(f"cookie {name} 缺少 domain")
+        out["domain"] = str(c["domain"])
+        out["path"] = str(c.get("path") or "/")
+    exp = c.get("expires", c.get("expirationDate"))
+    if isinstance(exp, (int, float)) and exp > 0:
+        out["expires"] = float(exp)
+    if c.get("httpOnly") is not None:
+        out["httpOnly"] = bool(c["httpOnly"])
+    if c.get("secure") is not None:
+        out["secure"] = bool(c["secure"])
+    ss = str(c.get("sameSite") or "").lower()
+    if ss == "strict":
+        out["sameSite"] = "Strict"
+    elif ss == "lax":
+        out["sameSite"] = "Lax"
+    elif ss in ("none", "no_restriction"):
+        out["sameSite"] = "None"
+    return out
+
+
+def set_cookies(user_id: str, cookies: list[dict]) -> dict:
+    """把本地导出的 cookie 注入沙箱浏览器(CDP Network.setCookies),使其变成已登录状态。
+
+    逐条设置:单条非法/失败不影响其余,返回 {ok, failed, total}。
+    兼容常见导出格式(Cookie-Editor / EditThisCookie / Playwright storageState 的 cookies 数组)。
+    """
+    if not cookies:
+        return {"ok": 0, "failed": 0, "total": 0}
+    from app.aio_sandbox import get_aio_sandbox
+
+    sb = get_aio_sandbox(user_id)
+    sb.ensure()
+    # 沙箱(尤其首次)启动后 Chromium 需要几秒才暴露 CDP 目标:轮询等待
+    ws_url = None
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        ws_url = sb.cdp_url()
+        if ws_url:
+            break
+        time.sleep(1.0)
+    if not ws_url:
+        raise RuntimeError("浏览器未就绪(CDP 目标未出现),请稍后重试")
+    cdp = _Cdp(ws_url)
+    ok = 0
+    failed = 0
+    try:
+        cdp.call("Network.enable")
+        for c in cookies:
+            try:
+                cdp.call("Network.setCookies", {"cookies": [_normalize_cookie(c)]})
+                ok += 1
+            except Exception as exc:  # noqa: BLE001
+                failed += 1
+                logger.warning("set cookie failed: %s", exc)
+        # 注入后刷新当前页面,让已打开的站点立即变为登录态
+        if ok:
+            try:
+                cdp.call("Page.reload", {"ignoreCache": False})
+            except Exception:  # noqa: BLE001
+                pass
+    finally:
+        cdp.close()
+    return {"ok": ok, "failed": failed, "total": len(cookies)}
+
+
 def build_browser_tools(user_id: str) -> list:
     """构造驱动 AIO 内置浏览器的 langchain 工具集(与前端 VNC 画面同一浏览器)。"""
 

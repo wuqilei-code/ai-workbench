@@ -14,8 +14,9 @@
   HITL 危险操作人工确认;用户记忆;入站来源白名单与出站 SSRF 防护。
 - **沙箱**:每用户独立 AIO 沙箱容器(Chromium + VNC + code-server + shell),
   前端 iframe 内嵌 VNC 实时画面与接管;单端口代理 + JWT 鉴权。
-- **浏览器登录态持久化**:沙箱 Chromium 的 `user-data-dir` 挂载到宿主 workspace 卷,
-  cookie / localStorage / 登录态在沙箱被空闲回收、重建后仍保留。
+- **导入登录态**:沙箱浏览器面板提供「导入登录态」——把本机导出的 cookie(JSON)经 CDP
+  注入沙箱 Chromium,免登录访问目标站点(兼容 Cookie-Editor / EditThisCookie /
+  Playwright storageState 等格式)。
 - **技能体系**:内置技能(docx/pdf/pptx/xlsx/浏览器操作/动态 UI 等)、技能市场、
   多文件技能编辑器、按会话勾选加载。
 - **模板体系**:模板库、模板市场、收藏、上传 HTML、一键「做同款」。

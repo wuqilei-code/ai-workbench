@@ -45,8 +45,6 @@ _AIO_STARTUP_WAIT = 30          # 等待 AIO server 就绪的最长秒数
 _AIO_REQUEST_TIMEOUT = 120      # 单次 API 调用超时
 _AIO_INNER_WORKSPACE = "/home/gem/workspace"   # AIO 容器内工作区
 _AIO_HTTP_PORT = 8080                          # AIO server 容器内端口
-# Chromium 的 user-data-dir(含 cookie / localStorage / 扩展);bind 到宿主持久目录以跨容器保留登录态。
-_AIO_BROWSER_PROFILE = "/home/gem/.config/browser"
 
 # 开源中文字体(Noto Sans SC,SIL OFL 1.1):注入沙箱以替代镜像自带的专有 SimHei。
 _FONT_SRC = Path(__file__).resolve().parent.parent / "assets" / "fonts" / "NotoSansSC-Regular.ttf"
@@ -130,19 +128,13 @@ class AioSandbox(BaseSandbox):
             # 用户 project 目录(与前端文件树同址),bind 到 AIO 容器工作区
             self._enforce_active_cap()
             host_dir = str(Path(config.AGENT_SANDBOX_VOLUME_ROOT) / self.user_id / "project")
-            # 浏览器 profile 持久目录(cookie / 登录态),bind 到 Chromium user-data-dir
-            browser_dir = str(Path(config.AGENT_SANDBOX_VOLUME_ROOT) / self.user_id / "browser")
             self._chown_host_workspace()
-            self._ensure_host_browser_dir()
 
             c = cli.containers.create(
                 image=config.AGENT_SANDBOX_IMAGE,
                 name=self.name,
                 ports={f"{_AIO_HTTP_PORT}/tcp": None},   # 随机宿主端口
-                volumes={
-                    host_dir: {"bind": _AIO_INNER_WORKSPACE, "mode": "rw"},
-                    browser_dir: {"bind": _AIO_BROWSER_PROFILE, "mode": "rw"},
-                },
+                volumes={host_dir: {"bind": _AIO_INNER_WORKSPACE, "mode": "rw"}},
                 environment={"TZ": "Asia/Shanghai"},
                 nano_cpus=int(config.AGENT_SANDBOX_CPUS * 1e9),
                 mem_limit=f"{config.AGENT_SANDBOX_MEM_MB}m",
@@ -217,20 +209,6 @@ class AioSandbox(BaseSandbox):
         except OSError as exc:
             logger.warning("[%s] chown 工作区失败(继续): %s", self.user_id, exc)
 
-    def _ensure_host_browser_dir(self) -> None:
-        """在 workspace 卷内准备浏览器 profile 目录(持久化 cookie / 登录态)并 chown 给沙箱 uid。
-
-        Chromium 以 --user-data-dir=/home/gem/.config/browser 运行;把该目录 bind 到宿主持久目录后,
-        沙箱容器被空闲回收/重建时,cookie、localStorage、扩展与登录态仍会保留。
-        """
-        uid = config.AGENT_SANDBOX_UID
-        try:
-            d = ws.user_root(self.user_id) / "browser"
-            d.mkdir(parents=True, exist_ok=True)
-            os.chown(d, uid, uid)
-        except OSError as exc:
-            logger.warning("[%s] 准备浏览器 profile 目录失败(继续): %s", self.user_id, exc)
-
     def _chown_workspace(self, c) -> None:
         """容器内再次递归 chown(兜底,处理宿主无权限的场景)。"""
         uid = config.AGENT_SANDBOX_UID
@@ -239,6 +217,22 @@ class AioSandbox(BaseSandbox):
                        user="root")
         except Exception as exc:  # noqa: BLE001
             logger.debug("[%s] 容器内 chown 失败: %s", self.user_id, exc)
+        self._ensure_browser_running(c)
+
+    def _ensure_browser_running(self, c) -> None:
+        """确保 AIO 的 agent-browser(Chromium)在运行。
+
+        supervisord 对 agent-browser 不自动重启,一旦(如 profile 不可写)崩溃退出就不会自己恢复;
+        这里探测 CDP 端口,未在跑则重试拉起,保证 VNC/CDP 可用。
+        """
+        try:
+            probe = c.exec_run(["pgrep", "-f", "remote-debugging-port=9222"], user="root")
+            if probe.exit_code == 0:
+                return
+            c.exec_run(["supervisorctl", "restart", "agent-browser"], user="root")
+            logger.info("[%s] agent-browser 未运行,已触发重启", self.user_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[%s] 检查/重启浏览器失败: %s", self.user_id, exc)
 
     def _provision_cjk_font(self, c) -> None:
         """把开源中文字体(Noto Sans SC)注入沙箱,替代镜像自带的专有 SimHei。

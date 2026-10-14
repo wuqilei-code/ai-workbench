@@ -23,3 +23,18 @@ export async function sandboxInfo(): Promise<SandboxInfo> {
 export async function browserStop(): Promise<void> {
   await http.post('/agent/sandbox/stop')
 }
+
+/** 导入本地导出的 cookie 到沙箱浏览器(登录态),使其免登录访问对应站点。 */
+export interface CookieImportResult {
+  status?: string
+  ok?: number
+  failed?: number
+  total?: number
+  error?: string
+}
+
+export async function importCookies(cookies: unknown[]): Promise<CookieImportResult> {
+  const res = await http.post('/agent/browser/cookies', { cookies }, { timeout: 60000 })
+  const body = res.data?.data ?? res.data
+  return (body || {}) as CookieImportResult
+}

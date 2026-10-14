@@ -129,6 +129,25 @@ public class BrowserContainerManager {
         }
     }
 
+    /** 把 cookie 数组(JSON)转发给 agent-service,由其经 CDP 注入沙箱浏览器。 */
+    public Map<String, Object> importCookies(Long userId, String cookiesJsonArray) {
+        try {
+            String payload = "{\"cookies\":" + cookiesJsonArray + "}";
+            Map<String, Object> body = webClient.post()
+                    .uri("/api/users/{userId}/browser/cookies", userId)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(payload)
+                    .retrieve()
+                    .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {
+                    })
+                    .block(java.time.Duration.ofSeconds(60));
+            return body != null ? body : Map.of("status", "error", "error", "empty response");
+        } catch (Exception e) {
+            log.warn("import cookies failed (user={}): {}", userId, e.toString());
+            return Map.of("status", "error", "error", e.toString());
+        }
+    }
+
     private record Result(int code, String output) {
         boolean ok() {
             return code == 0;

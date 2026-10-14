@@ -3,10 +3,13 @@ package com.aiworkbench.controller;
 import com.aiworkbench.common.R;
 import com.aiworkbench.common.SecurityUtil;
 import com.aiworkbench.service.agent.BrowserContainerManager;
+import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -58,6 +61,22 @@ public class BrowserControlController {
             out.put("error", info.get("error"));
         }
         return R.ok(out);
+    }
+
+    /**
+     * 导入本地导出的 cookie 到沙箱浏览器(登录态),使沙箱免登录访问对应站点。
+     * 请求体可为 cookie 数组,或 {cookies:[...]};兼容 Cookie-Editor / Playwright storageState 等格式。
+     */
+    @PostMapping("/cookies")
+    public R<Map<String, Object>> importCookies(@RequestBody JsonNode body) {
+        Long userId = SecurityUtil.currentUserId();
+        JsonNode cookies = body.isArray() ? body : body.path("cookies");
+        if (!cookies.isArray() || cookies.isEmpty()) {
+            return R.ok(Map.of("status", "error", "error", "需要 cookie 数组(或 {cookies:[...]})"));
+        }
+        // 首次导入时按需拉起沙箱(浏览器未起则 cdp 不可用)
+        browserContainerManager.getOrStart(userId);
+        return R.ok(browserContainerManager.importCookies(userId, cookies.toString()));
     }
 
     /**

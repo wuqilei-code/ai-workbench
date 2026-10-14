@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { sandboxInfo, type SandboxInfo } from '../api/browser'
+import { useMessage } from 'naive-ui'
+import { sandboxInfo, importCookies, type SandboxInfo } from '../api/browser'
 
 /**
  * AIO 沙箱浏览器实时视图:嵌入沙箱内置 Chromium 的 VNC 实时画面(noVNC)。
  * 用户可直接在画面上点击/输入接管;AI 通过 CDP 驱动的也是同一个浏览器,双方共享上下文。
- * 仅保留浏览器视图(VSCode / 终端已移除)。
+ * 支持「导入登录态」:把本机浏览器导出的 cookie 注入沙箱,免登录访问目标站点。
  */
 
 const { t } = useI18n()
+const msg = useMessage()
 
 // autoActive / follow 为历史兼容属性(父组件仍会传入);VNC 模式下 iframe 常驻渲染
 withDefaults(
@@ -20,9 +22,65 @@ withDefaults(
 const info = ref<SandboxInfo | null>(null)
 const loading = ref(true)
 const errorText = ref('')
+const reloadKey = ref(0)
 
 let retryTimer: ReturnType<typeof setTimeout> | null = null
 let attempts = 0
+
+// ---- 导入登录态(cookie) ----
+const showImport = ref(false)
+const importText = ref('')
+const importing = ref(false)
+const fileInput = ref<HTMLInputElement | null>(null)
+
+function openImport() {
+  importText.value = ''
+  showImport.value = true
+}
+
+function onFile(ev: Event) {
+  const f = (ev.target as HTMLInputElement).files?.[0]
+  if (!f) return
+  const reader = new FileReader()
+  reader.onload = () => { importText.value = String(reader.result || '') }
+  reader.readAsText(f)
+  ;(ev.target as HTMLInputElement).value = ''
+}
+
+function parseCookies(text: string): unknown[] {
+  const data = JSON.parse(text)
+  if (Array.isArray(data)) return data
+  if (data && Array.isArray(data.cookies)) return data.cookies
+  throw new Error('not a cookie array')
+}
+
+async function doImport() {
+  const text = importText.value.trim()
+  if (!text) { msg.warning(t('browser.needCookies')); return }
+  let cookies: unknown[]
+  try {
+    cookies = parseCookies(text)
+  } catch {
+    msg.error(t('browser.invalidJson'))
+    return
+  }
+  importing.value = true
+  try {
+    const res = await importCookies(cookies)
+    if (res.status === 'ok') {
+      const skip = (res.failed || 0) > 0 ? t('browser.importSkip', { failed: res.failed }) : ''
+      msg.success(t('browser.importOk', { ok: res.ok || 0, skip }))
+      showImport.value = false
+      reloadKey.value++
+    } else {
+      msg.error(t('browser.importFail', { error: res.error || 'unknown' }))
+    }
+  } catch (e: any) {
+    msg.error(t('browser.importFail', { error: e?.message || String(e) }))
+  } finally {
+    importing.value = false
+  }
+}
 
 async function loadInfo() {
   try {
@@ -58,6 +116,7 @@ onBeforeUnmount(() => {
     <div class="bc-stage">
       <iframe
         v-if="info?.vnc_url"
+        :key="reloadKey"
         :src="info.vnc_url"
         class="bc-frame"
         frameborder="0"
@@ -67,7 +126,35 @@ onBeforeUnmount(() => {
         <div class="bc-spinner" v-if="loading"></div>
         <div class="bc-msg">{{ errorText || t('browser.placeholder') }}</div>
       </div>
+      <button v-if="info?.vnc_url" class="bc-import-btn" @click="openImport">
+        {{ t('browser.importCookies') }}
+      </button>
     </div>
+
+    <n-modal
+      v-model:show="showImport"
+      preset="card"
+      :title="t('browser.importTitle')"
+      style="width: 560px; max-width: 94vw"
+    >
+      <p class="bc-import-hint">{{ t('browser.importHint') }}</p>
+      <n-input
+        v-model:value="importText"
+        type="textarea"
+        :rows="8"
+        :placeholder="t('browser.importPlaceholder')"
+        style="font-family: ui-monospace, Menlo, Consolas, monospace"
+      />
+      <input ref="fileInput" type="file" accept=".json,application/json" style="display:none" @change="onFile" />
+      <div class="bc-import-actions">
+        <n-button size="small" @click="fileInput?.click()">{{ t('browser.chooseFile') }}</n-button>
+        <div class="spacer" />
+        <n-button size="small" @click="showImport = false">{{ t('common.cancel') }}</n-button>
+        <n-button size="small" type="primary" :loading="importing" :disabled="importing" @click="doImport">
+          {{ importing ? t('browser.importing') : t('browser.importCookies') }}
+        </n-button>
+      </div>
+    </n-modal>
   </div>
 </template>
 
@@ -91,6 +178,26 @@ onBeforeUnmount(() => {
   height: 100%;
   border: none;
   background: #0a0b0d;
+}
+.bc-import-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+  padding: 4px 10px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(20, 22, 26, 0.72);
+  color: #ddd;
+  font-size: 12px;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: background .12s, color .12s, border-color .12s;
+}
+.bc-import-btn:hover {
+  background: rgba(40, 44, 52, 0.9);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.3);
 }
 .bc-placeholder {
   position: absolute;
@@ -116,4 +223,17 @@ onBeforeUnmount(() => {
 @keyframes bc-spin {
   to { transform: rotate(360deg); }
 }
+.bc-import-hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.6;
+}
+.bc-import-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+.bc-import-actions .spacer { flex: 1; }
 </style>

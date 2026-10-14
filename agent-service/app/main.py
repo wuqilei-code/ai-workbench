@@ -125,6 +125,11 @@ class InvokeResponse(BaseModel):
     content: str
 
 
+class CookieImportRequest(BaseModel):
+    """导入到沙箱浏览器的 cookie 列表(兼容常见导出格式)。"""
+    cookies: list[dict] = Field(default_factory=list)
+
+
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
@@ -267,6 +272,21 @@ def sandbox_stop(user_id: str) -> dict:
         return {"status": "ok"}
     except Exception as exc:  # noqa: BLE001
         logger.warning("[%s] sandbox stop failed: %s", user_id, exc)
+        return {"status": "error", "error": str(exc)}
+
+
+@app.post("/api/users/{user_id}/browser/cookies", dependencies=[Depends(verify_internal_token)])
+def browser_import_cookies(user_id: str, body: CookieImportRequest) -> dict:
+    """把本地导出的 cookie 注入沙箱浏览器(CDP),使其变成已登录状态。"""
+    if config.AGENT_SANDBOX_BACKEND != "aio":
+        return {"status": "error", "error": "sandbox backend not aio"}
+    from app import browser
+
+    try:
+        result = browser.set_cookies(user_id, body.cookies)
+        return {"status": "ok", **result}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[%s] import cookies failed: %s", user_id, exc)
         return {"status": "error", "error": str(exc)}
 
 
