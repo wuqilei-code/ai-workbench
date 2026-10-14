@@ -1,0 +1,47 @@
+name: Mirror to Gitee
+
+# 把本仓库(GitHub)自动镜像到 Gitee:每次 push(任意分支 / tag)或手动触发时同步。
+#
+# 启用步骤:
+#   1) 在 Gitee 生成「私人令牌」(勾选 projects 权限)。
+#   2) 在本仓库 Settings → Secrets and variables → Actions → New repository secret
+#      名称填 GITEE_TOKEN,值填该令牌。
+#   3) 触发一次(随便 push 一下,或到 Actions 页手动 Run workflow)即完成首次镜像。
+# 未配置 GITEE_TOKEN 时本 workflow 会跳过,不会报错。
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: gitee-mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Push mirror to Gitee
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GITEE_TOKEN:-}" ]; then
+            echo "GITEE_TOKEN 未设置,跳过镜像。配置仓库 secret 后即可自动同步。"
+            exit 0
+          fi
+          git remote remove gitee 2>/dev/null || true
+          git remote add gitee "https://wu-qilei36:${GITEE_TOKEN}@gitee.com/wu-qilei36/ai-workbench.git"
+          # 拉取 GitHub 全部分支与 tag
+          git fetch --prune --tags origin '+refs/heads/*:refs/remotes/origin/*'
+          # 逐分支镜像(跳过 origin/HEAD),--force 以支持历史重写后的覆盖
+          for ref in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin | grep -v '^origin/HEAD$'); do
+            name="${ref#origin/}"
+            echo "mirror branch: ${name}"
+            git push --force gitee "refs/remotes/origin/${name}:refs/heads/${name}"
+          done
+          echo "mirror tags"
+          git push --force gitee --tags
