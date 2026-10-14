@@ -568,7 +568,7 @@ onBeforeUnmount(() => resetWindowHeights())
               <FavoritesPanel @open-session="openSessionFromFavorite" />
             </template>
             <template v-else-if="activeTab === 'browser'">
-              <BrowserCanvas auto-active :follow="browserFollowing" @stopped="closeTab('browser')" />
+              <BrowserCanvas auto-active :follow="browserFollowing" />
             </template>
         <n-empty v-else :description="t('chatview.noSuggestion')" style="margin-top: 40px" />
           </div>
