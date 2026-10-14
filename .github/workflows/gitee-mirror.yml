@@ -44,4 +44,4 @@ jobs:
             git push --force gitee "refs/remotes/origin/${name}:refs/heads/${name}"
           done
           echo "mirror tags"
-          git push --force gitee --tags
+          git push gitee "+refs/tags/*:refs/tags/*"
