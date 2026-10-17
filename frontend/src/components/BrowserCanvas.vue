@@ -23,6 +23,21 @@ const info = ref<SandboxInfo | null>(null)
 const loading = ref(true)
 const errorText = ref('')
 const reloadKey = ref(0)
+const frame = ref<HTMLIFrameElement | null>(null)
+
+/** noVNC 页面是同源(经 /vnc/ 反代),注入 CSS 隐藏顶部那条蓝色状态栏(#top_bar)。 */
+function hideVncTopBar() {
+  try {
+    const doc = frame.value?.contentDocument
+    if (!doc || doc.getElementById('__aiwb_hide_topbar')) return
+    const style = doc.createElement('style')
+    style.id = '__aiwb_hide_topbar'
+    style.textContent = '#top_bar{display:none!important}'
+    ;(doc.head || doc.documentElement).appendChild(style)
+  } catch {
+    /* 跨域或未就绪时忽略 */
+  }
+}
 
 let retryTimer: ReturnType<typeof setTimeout> | null = null
 let attempts = 0
@@ -156,10 +171,12 @@ onBeforeUnmount(() => {
       <iframe
         v-if="info?.vnc_url"
         :key="reloadKey"
+        ref="frame"
         :src="info.vnc_url"
         class="bc-frame"
         frameborder="0"
         allow="clipboard-read; clipboard-write"
+        @load="hideVncTopBar"
       ></iframe>
       <div v-else class="bc-placeholder">
         <div class="bc-spinner" v-if="loading"></div>

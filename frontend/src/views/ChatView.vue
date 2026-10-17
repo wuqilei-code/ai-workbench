@@ -815,18 +815,29 @@ onBeforeUnmount(() => resetWindowHeights())
   transition: width .18s ease;
 }
 .workspace-panel.ws-resizing { transition: none; }
+/* 拖动中:面板内容(含 VNC iframe)不接收鼠标事件,否则 iframe 会吞掉 mousemove 导致拖动中断 */
+.workspace-panel.ws-resizing .workspace-body { pointer-events: none; }
+.workspace-panel.ws-resizing { cursor: col-resize; }
 .workspace-panel.workspace-collapsed { width: 0 !important; border-left: none; }
 .workspace-body { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 
 /* 宽度拖动条:面板左缘,拖拽调整宽度 */
 .ws-divider {
   position: absolute;
-  left: -3px; top: 0; bottom: 0;
-  width: 6px;
+  left: -5px; top: 0; bottom: 0;
+  width: 10px;
   cursor: col-resize;
   z-index: 5;
 }
-.ws-divider:hover { background: rgba(0, 0, 0, 0.12); }
+.ws-divider::after {
+  content: '';
+  position: absolute; left: 4px; top: 0; bottom: 0;
+  width: 2px; border-radius: 2px;
+  background: transparent;
+  transition: background .12s;
+}
+.ws-divider:hover::after,
+.workspace-panel.ws-resizing .ws-divider::after { background: var(--accent); }
 
 /* 顶栏面板入口:与用户信息同区,右侧收起按钮/消息中心之前 */
 .ws-launcher {
