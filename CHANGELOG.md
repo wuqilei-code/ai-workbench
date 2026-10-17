@@ -45,6 +45,8 @@
 - 新增 `docker/gen-env.sh` / `docker/gen-env.ps1`:一键生成带随机密钥的 `.env`。
 - 固定 compose 项目名为 `ai-workbench`:容器/卷/网络统一 `ai-workbench-*` 前缀,便于辨识。
 - 默认开启注册(`APP_REGISTRATION_ENABLED=true`),服务启动即可建号。
+- 新增可选的 **MCP 工具按需加载**(`AGENT_MCP_LAZY_TOOLS=true`):MCP 工具不再每轮注入,
+  改由 `mcp` 技能经 deepagents `include_tools` 按需披露(省 token;默认关闭)。
 
 ### 修复
 - 注册页「邮箱 / 密码」标签与输入框错位。

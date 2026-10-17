@@ -277,7 +277,7 @@ def _compression_threshold(sm) -> int | None:
 # 平台内置技能(默认每个会话都加载;与镜像 agent-service/skills 下的目录名一致)
 BUILTIN_SKILLS = {
     "browser-operate", "create-skill", "docx", "html-report", "pdf", "pptx", "xlsx",
-    "dynamic-ui", "excalidraw", "mermaid",
+    "dynamic-ui", "excalidraw", "mermaid", "mcp",
 }
 
 
@@ -310,6 +310,13 @@ def _select_skills(all_skill_paths: list[str], skills_override: list[str] | None
     builtins = [p for p in all_skill_paths if _skill_name(p) in BUILTIN_SKILLS]
     custom = [p for p in all_skill_paths if p not in builtins and _skill_name(p) in picked]
     return sorted(set(builtins + custom))
+
+
+def _mcp_skill_resolver(mcp_tools: list):
+    """MCP 工具按需披露:只有当技能 frontmatter 的 include_tools 名为 "mcp" 时才返回本会话 MCP 工具。"""
+    def resolve(name: str, runtime=None):  # noqa: ANN001
+        return list(mcp_tools) if name == "mcp" else []
+    return resolve
 
 _runtime = None
 _RUNTIME_LOCK = threading.Lock()
@@ -664,6 +671,13 @@ class AgentManager:
         model = _build_model(model_override)
         # 无人值守(task)不挂 ask_user:任务无人应答,提问只会卡死。
         question_tools = build_question_tools() if agent_type != "task" else []
+        # MCP 工具按需加载(方案 A):开启时不直接注入,改由 `mcp` 技能经 include_tools 按需披露。
+        lazy_mcp = bool(config.AGENT_MCP_LAZY_TOOLS and mcp_tools)
+        direct_tools = (list(extra_tools or []) + build_browser_tools(user_id)
+                        + build_skill_tools(user_id) + build_widget_tools(user_id)
+                        + build_memory_tools(user_id, _get_runtime().store) + question_tools)
+        if not lazy_mcp:
+            direct_tools += mcp_tools
         # 上下文用量计数器:独立构造一个压缩中间件实例(不挂执行链,零副作用),
         # 借它的 _get_effective_messages/_count_tokens 与 trigger 配置,得到与自动压缩
         # 判断完全一致的 token 数与阈值。create_summarization_middleware 与
@@ -671,9 +685,7 @@ class AgentManager:
         usage_counter = create_summarization_middleware(model, backend)
         agent = create_deep_agent(
             model=model,
-            tools=list(extra_tools or []) + build_browser_tools(user_id) + build_skill_tools(user_id)
-            + build_widget_tools(user_id) + build_memory_tools(user_id, _get_runtime().store) + question_tools
-            + mcp_tools,
+            tools=direct_tools,
             system_prompt=effective_prompt,
             backend=backend,
             # 技能不走 deepagents 内置 skills 参数(它每线程只加载一次);改用强制重载中间件,
@@ -689,7 +701,9 @@ class AgentManager:
                         TodoListMiddleware(),
                         ContextUsageMiddleware(usage_counter, _compression_threshold(usage_counter)),
                         create_summarization_tool_middleware(model, backend)]
-            + ([ReloadSkillsMiddleware(backend=backend, sources=["/skills"])] if skills else []),
+            + ([ReloadSkillsMiddleware(backend=backend, sources=["/skills"],
+                                       **({"tools": _mcp_skill_resolver(mcp_tools)} if lazy_mcp else {}))]
+               if (skills or lazy_mcp) else []),
             # 注意:deepagents 的 filesystem permissions 与「支持命令执行的后端」
             # (SandboxBackendProtocol,即我们的 aio/local 沙箱)不兼容,传入会直接抛
             # NotImplementedError 导致 agent 构建失败(任务/对话全部 500)。

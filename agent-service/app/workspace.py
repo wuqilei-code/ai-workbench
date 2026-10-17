@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from app.config import AGENT_WS_ROOT
+from app.config import AGENT_MCP_LAZY_TOOLS, AGENT_WS_ROOT
 
 
 def user_root(user_id: str) -> Path:
@@ -62,6 +62,9 @@ def seed_global_skills(user_id: str) -> None:
     for d in _GLOBAL_SKILLS_SRC.iterdir():
         src = d / "SKILL.md"
         if not src.is_file():
+            continue
+        # `mcp` 技能仅用于"MCP 工具按需加载",未开启时不播种(避免误导模型)
+        if d.name == "mcp" and not AGENT_MCP_LAZY_TOOLS:
             continue
         dst = skills_root(user_id) / d.name / "SKILL.md"
         # 只在缺失时播种;绝不覆盖用户目录中已有的同名技能(可能是用户自建/改过的内容)。

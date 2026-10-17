@@ -106,6 +106,8 @@ services:
       AGENT_WS_ROOT: /shared-ws/users
       AGENT_PG_DSN: "postgresql://aiworkbench:${POSTGRES_PASSWORD:-aiworkbench-pass}@postgres:5432/agent_workbench"
       AGENT_HITL: "${AGENT_HITL:-true}"
+      # MCP 工具按需加载(方案 A):true 时 MCP 工具需先读 /skills/mcp 才可用(省 token);默认 false
+      AGENT_MCP_LAZY_TOOLS: "${AGENT_MCP_LAZY_TOOLS:-false}"
       # 平台级内置技能目录(镜像内 /app/skills 含 browser-operate 等)
       AGENT_GLOBAL_SKILLS: /app/skills
       # create_skill 工具回写后端技能库(内部接口 + 共享令牌)

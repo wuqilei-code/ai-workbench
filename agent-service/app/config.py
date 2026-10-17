@@ -48,6 +48,12 @@ AGENT_PG_POOL_MAX: int = _int("AGENT_PG_POOL_MAX", 10)
 # 打开后所有 write/edit/execute 需人工审批(deepagents interrupt_on)。
 AGENT_HITL: bool = _bool("AGENT_HITL", True)
 
+# MCP 工具按需加载(方案 A)。默认 false:MCP 工具直接注入,始终可用(简单可靠)。
+# 开启后:MCP 工具不再直接注入,而是挂在 `mcp` 技能上,经 SkillsMiddleware 的
+# include_tools 按需披露——模型先读 /skills/mcp 才拿得到工具(省 token);
+# 代价:会话自动压缩可能把"读技能"那段冲掉,届时需重读技能(长任务注意)。
+AGENT_MCP_LAZY_TOOLS: bool = _bool("AGENT_MCP_LAZY_TOOLS", False)
+
 # 内部令牌:网关/agent-service 互相调用的共享凭证(X-Internal-Token)。
 # 生产必须设置随机值;缺失即启动失败(fail-fast),不落公开默认值,防默认令牌被滥用。
 INTERNAL_TOKEN: str = os.environ.get("INTERNAL_TOKEN", "")
