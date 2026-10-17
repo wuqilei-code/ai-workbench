@@ -37,11 +37,16 @@ jobs:
           git remote add gitee "https://wu-qilei36:${GITEE_TOKEN}@gitee.com/wu-qilei36/ai-workbench.git"
           # 拉取 GitHub 全部分支与 tag
           git fetch --prune --tags origin '+refs/heads/*:refs/remotes/origin/*'
-          # 逐分支镜像(跳过 origin/HEAD),--force 以支持历史重写后的覆盖
-          for ref in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin | grep -v '^origin/HEAD$'); do
+          # 逐分支镜像(跳过 origin/HEAD 与 dependabot/* 临时分支),--force 支持历史重写后的覆盖
+          for ref in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin | grep -v '^origin/HEAD$' | grep -v '^origin/dependabot/'); do
             name="${ref#origin/}"
             echo "mirror branch: ${name}"
             git push --force gitee "refs/remotes/origin/${name}:refs/heads/${name}"
           done
+          # tag:先删远端同名旧 tag 再推 —— 避免 "would clobber existing tag"(发布 tag 重发时会移动)
           echo "mirror tags"
-          git push gitee "+refs/tags/*:refs/tags/*"
+          for t in $(git tag -l); do
+            echo "mirror tag: ${t}"
+            git push gitee ":refs/tags/${t}" 2>/dev/null || true
+            git push gitee "refs/tags/${t}:refs/tags/${t}"
+          done
