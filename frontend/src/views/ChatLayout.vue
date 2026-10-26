@@ -5,6 +5,7 @@ import { useChatStore } from '@/stores/chat'
 import { useFavoritesStore } from '@/stores/favorites'
 import Sidebar from '@/components/Sidebar.vue'
 import Onboarding from '@/components/Onboarding.vue'
+import DigitalHuman from '@/components/DigitalHuman.vue'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -159,6 +160,7 @@ onBeforeUnmount(() => {
     </n-layout>
   </template>
   <Onboarding ref="onboardingRef" />
+  <DigitalHuman />
 </template>
 
 <style scoped>
