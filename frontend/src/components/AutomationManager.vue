@@ -461,14 +461,14 @@ onBeforeUnmount(stopPolling)
 </script>
 
 <template>
-  <component :is="page ? 'div' : NModal" v-bind="rootBind">
-    <div v-if="page" class="manage-crumb">
+  <component :is="props.page ? 'div' : NModal" v-bind="rootBind">
+    <div v-if="props.page" class="manage-crumb">
       <button class="crumb-link" @click="emit('close')">首页</button>
       <span class="crumb-sep">/</span>
       <span class="crumb-cur">{{ t('automation2.crumb') }}</span>
     </div>
-    <div v-if="page" class="manage-title">{{ t('automation2.crumb') }}</div>
-    <div v-if="page" class="manage-sub">{{ t('automation2.manageSub') }}</div>
+    <div v-if="props.page" class="manage-title">{{ t('automation2.crumb') }}</div>
+    <div v-if="props.page" class="manage-sub">{{ t('automation2.manageSub') }}</div>
     <div class="auto-panel">
       <div class="panel-head">
         <SectionTabs

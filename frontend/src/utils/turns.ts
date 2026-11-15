@@ -180,7 +180,13 @@ export function summarizeToolCall(tc: ToolCall): string {
   if (args == null) return ''
   if (tc.name === 'create_skill' && typeof args.name === 'string') return args.name
   if (tc.name === 'use_skill' && typeof args.skill === 'string') return args.skill
-  const path = firstStr(args.filePath, args.path, args.file, args.filename)
+  // 搜索类:展示搜索词而不是搜索范围目录(grep/glob 的 path 只是范围)
+  if (/^(grep|glob|search|find|rg|search_files|glob_files)$/i.test(tc.name)) {
+    const q = firstStr(args.pattern, args.query, args.search, args.term)
+    if (q) return q
+  }
+  // file_path 是 deepagents 内置文件工具的入参名(read_file/write_file/edit_file)
+  const path = firstStr(args.file_path, args.filePath, args.filepath, args.path, args.file, args.filename)
   if (path) return summarizePath(path)
   const cmd = firstStr(args.command, args.cmd)
   if (cmd) {
@@ -197,7 +203,7 @@ export function summarizeToolCall(tc: ToolCall): string {
 export function extractFilePath(tc: ToolCall): string | null {
   const args = tc.args
   if (args == null) return null
-  for (const key of ['filePath', 'path', 'file', 'filename']) {
+  for (const key of ['file_path', 'filePath', 'filepath', 'path', 'file', 'filename']) {
     const v = (args as Record<string, unknown>)[key]
     if (typeof v === 'string' && v.trim()) return v.trim()
   }

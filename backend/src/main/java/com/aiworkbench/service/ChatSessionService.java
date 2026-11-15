@@ -23,6 +23,8 @@ public class ChatSessionService {
     private final ChatSessionMapper chatSessionMapper;
     private final WorkspaceService workspaceService;
     private final com.aiworkbench.mapper.ChatMessageMapper chatMessageMapper;
+    private final com.aiworkbench.mapper.FavoriteMapper favoriteMapper;
+    private final com.aiworkbench.mapper.SessionEventMapper sessionEventMapper;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     /**
@@ -197,6 +199,10 @@ public class ChatSessionService {
         if (req.getSkills() != null) s.setSkills(encodeSkills(req.getSkills()));
         if (req.getMcpServers() != null) s.setMcpServers(encodeMcp(req.getMcpServers()));
         if (Boolean.TRUE.equals(req.getResetMcpServers())) s.setMcpServers(null);
+        // 审批模式:仅接受 manual/auto,其它值忽略(避免脏数据导致 agent 侧误判)
+        if ("manual".equals(req.getApprovalMode()) || "auto".equals(req.getApprovalMode())) {
+            s.setApprovalMode(req.getApprovalMode());
+        }
         // 可清空字段:IGNORED 策略保证 null 写入(项目记忆教训)
         if (req.getProviderId() != null || req.getModelId() != null) {
             s.setProviderId(req.getProviderId());
@@ -217,6 +223,26 @@ public class ChatSessionService {
 
     public void delete(Long sessionId, Long userId) {
         ChatSession s = getOwned(sessionId, userId);
+        // 级联清理:消息 / 收藏 / SSE 出站记录。
+        // 原先只删会话行,导致 chat_message 里留下大量孤儿消息(实测库里一半消息是孤儿)。
+        try {
+            chatMessageMapper.delete(new LambdaQueryWrapper<com.aiworkbench.entity.ChatMessage>()
+                    .eq(com.aiworkbench.entity.ChatMessage::getSessionId, sessionId));
+        } catch (Exception e) {
+            log.warn("delete session messages failed (session={}): {}", sessionId, e.toString());
+        }
+        try {
+            favoriteMapper.delete(new LambdaQueryWrapper<com.aiworkbench.entity.Favorite>()
+                    .eq(com.aiworkbench.entity.Favorite::getSessionId, sessionId));
+        } catch (Exception e) {
+            log.warn("delete session favorites failed (session={}): {}", sessionId, e.toString());
+        }
+        try {
+            sessionEventMapper.delete(new LambdaQueryWrapper<com.aiworkbench.entity.SessionEvent>()
+                    .eq(com.aiworkbench.entity.SessionEvent::getSessionId, s.getAgentSessionId()));
+        } catch (Exception e) {
+            log.warn("delete session events failed (session={}): {}", sessionId, e.toString());
+        }
         chatSessionMapper.deleteById(sessionId);
         // 缓存失效:防止删除后残留会话仍被事件流反查命中
         synchronized (sessionCache) {
@@ -251,6 +277,7 @@ public class ChatSessionService {
                 .agentSessionId(s.getAgentSessionId())
                 .title(s.getTitle())
                 .agent(s.getAgent())
+                .approvalMode(s.getApprovalMode() == null ? "manual" : s.getApprovalMode())
                 .skills(decodeSkills(s.getSkills()))
                 .mcpServers(decodeMcp(s.getMcpServers()))
                 .providerId(s.getProviderId())

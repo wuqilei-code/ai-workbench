@@ -1,6 +1,7 @@
 package com.aiworkbench.common;
 
 import lombok.extern.slf4j.Slf4j;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -18,6 +19,8 @@ import org.springframework.web.context.request.async.AsyncRequestNotUsableExcept
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
+
+import java.io.IOException;
 
 /**
  * 全局异常处理:把各类异常统一映射为 {@link R} JSON + 恰当的 HTTP 状态码。
@@ -108,6 +111,28 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AsyncRequestNotUsableException.class)
     public void handleAsyncNotUsable(AsyncRequestNotUsableException e) {
         log.debug("SSE client disconnected: {}", e.getMessage());
+    }
+
+    /**
+     * 客户端断连(SSE/下载/普通响应写出时的 Broken pipe / Connection reset):
+     * 响应通常已经提交,不能再写 R JSON(会触发 text/event-stream 无 converter 的二次异常)。
+     * 这里只记 debug;非断连 IO 异常仍记 error,并在响应未提交时返回 500。
+     */
+    @ExceptionHandler(IOException.class)
+    public void handleIo(IOException e, HttpServletResponse response) throws IOException {
+        String msg = String.valueOf(e.getMessage());
+        boolean disconnected = msg.contains("Broken pipe")
+                || msg.contains("Connection reset")
+                || msg.contains("你的主机中的软件中止了一个已建立的连接")
+                || response.isCommitted();
+        if (disconnected) {
+            log.debug("client disconnected while writing response: {}", msg);
+            return;
+        }
+        log.error("unhandled IO exception", e);
+        if (!response.isCommitted()) {
+            response.sendError(HttpStatus.INTERNAL_SERVER_ERROR.value());
+        }
     }
 
     @ExceptionHandler(Exception.class)

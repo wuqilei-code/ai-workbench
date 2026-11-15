@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useChatStore } from '@/stores/chat'
 import { useFavoritesStore } from '@/stores/favorites'
 import { renderMarkdown } from '@/utils/markdown'
 import { downloadMarkdown } from '@/utils/exportMarkdown'
-import { isFileProducingTool, collectDeliverables, stripDeliverableMarkers } from '@/utils/turns'
+import { isFileProducingTool, collectDeliverables, stripDeliverableMarkers, summarizeToolCall } from '@/utils/turns'
+import { oneLine, splitPath, toolAction, toolDiff, toolKind, toolLinks, toolRead, toolSearch, toolShell } from '@/utils/toolView'
 import { fmtMessageTime } from '@/utils/time'
 import { fileApi } from '@/api/files'
 import JSZip from 'jszip'
@@ -17,12 +18,16 @@ import FilePreview from './preview/FilePreview.vue'
 import StreamMarkdown from './StreamMarkdown.vue'
 import ToolCallItem from './ToolCallItem.vue'
 import WidgetFrame from './WidgetFrame.vue'
+import TraceModal from './trace/TraceModal.vue'
 import TypeReveal from './TypeReveal.vue'
 
 const props = defineProps<{
   turn: Turn
   sessionId: number | null
 }>()
+
+/** 工具卡片里点击路径 → 通知外层打开文件面板预览 */
+const emit = defineEmits<{ (e: 'openFile', path: string): void }>()
 
 const chat = useChatStore()
 const msg = useMessage()
@@ -161,19 +166,93 @@ function toggleReason(i: number) {
   reasonOpen.value[k] = !isReasonOpen(props.turn.steps[i], i)
 }
 
+/** 系统提示(会话压缩等):默认流式期间展开、完成后收起,可手动切换 */
+const systemOpen = ref<Record<string, boolean>>({})
+const systemKey = (i: number) => `${props.turn.id}-sys${i}`
+function isSystemOpen(step: Step, i: number): boolean {
+  const manual = systemOpen.value[systemKey(i)]
+  if (manual !== undefined) return manual
+  return turnInProgress.value
+}
+function toggleSystem(i: number) {
+  systemOpen.value[systemKey(i)] = !isSystemOpen(props.turn.steps[i], i)
+}
+function systemTitle(step: Step): string {
+  const text = stepDisplayText(step).trim()
+  if (!text) return t('turn.systemCompact')
+  const first = text.split('\n').map((s) => s.trim()).find(Boolean) || ''
+  // 压缩摘要正文通常以 SESSION INTENT 开头,并在末尾带「会话历史已压缩」提示
+  if (
+    text.includes(t('chatStore.historyCompact')) ||
+    text.includes('会话历史已压缩') ||
+    /^SESSION INTENT/i.test(first) ||
+    text.length > 120
+  ) {
+    return t('turn.systemCompact')
+  }
+  return first.length > 80 ? first.slice(0, 80) + '…' : first
+}
+
 /** 步骤时间线容器(.timeline,限高 420px 内部滚动):流式期间若用户未上翻则吸底跟随最新步骤 */
 const timelineEl = ref<HTMLElement | null>(null)
 let timelineStuck = true
+let timelineRaf = 0
+let timelineObserver: ResizeObserver | null = null
+
 function onTimelineScroll() {
   const el = timelineEl.value
   if (!el) return
   timelineStuck = el.scrollTop + el.clientHeight >= el.scrollHeight - 60
+  if (!timelineStuck) cancelAnimationFrame(timelineRaf)
 }
-function scrollTimelineToBottom() {
+
+/** 平滑跟随到底部:内容增长时用 rAF 缓动,避免每来一段就"啪"地跳到最底 */
+function scrollTimelineToBottom(instant = false) {
   const el = timelineEl.value
   if (!el || !timelineStuck) return
-  if (el.scrollHeight > el.clientHeight) el.scrollTop = el.scrollHeight
+  const target = Math.max(0, el.scrollHeight - el.clientHeight)
+  if (target <= el.scrollTop + 1) return
+  cancelAnimationFrame(timelineRaf)
+  if (instant) {
+    el.scrollTop = target
+    return
+  }
+  const tick = () => {
+    const node = timelineEl.value
+    if (!node || !timelineStuck) return
+    const max = Math.max(0, node.scrollHeight - node.clientHeight)
+    const delta = max - node.scrollTop
+    if (Math.abs(delta) < 1) {
+      node.scrollTop = max
+      return
+    }
+    node.scrollTop += delta * 0.28
+    timelineRaf = requestAnimationFrame(tick)
+  }
+  timelineRaf = requestAnimationFrame(tick)
 }
+
+// 内容本身变高(推理文字增长、工具输出刷新)也平滑跟随,不只依赖 steps.length
+watch(
+  timelineEl,
+  (el) => {
+    timelineObserver?.disconnect()
+    timelineObserver = null
+    if (!el) return
+    const list = el.firstElementChild
+    if (!list) return
+    timelineObserver = new ResizeObserver(() => {
+      if (turnInProgress.value) scrollTimelineToBottom()
+    })
+    timelineObserver.observe(list)
+  },
+  { flush: 'post' },
+)
+// 从折叠展开时直接定位到最新一步
+onBeforeUnmount(() => {
+  timelineObserver?.disconnect()
+  cancelAnimationFrame(timelineRaf)
+})
 /** 活跃推理段内容增长时,时间线吸底(读 displayContent,以感知 liveReasoning) */
 const activeReasonLen = computed(() => {
   const s = props.turn.steps.find((x) => x.kind === 'reason' && isStepActive(x))
@@ -186,7 +265,7 @@ watch(activeReasonLen, async () => {
 // 新步骤(工具/更多推理段)追加进时间线时也吸底,保证流式中最新输出无需手动滚动
 watch(() => props.turn.steps.length, () => {
   if (!turnInProgress.value) return
-  nextTick(scrollTimelineToBottom)
+  nextTick(() => scrollTimelineToBottom())
 })
 
 // ---------- 简单模式(单条 assistant 无 tool)----------
@@ -275,10 +354,13 @@ const toolSummary = computed(() => {
     byKey.get(cat.key)!.calls.push(tc)
   }
   return Array.from(byKey.values()).map((g) => {
-    const counter = new Map<string, number>()
+    const counter = new Map<string, { count: number; sample: any; errors: number }>()
     for (const c of g.calls) {
       const n = String(c?.name || 'tool')
-      counter.set(n, (counter.get(n) || 0) + 1)
+      const row = counter.get(n) || { count: 0, sample: c, errors: 0 }
+      row.count++
+      if (c?.status === 'error' || c?.status === 'failed') row.errors++
+      counter.set(n, row)
     }
     const running = g.calls.some((c) => c?.status === 'running')
     const error = g.calls.some((c) => c?.status === 'error' || c?.status === 'failed')
@@ -287,12 +369,85 @@ const toolSummary = computed(() => {
       label: g.label,
       icon: g.icon,
       total: g.calls.length,
-      tools: Array.from(counter.entries()).map(([name, count]) => ({ name, count })),
+      tools: Array.from(counter.entries()).map(([name, v]) => {
+        const sample = v.sample as ToolCall
+        return {
+          name,
+          count: v.count,
+          errors: v.errors,
+          label: summaryLabel(sample),
+          object: summaryObject(sample),
+          diff: summaryDiff(sample),
+          icon: summaryIcon(sample),
+        }
+      }),
       running,
       error,
     }
   })
 })
+
+/** 摘要行的动作名(编辑/运行/读取…);未知工具回退到原始工具名 */
+function summaryLabel(tc: ToolCall): string {
+  const action = toolAction(tc)
+  return action ? t(`toolCall.action.${action}`) : (tc.name || 'tool')
+}
+
+/** 摘要行的对象(文件名/命令/搜索词/链接),与卡片里 chip 的次级信息保持一致 */
+function summaryObject(tc: ToolCall): string {
+  if (!tc) return ''
+  switch (toolKind(tc)) {
+    case 'diff': {
+      const v = toolDiff(tc)
+      return v?.path ? splitPath(v.path).base : ''
+    }
+    case 'shell': {
+      const v = toolShell(tc)
+      return v ? oneLine(v.command, 64) : ''
+    }
+    case 'read': {
+      const v = toolRead(tc)
+      return v?.path ? splitPath(v.path).base : ''
+    }
+    case 'search': {
+      const v = toolSearch(tc)
+      return v?.query ? oneLine(v.query, 40) : ''
+    }
+    case 'link': {
+      const v = toolLinks(tc)
+      if (v?.urls.length) return oneLine(v.urls[0].replace(/^https?:\/\//i, ''), 48)
+      return v?.query || ''
+    }
+    default:
+      return oneLine(summarizeToolCall(tc), 48)
+  }
+}
+
+/** 摘要行的 diff 统计(仅编辑类) */
+function summaryDiff(tc: ToolCall): { add: number; del: number } | null {
+  if (toolKind(tc) !== 'diff') return null
+  const v = toolDiff(tc)
+  if (!v) return null
+  return { add: v.diff.additions, del: v.diff.deletions }
+}
+
+/** 摘要行图标(与工具卡片的图标体系一致) */
+function summaryIcon(tc: ToolCall): 'pencil' | 'terminal' | 'file' | 'search' | 'link' | 'wrench' {
+  switch (toolKind(tc)) {
+    case 'diff':
+      return 'pencil'
+    case 'shell':
+      return 'terminal'
+    case 'read':
+      return 'file'
+    case 'search':
+      return 'search'
+    case 'link':
+      return 'link'
+    default:
+      return 'wrench'
+  }
+}
 
 /** 本轮生成耗时(秒)。
  *  1) 当前会话内:store 在流式结束时按 assistant 消息 id 记录(从发送时刻精确计时)
@@ -321,6 +476,11 @@ const faStarred = computed(() =>
     ? fav.isFavorite(props.sessionId, faMessageId.value)
     : false,
 )
+
+/** 模型调用溯源:本轮调用次数 / 关联的 assistant 消息 id */
+const traceOpen = ref(false)
+const traceCount = computed(() => props.turn.finalAnswer?.message.parts?.llmCalls ?? 0)
+const traceMsgId = computed(() => props.turn.finalAnswer?.message.agentMessageId || '')
 
 function toggleFaStar() {
   if (props.sessionId == null || faMessageId.value <= 0) return
@@ -471,6 +631,11 @@ type TimelineBlock =
   | { type: 'step'; step: Step; index: number }
   | { type: 'group'; name: string; items: { step: Step; index: number }[] }
 
+function blockKey(b: TimelineBlock, i: number): string {
+  // 用块内第一个步骤的下标作 key:单个工具步骤变成同名工具组时 key 不变,避免闪现
+  return 'b-' + (b.type === 'step' ? b.index : (b.items[0]?.index ?? i))
+}
+
 const displayBlocks = computed<TimelineBlock[]>(() => {
   const raw: TimelineBlock[] = []
   for (let i = 0; i < props.turn.steps.length; i++) {
@@ -502,6 +667,11 @@ const openGroups = ref<Record<number, boolean>>({})
 function toggleGroup(i: number) {
   openGroups.value[i] = !openGroups.value[i]
 }
+/** 组内出现失败时默认展开(错误不该藏在折叠里);用户手动折叠后以手动态为准 */
+function groupOpen(i: number, items: { step: Step }[]): boolean {
+  const ov = openGroups.value[i]
+  return ov ?? groupStatus(items) === 'err'
+}
 function groupStatus(items: { step: Step }[]): 'run' | 'ok' | 'err' {
   for (const it of items) {
     for (const tc of it.step.toolCalls ?? []) {
@@ -510,6 +680,17 @@ function groupStatus(items: { step: Step }[]): 'run' | 'ok' | 'err' {
     }
   }
   return 'ok'
+}
+
+/** 点「有错误」:展开本回合时间线并滚到第一个失败的卡片 */
+const rootEl = ref<HTMLElement | null>(null)
+async function jumpToError() {
+  chat.setCollapse(props.turn.id, true)
+  await nextTick()
+  const el = rootEl.value?.querySelector('.tool-item .chip.err') as HTMLElement | null
+  if (!el) return
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  el.focus({ preventScroll: true })
 }
 
 /** 组件内「追问」按钮(window.sendPrompt):直接作为新消息发送 */
@@ -529,6 +710,19 @@ const turnPending = computed(() => {
   }
   return null
 })
+
+/** 出现待确认请求时:滚动到确认卡并提示一次,避免长回合里"看着像卡住" */
+const permBlockEl = ref<HTMLElement | null>(null)
+watch(
+  () => turnPending.value?.requestId,
+  async (id) => {
+    if (!id) return
+    await nextTick()
+    permBlockEl.value?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    msg.warning(t('turn.permWaitingToast'), { duration: 6000 })
+  },
+  { immediate: true },
+)
 
 const permSubmitting = ref(false)
 const questionAnswer = ref('')
@@ -658,6 +852,11 @@ const stepsOpen = computed<boolean>(() => {
   if (ov !== undefined) return ov
   // 流式期间展开(推理/步骤按序滚动),完成后折叠;用户可点头部手动展开/收起。
   return turnInProgress.value
+})
+
+// 从折叠展开时直接定位到最新一步
+watch(stepsOpen, (v) => {
+  if (v) nextTick(() => scrollTimelineToBottom(true))
 })
 
 function toggleSteps() {
@@ -796,6 +995,9 @@ function stepHtml(step: Step): string {
       :streaming="isStepActive(turn.finalAnswer)"
       :session-id="props.sessionId"
       :turn-id="props.turn.id"
+      actions-bottom
+      :trace-count="traceCount"
+      :trace-agent-message-id="traceMsgId"
     />
     <DeliverableBar
       v-if="verifiedDeliverables.length"
@@ -808,7 +1010,7 @@ function stepHtml(step: Step): string {
     />
   </template>
   <!-- 多步模式:时间线步骤流(Trae 风格)= 头部 + 可折叠步骤时间线 + 最终答案 -->
-  <div v-else class="turn">
+  <div v-else ref="rootEl" class="turn">
     <div class="turn-head">
       <span class="turn-logo">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5l1.9 5.9 6.1 1.9-5 4.4 1.5 6.3L12 17.5l-4.5 3.5 1.5-6.3-5-4.4 6.1-1.9L12 2.5z"/></svg>
@@ -831,12 +1033,31 @@ function stepHtml(step: Step): string {
             <span class="cat-title">{{ g.label }}</span>
             <span class="cat-count">{{ g.total }}</span>
             <span v-if="g.running" class="cat-status run">{{ t('turn.statusRunning') }}</span>
-            <span v-else-if="g.error" class="cat-status err">{{ t('turn.statusError') }}</span>
+            <button
+              v-else-if="g.error"
+              type="button"
+              class="cat-status err cat-jump"
+              :title="t('turn.jumpToError')"
+              @click="jumpToError"
+            >{{ t('turn.statusError') }}</button>
           </div>
           <div class="tools">
-            <div v-for="t in g.tools" :key="t.name" class="tool-row">
-              <code class="t-name">{{ t.name }}</code>
-              <span v-if="t.count > 1" class="t-count">×{{ t.count }}</span>
+            <div v-for="row in g.tools" :key="row.name" class="tool-row">
+              <svg v-if="row.icon === 'pencil'" class="t-ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+              <svg v-else-if="row.icon === 'terminal'" class="t-ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg>
+              <svg v-else-if="row.icon === 'file'" class="t-ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              <svg v-else-if="row.icon === 'search'" class="t-ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+              <svg v-else-if="row.icon === 'link'" class="t-ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
+              <svg v-else class="t-ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+
+              <span class="t-label">{{ row.label }}</span>
+              <span v-if="row.object" class="t-obj" :title="row.object">{{ row.object }}</span>
+              <span v-if="row.diff" class="t-diff">
+                <span class="add">+{{ row.diff.add }}</span>
+                <span class="del">-{{ row.diff.del }}</span>
+              </span>
+              <span v-if="row.count > 1" class="t-count">×{{ row.count }}</span>
+              <span v-if="row.errors" class="t-err" :title="t('turn.statusError')">✗{{ row.errors > 1 ? row.errors : '' }}</span>
             </div>
           </div>
         </div>
@@ -849,89 +1070,106 @@ function stepHtml(step: Step): string {
           <svg class="rc-chev" :class="{ open: stepsOpen }" viewBox="0 0 24 24" width="12" height="12"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
         </div>
         <div v-show="stepsOpen" class="timeline" :ref="(el) => (timelineEl = (el as HTMLElement))" @scroll="onTimelineScroll">
-          <template v-for="(b, bi) in displayBlocks" :key="b.type + '-' + bi">
-          <!-- 单步骤块:思考/解说/含解说的工具步骤;节点统一为小圆点,含义由内容自表达 -->
-          <div v-if="b.type === 'step'" class="tstep">
-            <span class="tstep-dot" :class="{ active: isStepActive(b.step) }" />
+          <TransitionGroup name="tstep-anim" tag="div" class="timeline-list">
+          <div
+            v-for="(b, bi) in displayBlocks"
+            :key="blockKey(b, bi)"
+            class="tstep"
+          >
+            <span v-if="b.type === 'step'" class="tstep-dot" :class="{ active: isStepActive(b.step) }" />
+            <span v-else class="tstep-dot" />
             <div class="tstep-body">
-              <!-- 系统提示(会话压缩等):独立样式行,与思考/正文区分 -->
-              <div v-if="b.step.kind === 'system'" class="system-note">
-                <span class="system-tag">{{ t('turn.tagSystem') }}</span>
-                <span class="system-text">{{ stepDisplayText(b.step) }}</span>
-              </div>
-              <!-- 推理段:可折叠"思考"行,流式时限高滚动吸底,结束自动折叠,可点开回看 -->
-              <div v-else-if="b.step.kind === 'reason' && displayContent(b.step)" class="reason-box">
-                <div class="reason-head" @click.stop="toggleReason(b.index)">
-                  <span class="rc-tag">{{ t('turn.tagReasoning') }}</span>
-                  <svg
-                    class="rc-chev"
-                    :class="{ open: isReasonOpen(b.step, b.index) }"
-                    viewBox="0 0 24 24"
-                    width="12"
-                    height="12"
-                  ><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
+              <template v-if="b.type === 'step'">
+                <!-- 系统提示(会话压缩等):独立样式行,与思考/正文区分 -->
+                <!-- 系统提示(会话压缩等):可折叠节点,摘要文本只在这里输出 -->
+                <div v-if="b.step.kind === 'system'" class="system-note">
+                  <div class="system-head" @click.stop="toggleSystem(b.index)">
+                    <span class="system-tag">{{ t('turn.tagSystem') }}</span>
+                    <span class="system-title" :title="systemTitle(b.step)">{{ systemTitle(b.step) }}</span>
+                    <svg
+                      class="rc-chev"
+                      :class="{ open: isSystemOpen(b.step, b.index) }"
+                      viewBox="0 0 24 24"
+                      width="12"
+                      height="12"
+                    ><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
+                  </div>
+                  <div v-show="isSystemOpen(b.step, b.index)" class="system-body">{{ stepDisplayText(b.step) }}</div>
+                </div>
+                <!-- 推理段:可折叠"思考"行,流式时限高滚动吸底,结束自动折叠,可点开回看 -->
+                <div v-else-if="b.step.kind === 'reason' && displayContent(b.step)" class="reason-box">
+                  <div class="reason-head" @click.stop="toggleReason(b.index)">
+                    <span class="rc-tag">{{ t('turn.tagReasoning') }}</span>
+                    <svg
+                      class="rc-chev"
+                      :class="{ open: isReasonOpen(b.step, b.index) }"
+                      viewBox="0 0 24 24"
+                      width="12"
+                      height="12"
+                    ><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
+                  </div>
+                  <div
+                    v-show="isReasonOpen(b.step, b.index)"
+                    class="reason-body"
+                  ><TypeReveal v-if="isStepActive(b.step)" :text="displayContent(b.step)" :dim-tail="0" :max-chars="1200" thinking active /><template v-else>{{ displayContent(b.step) }}</template></div>
                 </div>
                 <div
-                  v-show="isReasonOpen(b.step, b.index)"
-                  class="reason-body"
-                ><TypeReveal v-if="isStepActive(b.step)" :text="displayContent(b.step)" :dim-tail="0" :max-chars="1200" thinking active /><template v-else>{{ displayContent(b.step) }}</template></div>
-              </div>
-              <div
-                v-else-if="stepDisplayText(b.step)"
-                class="step-narration"
-                :class="{ 'step-narration--active': isStepActive(b.step) }"
-              ><TypeReveal v-if="isStepActive(b.step)" :text="stepDisplayText(b.step)" :dim-tail="0" thinking active /><span v-else class="narration-md" v-html="stepHtml(b.step)" /></div>
-              <div v-if="displayToolCalls(b.step).length" class="tool-calls">
-                <ToolCallItem
-                  v-for="tc in displayToolCalls(b.step)"
-                  :key="tc.id || tc.name"
-                  :tc="tc"
-                  @download="downloadFile"
-                />
-              </div>
+                  v-else-if="stepDisplayText(b.step)"
+                  class="step-narration"
+                  :class="{ 'step-narration--active': isStepActive(b.step) }"
+                ><TypeReveal v-if="isStepActive(b.step)" :text="stepDisplayText(b.step)" :dim-tail="0" thinking active /><span v-else class="narration-md" v-html="stepHtml(b.step)" /></div>
+                <div v-if="displayToolCalls(b.step).length" class="tool-calls">
+                  <ToolCallItem
+                    v-for="tc in displayToolCalls(b.step)"
+                    :key="tc.id || tc.name"
+                    :tc="tc"
+                    @download="downloadFile"
+                    @open-file="emit('openFile', $event)"
+                  />
+                </div>
+              </template>
+              <template v-else>
+                <div class="tool-group-head" @click="toggleGroup(bi)">
+                  <span class="group-name">{{ b.name }}</span>
+                  <span class="group-count">{{ b.items.length }}</span>
+                  <span class="group-status" :class="groupStatus(b.items)">{{ groupStatus(b.items) === 'run' ? '…' : groupStatus(b.items) === 'err' ? '✗' : '✓' }}</span>
+                  <svg class="rc-chev" :class="{ open: groupOpen(bi, b.items) }" viewBox="0 0 24 24" width="12" height="12"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
+                </div>
+                <div v-show="groupOpen(bi, b.items)" class="tool-group-items">
+                  <template v-for="it in b.items" :key="it.index">
+                    <div class="tool-calls">
+                      <ToolCallItem
+                        v-for="tc in displayToolCalls(it.step)"
+                        :key="tc.id || tc.name"
+                        :tc="tc"
+                        @download="downloadFile"
+                        @open-file="emit('openFile', $event)"
+                      />
+                    </div>
+                  </template>
+                </div>
+              </template>
             </div>
           </div>
-          <!-- 同名工具组块:连续同类操作收纳为一行,点击展开逐条 -->
-          <div v-else class="tstep">
-            <span class="tstep-dot" />
-            <div class="tstep-body">
-              <div class="tool-group-head" @click="toggleGroup(bi)">
-                <span class="group-name">{{ b.name }}</span>
-                <span class="group-count">{{ b.items.length }}</span>
-                <span class="group-status" :class="groupStatus(b.items)">{{ groupStatus(b.items) === 'run' ? '…' : groupStatus(b.items) === 'err' ? '✗' : '✓' }}</span>
-                <svg class="rc-chev" :class="{ open: openGroups[bi] }" viewBox="0 0 24 24" width="12" height="12"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
-              </div>
-              <div v-show="openGroups[bi]" class="tool-group-items">
-                <template v-for="it in b.items" :key="it.index">
-                  <div class="tool-calls">
-                    <ToolCallItem
-                      v-for="tc in displayToolCalls(it.step)"
-                      :key="tc.id || tc.name"
-                      :tc="tc"
-                      @download="downloadFile"
-                    />
-                  </div>
-                </template>
-              </div>
-            </div>
-          </div>
-          </template>
           <div
             v-if="turn.finalAnswer && displayToolCalls(turn.finalAnswer).length"
+            key="final-tools"
             class="tstep"
           >
             <span class="tstep-dot" />
             <div class="tstep-body">
-              <div class="tool-calls" v-if="displayToolCalls(turn.finalAnswer).length">
+              <div class="tool-calls">
                 <ToolCallItem
                   v-for="tc in displayToolCalls(turn.finalAnswer)"
                   :key="tc.id || tc.name"
                   :tc="tc"
                   @download="downloadFile"
+                  @open-file="emit('openFile', $event)"
                 />
               </div>
             </div>
           </div>
+          </TransitionGroup>
         </div>
       </div>
 
@@ -955,6 +1193,8 @@ function stepHtml(step: Step): string {
 
       <!-- 最终答案 -->
       <div v-if="turn.finalAnswer || liveStreamText" class="fa-wrap" :class="{ 'md-tail-dim': answerStreaming }">
+        <StreamMarkdown v-if="answerContent" :content="answerContent" :final="!answerStreaming" />
+        <!-- 操作栏:放在回答左下角(与截图样式一致) -->
         <div v-if="turn.finalAnswer" class="fa-tools">
           <button
             class="copy-btn star-btn"
@@ -986,8 +1226,19 @@ function stepHtml(step: Step): string {
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
           </button>
+          <!-- 操作日志:本轮模型调用记录 -->
+          <button
+            v-if="traceCount > 0 && traceMsgId"
+            class="copy-btn trace-btn"
+            :class="{ on: traceOpen }"
+            :title="t('trace.logTitle')"
+            @click="traceOpen = !traceOpen"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg>
+            <span class="trace-n">{{ traceCount }}</span>
+          </button>
+          <span v-if="!answerStreaming" class="gen-label">{{ t('turn.aiGenerated') }}</span>
         </div>
-        <StreamMarkdown v-if="answerContent" :content="answerContent" :final="!answerStreaming" />
       </div>
       <div v-if="followUpQuestions.length" class="followups">
         <span class="fu-label">{{ t('turn.followLabel') }}</span>
@@ -1008,7 +1259,7 @@ function stepHtml(step: Step): string {
       </div>
 
       <!-- 人工确认:危险操作需用户允许/拒绝,或回答 agent 提问,生成在此暂停 -->
-      <div v-if="turnPending" class="perm-block" :class="{ 'question-block': isQuestion }">
+      <div v-if="turnPending" ref="permBlockEl" class="perm-block" :class="{ 'question-block': isQuestion }">
         <div class="perm-head">
           <svg v-if="!isQuestion" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>
           <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
@@ -1109,6 +1360,14 @@ function stepHtml(step: Step): string {
       :path="previewPath"
     />
   </n-modal>
+
+  <!-- 操作日志弹窗(回答左下角按钮触发;简单模式由 ChatMessage 自己渲染) -->
+  <TraceModal
+    v-if="!simpleMode && traceCount > 0 && traceMsgId"
+    v-model:show="traceOpen"
+    :agent-message-id="traceMsgId"
+    :count="traceCount"
+  />
 </template>
 
 <style scoped>
@@ -1190,20 +1449,20 @@ function stepHtml(step: Step): string {
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2.2em), rgba(0, 0, 0, 0.25) calc(100% - 0.5em));
   mask-image: linear-gradient(to bottom, #000 calc(100% - 2.2em), rgba(0, 0, 0, 0.25) calc(100% - 0.5em));
 }
-/* 最终答案工具条:水平排列,悬停显示 */
+/* 最终答案操作栏:放在回答左下角,常显 */
 .fa-tools {
-  position: absolute; top: -6px; right: -6px; z-index: 2;
-  display: flex; align-items: center; gap: 2px;
-  padding: 2px; border-radius: 6px;
-  background: var(--bg-elev);
-  border: 1px solid var(--border-soft);
-  box-shadow: var(--shadow);
-  opacity: 0; transition: opacity .15s;
+  display: flex; align-items: center; gap: 4px;
+  margin-top: 8px; min-height: 24px;
 }
-.fa-wrap:hover .fa-tools { opacity: 1; }
-/* 触屏:最终答案工具条常显 */
-@media (hover: none) {
-  .fa-tools { opacity: 1; }
+.fa-tools .copy-btn { padding: 4px 5px; }
+.trace-btn { gap: 3px; }
+.trace-btn.on { color: var(--accent-text); background: var(--accent-soft); }
+.trace-n { font-size: 10px; font-family: ui-monospace, monospace; color: var(--text-4); }
+.trace-btn.on .trace-n { color: inherit; }
+.gen-label {
+  margin-left: 6px; padding-left: 8px;
+  border-left: 1px solid var(--border-soft);
+  font-size: 11px; color: var(--text-4); line-height: 1;
 }
 .copy-btn {
   background: transparent; border: none; cursor: pointer;
@@ -1262,6 +1521,21 @@ function stepHtml(step: Step): string {
 .timeline::-webkit-scrollbar { width: 4px; }
 .timeline::-webkit-scrollbar-thumb { background: transparent; border-radius: 2px; }
 .timeline:hover::-webkit-scrollbar-thumb { background: var(--border); }
+
+/* 新步骤进入:轻微上移 + 淡入;已有步骤位置变化时平滑移动 */
+.tstep-anim-enter-active {
+  transition: opacity .24s ease, transform .24s cubic-bezier(.2, .8, .2, 1);
+}
+.tstep-anim-enter-from { opacity: 0; transform: translateY(-6px); }
+.tstep-anim-leave-active { transition: opacity .16s ease; }
+.tstep-anim-leave-to { opacity: 0; }
+.tstep-anim-move { transition: transform .24s cubic-bezier(.2, .8, .2, 1); }
+/* 新的工具调用 chip 也做一次轻量淡入,避免突然出现 */
+.tool-calls > * { animation: tool-call-in .22s ease both; }
+@keyframes tool-call-in {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: none; }
+}
 /* 连接线逐步骤自绘(而非容器级 ::before):时间线限高内滚动时,
    容器级绝对线只覆盖可视框高度,长内容滚动后中后段会断线 */
 .tstep {
@@ -1374,22 +1648,45 @@ function stepHtml(step: Step): string {
 }
 .step-narration :deep(pre.hljs) { background: var(--code-bg); border-radius: var(--radius-sm); padding: 8px; overflow-x: auto; }
 .step-narration :deep(code) { font-family: ui-monospace, monospace; font-size: 12px; }
-/* 系统提示(会话压缩等):浅底提示条,与思考/正文区分 */
+/* 系统提示(会话压缩等):可折叠节点,摘要正文只在节点内展开 */
 .system-note {
-  display: inline-flex; align-items: center; gap: 8px;
-  margin: 2px 0; padding: 4px 10px;
+  margin: 2px 0;
+  padding: 3px 9px 4px;
   font-size: 12px; color: var(--text-2);
   background: var(--accent-soft);
   border: 1px solid var(--border-soft);
   border-radius: 8px;
 }
+.system-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 2px 0; cursor: pointer; user-select: none;
+}
+.system-head:hover .system-title { color: var(--text-1); }
 .system-tag {
   font-size: 11px; font-weight: 600;
   color: var(--accent-text);
   padding: 0 6px; border-radius: 4px;
   background: var(--surface);
+  flex-shrink: 0;
 }
-.system-text { white-space: pre-wrap; word-break: break-word; }
+.system-title {
+  flex: 1; min-width: 0;
+  font-size: 12px; color: var(--text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  transition: color .15s ease;
+}
+.system-body {
+  margin: 4px 0 2px;
+  padding: 8px 10px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--surface);
+  border-radius: 6px;
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px; line-height: 1.65;
+  color: var(--text-2);
+  white-space: pre-wrap; word-break: break-word;
+}
 
 .tool-calls { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 
@@ -1539,9 +1836,27 @@ function stepHtml(step: Step): string {
 .cat-status { font-size: 11px; margin-left: auto; }
 .cat-status.run { color: var(--accent-text); }
 .cat-status.err { color: var(--err); }
+.cat-jump {
+  border: 0; background: transparent; padding: 2px 6px; border-radius: 6px;
+  font-family: inherit; cursor: pointer;
+}
+.cat-jump:hover { background: color-mix(in srgb, var(--err) 12%, transparent); }
+.cat-jump:focus-visible { outline: 2px solid var(--err); outline-offset: 1px; }
 .tools { padding: 6px 8px; }
-.tool-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid var(--border-soft); }
+.tool-row { display: flex; align-items: center; gap: 7px; padding: 6px 8px; border-bottom: 1px solid var(--border-soft); min-width: 0; }
 .tool-row:last-child { border-bottom: none; }
-.t-name { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12.5px; font-weight: 600; color: var(--accent-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.t-count { font-size: 11px; color: var(--text-3); }
+.tool-row .t-ic { color: var(--text-3); flex-shrink: 0; }
+.t-label { font-size: 12.5px; font-weight: 600; color: var(--text); flex-shrink: 0; }
+.t-obj {
+  font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--accent-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.t-diff {
+  margin-left: auto; display: inline-flex; gap: 5px; flex-shrink: 0;
+  font-family: ui-monospace, monospace; font-size: 11px;
+}
+.t-diff .add { color: var(--ok); }
+.t-diff .del { color: var(--err); }
+.t-count { font-size: 11px; color: var(--text-3); flex-shrink: 0; }
+.t-err { margin-left: auto; color: var(--err); font-size: 11px; font-weight: 600; flex-shrink: 0; }
 </style>

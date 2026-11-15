@@ -18,6 +18,8 @@ const { t } = useI18n()
 const customSkills = ref<string[]>([])
 const skillsPick = ref<string[]>([])
 const skillsOpen = ref(false)
+/** 应用技能中的 loading(没有会话时会先建会话,给用户可见反馈,也防重复点击) */
+const skillSaving = ref(false)
 const SKILL_PAGE_SIZE = 8
 const skillPage = ref(1)
 const skillUnpicked = computed(() => customSkills.value.filter((s) => !skillsPick.value.includes(s)))
@@ -35,15 +37,24 @@ async function openSkills() {
   skillsOpen.value = true
 }
 async function applySkills() {
-  if (!chat.currentSessionId) return
+  if (skillSaving.value) return
+  skillSaving.value = true
   try {
-    const updated = await chatApi.updateSession(chat.currentSessionId, { skills: skillsPick.value })
-    const idx = chat.sessions.findIndex((s) => s.id === chat.currentSessionId)
+    // 首页(还没有会话)也要能应用:先建一个空会话,否则原来会静默 return,表现为"点了没反应"
+    let sid = chat.currentSessionId
+    if (!sid) {
+      const s = await chat.createSession()
+      sid = s.id
+    }
+    const updated = await chatApi.updateSession(sid, { skills: skillsPick.value })
+    const idx = chat.sessions.findIndex((s) => s.id === updated.id)
     if (idx >= 0) chat.sessions[idx] = updated
     skillsOpen.value = false
     msg.success(t('pickers2.skillSaved'))
   } catch (e: any) {
     msg.error(e?.response?.data?.message || e?.message || t('pickers2.saveFailed'))
+  } finally {
+    skillSaving.value = false
   }
 }
 
@@ -87,12 +98,17 @@ async function openMcp() {
   mcpOpen.value = true
 }
 async function applyMcp() {
-  if (!chat.currentSessionId) return
   if (mcpSaving.value) return
   mcpSaving.value = true
   try {
-    const updated = await chatApi.updateSession(chat.currentSessionId, { mcpServers: mcpPick.value })
-    const idx = chat.sessions.findIndex((s) => s.id === chat.currentSessionId)
+    // 与技能应用一致:首页无会话时先建会话,避免"点了没反应"
+    let sid = chat.currentSessionId
+    if (!sid) {
+      const s = await chat.createSession()
+      sid = s.id
+    }
+    const updated = await chatApi.updateSession(sid, { mcpServers: mcpPick.value })
+    const idx = chat.sessions.findIndex((s) => s.id === updated.id)
     if (idx >= 0) chat.sessions[idx] = updated
     mcpOpen.value = false
     msg.success(t('pickers2.mcpSaved'))
@@ -148,7 +164,7 @@ defineExpose({ openSkills, openMcp })
       <span class="sp-tip">{{ t('pickers.tip') }}</span>
       <div class="sp-action-btns">
         <n-button size="medium" quaternary @click="skillsOpen = false">{{ t('common.cancel') }}</n-button>
-        <n-button size="medium" type="primary" @click="applySkills">{{ t('common.apply') }}</n-button>
+        <n-button size="medium" type="primary" :loading="skillSaving" :disabled="skillSaving" @click="applySkills">{{ t('common.apply') }}</n-button>
       </div>
     </div>
   </n-modal>

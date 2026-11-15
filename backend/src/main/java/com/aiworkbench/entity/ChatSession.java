@@ -22,6 +22,9 @@ public class ChatSession {
     private String title;
     private String agent;
 
+    /** 审批模式:manual=危险操作需人工确认;auto=完全访问(工具自动执行,不弹确认) */
+    private String approvalMode;
+
     /** 会话勾选启用的自定义技能名(JSON 数组文本,如 ["data-cleaner"];空=仅内置技能) */
     private String skills;
 

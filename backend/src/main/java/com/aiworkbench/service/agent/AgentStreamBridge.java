@@ -14,6 +14,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
@@ -47,6 +48,29 @@ public class AgentStreamBridge {
     /** 流式期间文本节流落库最小间隔(ms),避免反复重写 MEDIUMTEXT */
     private static final long TEXT_PERSIST_MIN_INTERVAL_MS = 800L;
 
+    /** HITL 等待确认超时(秒):超时自动按"拒绝"恢复,避免整轮无限挂起。0 或负数=不超时 */
+    private static final long PERMISSION_TIMEOUT_SEC = resolvePermissionTimeout();
+
+    private static long resolvePermissionTimeout() {
+        String env = System.getenv("PERMISSION_TIMEOUT_SEC");
+        if (env != null && !env.isBlank()) {
+            try {
+                return Long.parseLong(env.trim());
+            } catch (NumberFormatException ignored) {
+                // 落到系统属性/默认值
+            }
+        }
+        return Long.getLong("aiwb.permission.timeout.sec", 180L);
+    }
+
+    /** 权限超时调度器(守护线程,不阻止 JVM 退出) */
+    private static final java.util.concurrent.ScheduledExecutorService PERM_TIMEOUT_SCHED =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "perm-timeout");
+                t.setDaemon(true);
+                return t;
+            });
+
     private final ChatMessageService chatMessageService;
     private final SessionEventHub hub;
     private final ObjectMapper objectMapper;
@@ -54,6 +78,7 @@ public class AgentStreamBridge {
     private final java.util.concurrent.Executor executor;
     private final McpConfigService mcpConfigService;
     private final ProviderConfigService providerConfigService;
+    private final LlmTraceService llmTraceService;
 
     /** 在途生成状态,key = 会话外部 id("da-" 前缀)。 */
     private final Map<String, TurnStream> streams = new ConcurrentHashMap<>();
@@ -66,6 +91,7 @@ public class AgentStreamBridge {
             ObjectMapper objectMapper,
             McpConfigService mcpConfigService,
             ProviderConfigService providerConfigService,
+            LlmTraceService llmTraceService,
             @org.springframework.beans.factory.annotation.Qualifier("taskExecutor")
                     java.util.concurrent.Executor taskExecutor) {
         String base = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
@@ -78,6 +104,7 @@ public class AgentStreamBridge {
         this.executor = taskExecutor;
         this.mcpConfigService = mcpConfigService;
         this.providerConfigService = providerConfigService;
+        this.llmTraceService = llmTraceService;
     }
 
     /**
@@ -91,8 +118,10 @@ public class AgentStreamBridge {
         }
         TurnStream ts = new TurnStream(sessionId);
         ts.userId = userId;
+        ts.dbSessionId = session.getId();
         ts.skills = parseSkillIds(session.getSkills());
         ts.mcpServers = enabledMcpServers(userId, session.getMcpServers());
+        ts.approvalMode = "auto".equals(session.getApprovalMode()) ? "auto" : "manual";
         try {
             ts.runtimeModel = providerConfigService.resolveRuntimeModel(
                     session.getProviderId(), session.getModelId());
@@ -175,6 +204,25 @@ public class AgentStreamBridge {
      *
      * @return true=确有在途生成被终止
      */
+    @Scheduled(fixedDelay = 30_000)
+    public void watchdog() {
+        long now = System.currentTimeMillis();
+        for (TurnStream ts : streams.values()) {
+            if (ts.finalized.get() || ts.cancelled.get() || ts.pausedOnPermission) {
+                continue;
+            }
+            if (now - ts.lastEventAt < 240_000L) {
+                continue;
+            }
+            log.warn("stream stall detected (session={}), abort after {}ms without events",
+                    ts.sessionId, now - ts.lastEventAt);
+            ObjectNode err = objectMapper.createObjectNode();
+            err.put("message", "生成停滞超过 4 分钟,已中止本轮。请重试或拆分为更小的任务。");
+            hub.dispatch(ts.sessionId, "error", err);
+            finalize(ts, "error");
+        }
+    }
+
     public boolean abort(String sessionId) {
         TurnStream ts = streams.remove(sessionId);
         if (ts == null) {
@@ -188,6 +236,10 @@ public class AgentStreamBridge {
         }
         if (ts.subscription != null) {
             ts.subscription.dispose();
+        }
+        // 断连宽限触发的中止也要把消息定稿为 aborted,否则刷新后会一直显示"进行中"
+        if (!ts.finalized.get()) {
+            finalize(ts, "aborted");
         }
         log.info("abort: cancelled in-flight stream for session {}", sessionId);
         return true;
@@ -234,6 +286,33 @@ public class AgentStreamBridge {
         return true;
     }
 
+    /**
+     * 等待确认超时兜底:超时后自动按"拒绝"恢复本轮,并把超时事件告诉前端。
+     * 目的:防止 HITL 暂停无限挂起(用户离开/没看到确认卡时表现为"卡住")。
+     */
+    private void schedulePermissionTimeout(TurnStream ts, String requestId) {
+        if (PERMISSION_TIMEOUT_SEC <= 0) {
+            return;
+        }
+        PERM_TIMEOUT_SCHED.schedule(() -> {
+            try {
+                if (!ts.pausedOnPermission || !requestId.equals(ts.pendingPermissionRequestId)) {
+                    return; // 期间已确认/已恢复
+                }
+                log.warn("permission timeout after {}s, auto-reject session={} requestId={}",
+                        PERMISSION_TIMEOUT_SEC, ts.sessionId, requestId);
+                ObjectNode payload = objectMapper.createObjectNode();
+                payload.put("requestId", requestId);
+                payload.put("timeoutSec", PERMISSION_TIMEOUT_SEC);
+                hub.dispatch(ts.sessionId, "permission.timeout", payload);
+                resumePermission(ts.sessionId, requestId, "reject", null);
+            } catch (Exception e) {
+                log.warn("permission timeout handler failed (session={}): {}",
+                        ts.sessionId, e.toString());
+            }
+        }, PERMISSION_TIMEOUT_SEC, java.util.concurrent.TimeUnit.SECONDS);
+    }
+
     /** 单轮生成状态。 */
     private static final class TurnStream {
         final String sessionId;
@@ -252,7 +331,13 @@ public class AgentStreamBridge {
         volatile long lastPersistAt = System.currentTimeMillis();
         final long startedAt = System.currentTimeMillis();
         volatile Long userId;
+        /** 对应的 DB 会话 id(模型调用溯源用) */
+        volatile Long dbSessionId;
+        /** 本轮第几次模型调用(1 起) */
+        int llmCallIndex;
         volatile java.util.List<String> skills;
+        /** 审批模式:manual=危险操作需人工确认;auto=完全访问(agent 侧关闭所有中断) */
+        volatile String approvalMode = "manual";
         /** 本用户启用中的 MCP server 配置(管理员公共 + 用户私有) */
         volatile java.util.List<McpConfig> mcpServers;
         /** 本会话应使用的模型运行时配置(provider 解析;null=交由 agent-service 回退 env) */
@@ -272,6 +357,8 @@ public class AgentStreamBridge {
         volatile long reasoningTokens;
         volatile long cacheReadTokens;
         volatile long cacheWriteTokens;
+        /** 最近一次收到 agent-service 事件的时间;用于生成停滞看门狗 */
+        volatile long lastEventAt = System.currentTimeMillis();
 
         TurnStream(String sessionId) {
             this.sessionId = sessionId;
@@ -283,6 +370,7 @@ public class AgentStreamBridge {
             ObjectNode body = objectMapper.createObjectNode();
             body.put("thread_id", ts.sessionId);
             applyRuntimeModel(body, ts);
+            body.put("approval_mode", ts.approvalMode);
             ArrayNode msgs = body.putArray("messages");
             ObjectNode m = msgs.addObject();
             m.put("role", "user");
@@ -319,6 +407,7 @@ public class AgentStreamBridge {
             ObjectNode body = objectMapper.createObjectNode();
             body.put("thread_id", ts.sessionId);
             applyRuntimeModel(body, ts);
+            body.put("approval_mode", ts.approvalMode);
             body.putArray("messages");
             body.set("resume_decision", resumeDecision);
             subscribeStream(ts, userId, body);
@@ -359,6 +448,7 @@ public class AgentStreamBridge {
         if (ts.cancelled.get() || ts.finalized.get()) {
             return;
         }
+        ts.lastEventAt = System.currentTimeMillis();
         String type = sse.event();
         String data = sse.data();
         if (data == null || data.isBlank()) {
@@ -460,13 +550,24 @@ public class AgentStreamBridge {
                     hub.dispatch(ts.sessionId, "tool_result", out);
                     persistTurn(ts, "streaming");
                 }
+                case "summary_delta" -> {
+                    // 摘要模型实时 token:只转发前端时间线节点,最终由 summary 事件合并落库
+                    String chunk = payload.path("content").asText("");
+                    if (!chunk.isEmpty()) {
+                        ObjectNode d = objectMapper.createObjectNode();
+                        d.put("content", chunk);
+                        hub.dispatch(ts.sessionId, "summary_delta", d);
+                    }
+                }
                 case "summary" -> {
-                    // deepagents 会话压缩触发:转发前台提示,并落时间线(k=system)供刷新后回看
+                    // deepagents 会话压缩:摘要原文一次性随事件下发,落时间线(k=system)供刷新后回看
                     String sysMsg = payload.path("message").asText("会话历史已压缩");
+                    String summary = payload.path("summary").asText("");
+                    String persisted = summary.isEmpty() ? sysMsg : summary + "\n\n" + sysMsg;
                     ObjectNode se = objectMapper.createObjectNode();
-                    se.put("message", sysMsg);
+                    se.put("message", persisted);
                     hub.dispatch(ts.sessionId, "summary", se);
-                    appendTimelineSystem(ts, sysMsg);
+                    appendTimelineSystem(ts, persisted);
                     persistTurn(ts, "streaming");
                 }
                 case "usage" -> {
@@ -528,6 +629,7 @@ public class AgentStreamBridge {
                     allowed.add("approve");
                     allowed.add("reject");
                     hub.dispatch(ts.sessionId, "permission.asked", perm);
+                    schedulePermissionTimeout(ts, requestId);
                     log.info("permission.asked session={} requestId={} tool={}",
                             ts.sessionId, requestId, toolName);
                 }
@@ -566,7 +668,18 @@ public class AgentStreamBridge {
                     ArrayNode allowed = perm.putArray("allowed");
                     allowed.add("reply");
                     hub.dispatch(ts.sessionId, "permission.asked", perm);
+                    schedulePermissionTimeout(ts, requestId);
                     log.info("question session={} requestId={} options={}", ts.sessionId, requestId, optionsNode);
+                }
+                case "llm_call" -> {
+                    // 单次模型调用溯源:payload 为 gzip+base64 的请求/响应,落库不影响主链路
+                    ts.llmCallIndex++;
+                    try {
+                        llmTraceService.record(ts.userId, ts.dbSessionId, ts.sessionId,
+                                ts.assistantMessageId, ts.llmCallIndex, payload);
+                    } catch (Exception e) {
+                        log.warn("persist llm_call failed (session={}): {}", ts.sessionId, e.toString());
+                    }
                 }
                 case "done" -> {
                     hub.dispatch(ts.sessionId, "done", payload);
@@ -649,6 +762,8 @@ public class AgentStreamBridge {
         ObjectNode end = objectMapper.createObjectNode();
         end.put("id", ts.assistantMessageId);
         end.put("status", status);
+        // 本轮模型调用次数:前端据此立即显示「调用记录」入口,无需刷新会话
+        end.put("llmCalls", ts.llmCallIndex);
         hub.dispatch(ts.sessionId, "message.end", end);
     }
 
@@ -661,7 +776,8 @@ public class AgentStreamBridge {
                     ts.fullText.toString(), ts.toolCalls, ts.timeline, status, elapsedSec,
                     ts.contextTokens, ts.contextLimit,
                     new ChatMessageService.TurnUsage(ts.inputTokens, ts.outputTokens,
-                            ts.reasoningTokens, ts.cacheReadTokens, ts.cacheWriteTokens));
+                            ts.reasoningTokens, ts.cacheReadTokens, ts.cacheWriteTokens),
+                    ts.llmCallIndex);
         } catch (Exception e) {
             log.warn("persist turn failed (session={}): {}", ts.sessionId, e.toString());
         }

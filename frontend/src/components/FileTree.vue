@@ -170,6 +170,21 @@ async function open(node: FileNode) {
   }
 }
 
+/** 外部(工具卡片等)按路径直接打开预览:工具路径是 /workspace/... 绝对形式,
+ *  而文件 API 只接受用户工作区内的相对路径,这里统一剥掉前缀。 */
+function reveal(path: string) {
+  const p = (path || '').replace(/\\/g, '/').trim()
+  if (!p) return
+  const rel = p.replace(/^\/workspace\/?/i, '').replace(/^\/+/, '')
+  if (!rel) return
+  selectedFile.value = rel
+  previewPath.value = rel
+  previewSize.value = undefined
+  previewVisible.value = true
+}
+
+defineExpose({ reveal })
+
 function up() {
   const parts = currentPath.value.split('/').filter(Boolean)
   parts.pop()

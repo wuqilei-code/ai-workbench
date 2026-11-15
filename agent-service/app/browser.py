@@ -75,7 +75,9 @@ def _open_cdp(user_id: str) -> _Cdp:
     sb.ensure()
     ws_url = sb.cdp_url()
     if not ws_url:
-        raise RuntimeError("未找到可用的浏览器页面(CDP 目标)")
+        raise RuntimeError(
+            "沙箱浏览器尚未就绪(等待 CDP 页面超时)。通常是沙箱刚启动,请稍等几秒后重试。"
+        )
     return _Cdp(ws_url)
 
 

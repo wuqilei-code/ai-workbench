@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS chat_session (
     pinned              TINYINT      NOT NULL DEFAULT 0,
     skills              JSON         NULL COMMENT '会话勾选启用的自定义技能名数组(deepagents;空=仅内置技能)',
     mcp_servers         JSON         NULL COMMENT '会话级临时启用的 MCP server 名数组(NULL=默认全部已启用;空=本会话不加载)',
+    approval_mode       VARCHAR(16)  NOT NULL DEFAULT 'manual' COMMENT '审批模式:manual=危险操作人工确认;auto=完全访问自动执行',
     created_at          DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at          DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (id),
@@ -526,6 +527,8 @@ ALTER TABLE chat_session ADD UNIQUE INDEX uk_session_agent (agent_session_id);
 ALTER TABLE chat_session ADD COLUMN skills JSON NULL;
 -- 用户技能附加文件列(老库补齐,幂等)
 ALTER TABLE user_skill ADD COLUMN files JSON NULL;
+-- 会话审批模式:manual=危险操作需人工确认(默认);auto=完全访问,自动放行所有工具
+ALTER TABLE chat_session ADD COLUMN approval_mode VARCHAR(16) NOT NULL DEFAULT 'manual';
 
 -- 清理孤儿关系记录:模板被删除(如历史内置提示词)后,启用/收藏关系一并清除
 DELETE ut FROM user_template ut LEFT JOIN prompt_template pt ON pt.id = ut.template_id WHERE pt.id IS NULL;
@@ -554,4 +557,43 @@ CREATE TABLE IF NOT EXISTS user_token_daily (
     day     DATE     NOT NULL,
     tokens  BIGINT   NOT NULL DEFAULT 0,
     PRIMARY KEY (user_id, day)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 每次模型调用的溯源记录(一轮对话会有 N 次调用;chat_message 只存回合级汇总)
+CREATE TABLE IF NOT EXISTS llm_call (
+    id                 BIGINT       NOT NULL AUTO_INCREMENT,
+    user_id            BIGINT       NOT NULL,
+    session_id         BIGINT       NULL,
+    agent_session_id   VARCHAR(128) NULL,
+    agent_message_id   VARCHAR(128) NULL COMMENT 'assistant 消息的 da-msg-* id(用于按消息查)',
+    call_index         INT          NOT NULL DEFAULT 0 COMMENT '本轮第几次模型调用(1 起)',
+    model_id           VARCHAR(128) NULL,
+    input_tokens       BIGINT       NOT NULL DEFAULT 0,
+    output_tokens      BIGINT       NOT NULL DEFAULT 0,
+    reasoning_tokens   BIGINT       NOT NULL DEFAULT 0,
+    cache_read_tokens  BIGINT       NOT NULL DEFAULT 0,
+    cache_write_tokens BIGINT       NOT NULL DEFAULT 0,
+    latency_ms         INT          NULL,
+    ttft_ms            INT          NULL COMMENT '首 token 延迟',
+    finish_reason      VARCHAR(32)  NULL,
+    status             VARCHAR(16)  NOT NULL DEFAULT 'ok',
+    error_message      TEXT         NULL,
+    tool_calls         INT          NOT NULL DEFAULT 0,
+    message_count      INT          NOT NULL DEFAULT 0 COMMENT '请求消息条数',
+    request_hash       CHAR(64)     NULL COMMENT 'gzip 请求体 sha256',
+    response_hash      CHAR(64)     NULL COMMENT 'gzip 响应体 sha256',
+    created_at         DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (id),
+    KEY idx_llm_msg (agent_message_id, call_index),
+    KEY idx_llm_session (session_id, id),
+    KEY idx_llm_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 请求/响应原文(gzip 后二进制,按 sha256 内容寻址去重)
+CREATE TABLE IF NOT EXISTS llm_blob (
+    hash       CHAR(64)    NOT NULL,
+    data       MEDIUMBLOB  NOT NULL,
+    size       INT         NOT NULL DEFAULT 0,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (hash)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

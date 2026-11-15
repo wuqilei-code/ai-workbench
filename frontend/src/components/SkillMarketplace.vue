@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMessage, NModal } from 'naive-ui'
 import { chatApi } from '@/api/chat'
@@ -7,13 +7,17 @@ import { fileApi } from '@/api/files'
 import { SKILL_CATEGORIES, skillCategoryInfo } from '@/types'
 import type { MarketplaceSkillVo, UserSkill, FileNode, SkillFileVo } from '@/types'
 import SkillEditor from '@/components/SkillEditor.vue'
-import SectionTabs from '@/components/ui/SectionTabs.vue'
+import CodeEditor from '@/components/CodeEditor.vue'
 import FilterChips from '@/components/ui/FilterChips.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import ListPager from '@/components/ui/ListPager.vue'
 import IconPicker from '@/components/ui/IconPicker.vue'
+import { useThemeStore } from '@/stores/theme'
 
 const { t } = useI18n()
+const theme = useThemeStore()
+/** 只读预览跟随主题:浅色下不要强制 oneDark(否则整块代码区是深色,和页面割裂) */
+const isDark = computed(() => theme.mode === 'dark')
 const props = defineProps<{ show?: boolean; page?: boolean }>()
 const emit = defineEmits<{
   (e: 'update:show', v: boolean): void
@@ -45,12 +49,24 @@ const topTab = ref<'market' | 'mine'>('market')
 /** 市场标签内的分类筛选 */
 const activeCat = ref('all')
 
-const catTabs = computed(() => [
-  { key: 'all', label: t('market.all'), emoji: '🧩' },
-  ...SKILL_CATEGORIES,
-])
-/** 分类筛选 chips(带各分类计数) */
-const catChips = computed(() => catTabs.value.map((c) => ({ ...c, count: catCount(c.key) })))
+/** 分类筛选 chips:只展示有内容的分类(全 0 时只留"全部"),避免一排 0 显得空 */
+const catChips = computed(() => {
+  const all = { key: 'all', label: t('market.all'), emoji: '🧩', count: list.value.length }
+  const rest = SKILL_CATEGORIES.map((c) => ({
+    ...c,
+    count: list.value.filter((s) => s.category === c.key).length,
+  })).filter((c) => c.count > 0)
+  return [all, ...rest]
+})
+/** 市场且至少有一个真实分类时才显示筛选条 */
+const showCatFilter = computed(() => topTab.value === 'market' && catChips.value.length > 1)
+
+/** 分类被过滤空后自动回到"全部" */
+watch(catChips, (chips) => {
+  if (activeCat.value !== 'all' && !chips.some((c) => c.key === activeCat.value)) {
+    activeCat.value = 'all'
+  }
+})
 /** 顶部 Tab 项(带「我的」计数) */
 const topTabs = computed(() => [
   { key: 'market' as const, label: t('market.tabMarket') },
@@ -59,11 +75,6 @@ const topTabs = computed(() => [
 const catOptions = computed(() =>
   SKILL_CATEGORIES.map((c) => ({ label: `${c.emoji} ${c.label}`, value: c.key })),
 )
-/** 市场标签下各分类技能数 */
-function catCount(key: string) {
-  if (key === 'all') return list.value.length
-  return list.value.filter((s) => s.category === key).length
-}
 /**
  * 「我的」列表 = 本地技能库(user_skill)全集,与「工作区技能」「选择技能」同源。
  *
@@ -97,6 +108,7 @@ const myItems = computed(() =>
       source: s.source,
       visibility: s.visibility,
       files: s.files?.length ?? 0,
+      updatedAt: s.updatedAt || s.createdAt || '',
     }
   }),
 )
@@ -115,32 +127,136 @@ function fallbackEmoji(name: string): string {
 }
 const mineCount = computed(() => myItems.value.length)
 
-const filtered = computed(() => {
+/** 统一卡片视图模型:市场 / 我的两种来源走同一套卡片渲染,避免两份重复模板 */
+interface SkillCardVM {
+  key: string
+  kind: 'market' | 'mine'
+  name: string
+  description: string
+  category: string
+  icon: string
+  installs: number
+  files: number
+  author: string
+  updatedAt: string
+  installed: boolean
+  mine: boolean
+  inMarket: boolean
+  marketId?: number
+  raw: any
+}
+
+const marketCards = computed<SkillCardVM[]>(() =>
+  list.value.map((s) => ({
+    key: 'm-' + s.id,
+    kind: 'market' as const,
+    name: s.name,
+    description: s.description || '',
+    category: s.category || 'other',
+    icon: skillIcon(s),
+    installs: s.installs || 0,
+    files: s.files?.length ?? 0,
+    author: s.authorName || t('market.official'),
+    updatedAt: s.updatedAt || '',
+    installed: !!s.installed,
+    mine: !!s.mine,
+    inMarket: true,
+    marketId: s.id,
+    raw: s,
+  })),
+)
+
+const mineCards = computed<SkillCardVM[]>(() =>
+  myItems.value.map((s) => ({
+    key: 'u-' + s.name,
+    kind: 'mine' as const,
+    name: s.name,
+    description: s.description || '',
+    category: s.category || 'other',
+    icon: s.icon || fallbackEmoji(s.name),
+    installs: s.installs || 0,
+    files: s.files || 0,
+    author: t('market.meAuthor'),
+    updatedAt: (s as any).updatedAt || '',
+    installed: s.installed,
+    mine: s.mine,
+    inMarket: s.inMarket,
+    marketId: s.marketId,
+    raw: s,
+  })),
+)
+
+/** 排序:热门(安装量)/ 最新 / 名称 */
+const sortKey = ref<'hot' | 'new' | 'name'>('hot')
+const sortOptions = computed(() => [
+  { label: t('market.sortHot'), value: 'hot' },
+  { label: t('market.sortNew'), value: 'new' },
+  { label: t('market.sortName'), value: 'name' },
+])
+
+const poolCards = computed(() => (topTab.value === 'mine' ? mineCards.value : marketCards.value))
+
+const sortedCards = computed<SkillCardVM[]>(() => {
   const q = keyword.value.trim().toLowerCase()
-  const pool = topTab.value === 'mine' ? myItems.value : list.value
-  return pool.filter((s) => {
-    if (topTab.value === 'market' && activeCat.value !== 'all' && s.category !== activeCat.value) {
-      return false
-    }
-    if (!q) return true
-    return s.name.toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q)
-  })
+  let arr = poolCards.value
+  if (topTab.value === 'market' && activeCat.value !== 'all') {
+    arr = arr.filter((s) => s.category === activeCat.value)
+  }
+  if (q) {
+    arr = arr.filter(
+      (s) => s.name.toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q),
+    )
+  }
+  const copy = [...arr]
+  if (sortKey.value === 'new') {
+    copy.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || '') || a.name.localeCompare(b.name))
+  } else if (sortKey.value === 'name') {
+    copy.sort((a, b) => a.name.localeCompare(b.name))
+  } else {
+    copy.sort((a, b) => b.installs - a.installs || a.name.localeCompare(b.name))
+  }
+  return copy
 })
 
-/** 分页:两个 Tab 各自的数据源与切片分开,避免模板里出现联合类型 */
+/** 空态区分:没有技能 / 搜索无结果 / 该分类为空 / 我的为空 */
+const emptyState = computed(() => {
+  if (topTab.value === 'mine') {
+    return { icon: '🗂️', text: t('market.mineEmpty'), sub: t('market.mineEmptySub'), cta: 'publish' as const }
+  }
+  if (keyword.value.trim()) {
+    return { icon: '🔍', text: t('market.emptySearch'), sub: t('market.emptySearchSub'), cta: 'clear' as const }
+  }
+  if (!list.value.length) {
+    return { icon: '🧩', text: t('market.emptyNoSkills'), sub: t('market.emptyNoSkillsSub'), cta: 'upload' as const }
+  }
+  return { icon: '🧩', text: t('market.emptyCat'), sub: '', cta: 'all' as const }
+})
+
+function clearFilters() {
+  keyword.value = ''
+  keywordInput.value = ''
+  activeCat.value = 'all'
+  resetPage()
+}
+
+/** 分页(基于已过滤/排序的结果) */
 const page = ref(1)
 const pageSize = 18
-const pagedMine = computed(() => {
-  const start = (page.value - 1) * pageSize
-  return myItems.value.slice(start, start + pageSize)
-})
-const pagedMarket = computed(() => {
-  const start = (page.value - 1) * pageSize
-  return list.value.slice(start, start + pageSize)
-})
+const pagedCards = computed(() => sortedCards.value.slice((page.value - 1) * pageSize, page.value * pageSize))
 function resetPage() {
   page.value = 1
 }
+
+/** 搜索防抖:输入停顿 250ms 再触发过滤 */
+const keywordInput = ref('')
+let keywordTimer: ReturnType<typeof setTimeout> | null = null
+watch(keywordInput, (v) => {
+  if (keywordTimer) clearTimeout(keywordTimer)
+  keywordTimer = setTimeout(() => {
+    keyword.value = v
+    resetPage()
+  }, 250)
+})
 
 async function load() {
   loading.value = true
@@ -160,12 +276,6 @@ async function load() {
 }
 function onShow() {
   load()
-}
-
-/** 列表卡片显示技能结构摘要:如 "SKILL.md + 2 文件" */
-function fileSummary(s: MarketplaceSkillVo): string {
-  if (!s.files || !s.files.length) return t('market.onlySkillMd')
-  return t('market.filesLabel', { n: s.files.length })
 }
 
 // ---------- 发布 ----------
@@ -385,6 +495,39 @@ async function openDetail(s: MarketplaceSkillVo) {
   }
 }
 
+/** 从「我的」卡片打开详情(只有已发布的才有市场 id) */
+async function openDetailById(id: number) {
+  detail.value = null
+  detailVisible.value = true
+  activeFile.value = 'SKILL.md'
+  detailLoading.value = true
+  try {
+    detail.value = await chatApi.marketplaceSkillDetail(id)
+  } catch (e: any) {
+    msg.error(e?.message || t('market.actionFailed'))
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+/** 卡片点击:市场卡进详情;已发布的我的技能也进详情;未发布的直接打开发布表单 */
+function onCardOpen(c: SkillCardVM) {
+  if (c.kind === 'market') return void openDetail(c.raw as MarketplaceSkillVo)
+  if (c.inMarket && c.marketId) return void openDetailById(c.marketId)
+  return void publishFromMine(c.raw)
+}
+
+function onInstallCard(c: SkillCardVM) {
+  void installDirect(c.raw as MarketplaceSkillVo)
+}
+function onRemoveCard(c: SkillCardVM) {
+  if (c.marketId) return void removeOwnById(c.marketId)
+  return void removeOwn(c.raw as MarketplaceSkillVo)
+}
+function onPublishCard(c: SkillCardVM) {
+  void publishFromMine(c.raw)
+}
+
 /** 详情当前查看文件的内容(SKILL.md 或某个附加文件) */
 const activeContent = computed(() => {
   if (!detail.value) return ''
@@ -512,10 +655,39 @@ async function publishFromMine(s: { name: string; description: string; icon: str
   }
 }
 
-function fmtTime(ts: string): string {
+/** 相对时间:今天 / 昨天 / N 天前 / 日期(用于卡片作者与更新时间) */
+function fmtRel(ts: string): string {
   if (!ts) return ''
-  return ts.slice(0, 16).replace('T', ' ')
+  const d = new Date(ts)
+  if (Number.isNaN(d.getTime())) return ts.slice(0, 10)
+  const diff = Date.now() - d.getTime()
+  const day = 86400000
+  if (diff < day && new Date().getDate() === d.getDate()) return t('market.relToday')
+  if (diff < 2 * day) return t('market.relYesterday')
+  if (diff < 30 * day) return t('market.relDays', { n: Math.floor(diff / day) })
+  return ts.slice(0, 10)
 }
+
+/** 详情代码区语言(按当前文件名后缀) */
+const detailLang = computed(() => {
+  const ext = (activeFile.value || '').split('.').pop()?.toLowerCase() || ''
+  const map: Record<string, string> = {
+    md: 'markdown', py: 'python', js: 'javascript', ts: 'typescript', json: 'json',
+    sh: 'bash', yml: 'yaml', yaml: 'yaml', html: 'html', css: 'css', sql: 'sql',
+    java: 'java', go: 'go', rs: 'rust', txt: '',
+  }
+  return map[ext] || ''
+})
+
+async function copyDetail() {
+  try {
+    await navigator.clipboard.writeText(activeContent.value || '')
+    msg.success(t('market.copied'))
+  } catch (e: any) {
+    msg.error(e?.message || t('market.copyFailed'))
+  }
+}
+
 function skillIcon(s: { icon?: string; category: string }): string {
   if (s.icon && s.icon.trim()) return s.icon.trim()
   return skillCategoryInfo(s.category).emoji
@@ -527,51 +699,52 @@ onMounted(() => {
 </script>
 
 <template>
-  <component :is="page ? 'div' : NModal" v-bind="rootBind">
+  <component :is="props.page ? 'div' : NModal" v-bind="rootBind">
     <!-- 整页模式:面包屑 + 页头 -->
-    <div v-if="page && !detailVisible" class="manage-crumb">
+    <div v-if="props.page && !detailVisible" class="manage-crumb">
       <button class="crumb-link" @click="emit('close')">首页</button>
       <span class="crumb-sep">/</span>
       <span class="crumb-cur">{{ t('market.title') }}</span>
     </div>
-    <div v-if="page && !detailVisible" class="manage-header">
-    <div class="manage-title">{{ t('market.title') }}</div>
-    <div class="manage-sub">{{ t('market.sub') }}</div>
-    </div>
 
-    <!-- 技能详情(整页 + 文件树) -->
+    <!-- 技能详情(整页 + 文件树 + 只读代码编辑区) -->
     <div v-if="detailVisible" class="dt-page">
       <div class="manage-crumb">
         <button class="crumb-link" @click="emit('close')">首页</button>
         <span class="crumb-sep">/</span>
-      <button class="crumb-link" @click="detailVisible = false">{{ t('market.title') }}</button>
+        <button class="crumb-link" @click="detailVisible = false">{{ t('market.title') }}</button>
         <span class="crumb-sep">/</span>
-      <span class="crumb-cur">{{ detail?.name || t('market.unknown') }}</span>
+        <span class="crumb-cur">{{ detail?.name || t('market.unknown') }}</span>
       </div>
       <n-spin :show="detailLoading">
         <template v-if="detail">
-          <div class="dt-head">
-            <span class="dt-icon">{{ skillIcon(detail) }}</span>
+          <div class="dt-cover">
+            <div class="dt-icon" :class="'cat-' + (detail.category || 'other')">{{ skillIcon(detail) }}</div>
             <div class="dt-head-info">
               <div class="dt-title">
                 <span class="dt-name">{{ detail.name }}</span>
-                <n-tag size="tiny" :bordered="false">{{ skillCategoryInfo(detail.category).emoji }} {{ skillCategoryInfo(detail.category).label }}</n-tag>
-        <n-tag v-if="detail.installed" size="tiny" type="success" :bordered="false">{{ t('market.installed') }}</n-tag>
+                <span class="mp-badge">{{ skillCategoryInfo(detail.category).emoji }} {{ skillCategoryInfo(detail.category).label }}</span>
+                <span v-if="detail.installed" class="mp-badge ok">{{ t('market.installed') }}</span>
               </div>
-              <div class="dt-sub">
-      <n-tag size="tiny" :bordered="false">by {{ detail.authorName || t('market.official') }}</n-tag>
-      <span class="dt-installs">{{ t('market.installs', { n: detail.installs }) }}</span>
+              <div class="dt-desc">{{ detail.description }}</div>
+              <div class="dt-meta">
+                <span>by {{ detail.authorName || t('market.official') }}</span>
+                <span class="dt-dot">·</span>
+                <span>{{ t('market.installs', { n: detail.installs }) }}</span>
+                <template v-if="detail.updatedAt">
+                  <span class="dt-dot">·</span>
+                  <span>{{ t('market.updatedAt', { t: fmtRel(detail.updatedAt) }) }}</span>
+                </template>
               </div>
             </div>
             <div class="dt-actions">
-      <n-button v-if="!detail.installed" size="small" type="primary" :loading="installing" @click="install">{{ t('market.installAndUse') }}</n-button>
-      <n-button v-if="detail.mine" size="small" type="error" quaternary @click="removeOwn(detail)">{{ t('market.unpublish') }}</n-button>
+              <n-button v-if="!detail.installed" size="small" type="primary" :loading="installing" @click="install">{{ t('market.installAndUse') }}</n-button>
+              <n-button v-if="detail.mine" size="small" type="error" quaternary @click="removeOwn(detail)">{{ t('market.unpublish') }}</n-button>
             </div>
           </div>
-          <div class="dt-desc">{{ detail.description }}</div>
           <div class="dt-body">
             <div class="dt-tree">
-      <div class="dt-tree-title">{{ t('market.fileTree') }}</div>
+              <div class="dt-tree-title">{{ t('market.fileTree') }}</div>
               <div
                 v-for="n in fileTree"
                 :key="n.path"
@@ -585,8 +758,21 @@ onMounted(() => {
               </div>
             </div>
             <div class="dt-view">
-              <div class="dt-view-head">{{ activeFile }}</div>
-              <pre class="dt-content">{{ activeContent }}</pre>
+              <div class="dt-view-head">
+                <span class="dt-file">{{ activeFile }}</span>
+                <button type="button" class="dt-copy" :title="t('market.copyContent')" @click="copyDetail">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  {{ t('market.copyContent') }}
+                </button>
+              </div>
+              <CodeEditor
+                :model-value="activeContent"
+                :language="detailLang"
+                :filename="activeFile"
+                :read-only="true"
+                :is-dark="isDark"
+                class="dt-editor"
+              />
             </div>
           </div>
         </template>
@@ -594,92 +780,174 @@ onMounted(() => {
     </div>
 
     <template v-if="!detailVisible">
-    <div class="mp-head">
-      <n-input v-model:value="keyword" size="small" clearable :placeholder="t('market.searchPlaceholder')" style="max-width: 240px" @update:value="resetPage">
-        <template #prefix>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        </template>
-      </n-input>
-    <p class="mp-note">{{ t('market.note') }}</p>
-      <n-button size="small" type="primary" @click="openUpload">{{ t('market.upload') }}</n-button>
-    </div>
-
-    <!-- 顶部标签:市场 / 我的(统一下划线 Tab 组件) -->
-    <SectionTabs
-      v-model:active="topTab"
-      :items="topTabs"
-      class="mp-toptabs"
-      :aria-label="t('market.ariaTopTabs')"
-      @change="resetPage()"
-    />
-
-    <!-- 市场:分类筛选(统一胶囊 chips 组件) -->
-    <FilterChips
-      v-if="topTab === 'market'"
-      v-model:active="activeCat"
-      :items="catChips"
-      class="mp-cats"
-      :aria-label="t('market.ariaCatFilter')"
-      @change="resetPage()"
-    />
-
-    <n-spin :show="loading" class="mp-body">
-    <EmptyState v-if="!filtered.length" :text="topTab === 'mine' ? t('market.mineEmpty') : t('market.empty')" :padding="48" />
-      <div v-else class="mp-grid">
-        <!-- 「我的」Tab:本地技能库条目(已发布的可下架,未发布的给发布入口) -->
-        <div v-if="topTab === 'mine'" v-for="s in pagedMine" :key="s.name" class="mp-card">
-          <div class="mp-card-icon" :title="skillCategoryInfo(s.category).label">{{ s.icon }}</div>
-          <div class="mp-card-body">
-            <div class="mp-card-title-row">
-              <span class="mp-card-name">{{ s.name }}</span>
-              <n-tag v-if="s.source === 'installed'" size="tiny" type="success" :bordered="false">{{ t('market.installed') }}</n-tag>
-              <n-tag v-else size="tiny" :bordered="false">{{ t('market.ownTag') }}</n-tag>
-              <n-tag v-if="s.visibility === 1" size="tiny" type="warning" :bordered="false">{{ t('market.mineTag') }}</n-tag>
-            </div>
-            <div class="mp-card-desc">{{ s.description }}</div>
-            <div class="mp-card-meta">
-              <span class="mp-cat">{{ skillCategoryInfo(s.category).emoji }} {{ skillCategoryInfo(s.category).label }}</span>
-              <span class="mp-files">📎{{ t('market.filesLabel', { n: s.files }) }}</span>
-              <span v-if="s.inMarket" class="mp-installs">↓ {{ s.installs }}</span>
-              <span class="mp-author">{{ s.inMarket ? t('market.inMarket') : t('market.notInMarket') }}</span>
-            </div>
-          </div>
-          <div class="mp-actions" @click.stop>
-            <n-button v-if="!s.inMarket" size="small" type="primary" secondary @click="publishFromMine(s)">{{ t('market.publishNow') }}</n-button>
-            <n-button v-else-if="s.mine" size="small" type="error" quaternary :loading="rowBusyId === s.marketId" :disabled="rowBusyId !== null" @click="removeOwnById(s.marketId!)">{{ t('market.unpublish') }}</n-button>
-            <n-button v-else size="small" quaternary disabled>{{ t('market.installed') }}</n-button>
-          </div>
+      <!-- 页头(整页模式):标题 + 主操作 -->
+      <div v-if="props.page" class="mp-hero">
+        <div class="mp-hero-text">
+          <div class="manage-title">{{ t('market.title') }}</div>
+          <div class="manage-sub">{{ t('market.sub') }}</div>
         </div>
-        <!-- 「市场」Tab:市场表条目 -->
-        <div v-else v-for="s in pagedMarket" :key="s.id" class="mp-card" @click="openDetail(s)">
-          <div class="mp-card-icon" :title="skillCategoryInfo(s.category).label">
-            {{ skillIcon(s) }}
-          </div>
-          <div class="mp-card-body">
-            <div class="mp-card-title-row">
-              <span class="mp-card-name">{{ s.name }}</span>
-        <n-tag v-if="s.mine" size="tiny" type="warning" :bordered="false">{{ t('market.mineTag') }}</n-tag>
-        <n-tag v-if="s.installed" size="tiny" type="success" :bordered="false">{{ t('market.installed') }}</n-tag>
-            </div>
-            <div class="mp-card-desc">{{ s.description }}</div>
-            <div class="mp-card-meta">
-              <span class="mp-cat">{{ skillCategoryInfo(s.category).emoji }} {{ skillCategoryInfo(s.category).label }}</span>
-              <span class="mp-files">📎{{ fileSummary(s) }}</span>
-              <span class="mp-installs">↓ {{ s.installs }}</span>
-        <span class="mp-author">by {{ s.authorName || t('market.official') }}</span>
-            </div>
-          </div>
-          <div class="mp-actions" @click.stop>
-        <n-button v-if="!s.installed" size="small" type="primary" secondary :loading="rowBusyId === s.id" :disabled="rowBusyId !== null" @click="installDirect(s)">{{ t('tpl.install') }}</n-button>
-        <n-button v-if="s.mine" size="small" type="error" quaternary :loading="rowBusyId === s.id" :disabled="rowBusyId !== null" @click="removeOwn(s)">{{ t('market.unpublish') }}</n-button>
-          </div>
+        <div class="mp-hero-actions">
+          <n-button size="small" @click="openPublish">{{ t('market.publishSkill') }}</n-button>
+          <n-button size="small" type="primary" @click="openUpload">{{ t('market.upload') }}</n-button>
         </div>
       </div>
-    </n-spin>
 
-    <div v-if="filtered.length > pageSize" class="mp-pager">
-      <ListPager :page="page" :item-count="filtered.length" :page-size="pageSize" @update:page="page = $event" />
-    </div>
+      <!-- 工具行:搜索 / 排序 / 结果数(弹窗模式补上传入口) -->
+      <div class="mp-toolbar">
+        <n-input
+          v-model:value="keywordInput"
+          class="mp-search"
+          size="small"
+          clearable
+          :placeholder="t('market.searchPlaceholder')"
+        >
+          <template #prefix>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </template>
+        </n-input>
+        <n-select
+          v-model:value="sortKey"
+          class="mp-sort"
+          size="small"
+          :options="sortOptions"
+          :aria-label="t('market.sortLabel')"
+        />
+        <span class="mp-count">{{ t('market.resultCount', { n: sortedCards.length }) }}</span>
+        <n-button v-if="!props.page" size="small" type="primary" class="mp-toolbar-upload" @click="openUpload">{{ t('market.upload') }}</n-button>
+      </div>
+
+      <!-- 市场 / 我的:分段控件(替代下划线 tab,避免与分类筛选抢层级) -->
+      <div class="mp-seg" role="tablist" :aria-label="t('market.ariaTopTabs')">
+        <button
+          v-for="tab in topTabs"
+          :key="tab.key"
+          type="button"
+          role="tab"
+          class="mp-seg-btn"
+          :class="{ active: topTab === tab.key }"
+          :aria-selected="topTab === tab.key"
+          @click="topTab = tab.key; resetPage()"
+        >
+          {{ tab.label }}<span v-if="tab.count" class="mp-seg-count">{{ tab.count }}</span>
+        </button>
+      </div>
+
+      <!-- 分类筛选:只显示有内容的分类 -->
+      <FilterChips
+        v-if="showCatFilter"
+        v-model:active="activeCat"
+        :items="catChips"
+        class="mp-cats"
+        :aria-label="t('market.ariaCatFilter')"
+        @change="resetPage()"
+      />
+
+      <div class="mp-body" :class="{ 'mp-body--modal': !props.page }">
+        <!-- 加载骨架 -->
+        <div v-if="loading" class="mp-grid">
+          <div v-for="i in 6" :key="i" class="mp-card mp-skeleton">
+            <div class="mp-card-main">
+              <div class="sk-icon" />
+              <div class="sk-lines">
+                <div class="sk-line w60" />
+                <div class="sk-line w90" />
+                <div class="sk-line w40" />
+              </div>
+            </div>
+            <div class="sk-foot"><div class="sk-line w30" /></div>
+          </div>
+        </div>
+
+        <!-- 空态:区分 无技能 / 搜索无结果 / 分类为空 / 我的为空 -->
+        <EmptyState
+          v-else-if="!sortedCards.length"
+          :icon="emptyState.icon"
+          :text="emptyState.text"
+          :sub="emptyState.sub"
+          :padding="56"
+        >
+          <n-button v-if="emptyState.cta === 'upload'" size="small" type="primary" @click="openUpload">{{ t('market.upload') }}</n-button>
+          <n-button v-else-if="emptyState.cta === 'publish'" size="small" type="primary" @click="openPublish">{{ t('market.publishNow') }}</n-button>
+          <n-button v-else size="small" @click="clearFilters">{{ emptyState.cta === 'clear' ? t('market.clearFilter') : t('market.all') }}</n-button>
+        </EmptyState>
+
+        <div v-else class="mp-grid">
+          <div
+            v-for="c in pagedCards"
+            :key="c.key"
+            class="mp-card"
+            :class="'cat-' + c.category"
+            tabindex="0"
+            role="button"
+            @click="onCardOpen(c)"
+            @keydown.enter.prevent="onCardOpen(c)"
+            @keydown.space.prevent="onCardOpen(c)"
+          >
+            <div class="mp-card-main">
+              <div class="mp-card-icon" :title="skillCategoryInfo(c.category).label">{{ c.icon }}</div>
+              <div class="mp-card-body">
+                <div class="mp-card-title-row">
+                  <span class="mp-card-name">{{ c.name }}</span>
+                  <span v-if="c.installed" class="mp-badge ok">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    {{ t('market.installed') }}
+                  </span>
+                  <span v-if="c.mine" class="mp-badge mine">{{ t('market.mineTag') }}</span>
+                  <span v-if="c.kind === 'mine' && !c.inMarket" class="mp-badge muted">{{ t('market.notInMarket') }}</span>
+                </div>
+                <div class="mp-card-desc">{{ c.description || t('market.noDesc') }}</div>
+              </div>
+            </div>
+
+            <div class="mp-card-foot">
+              <div class="mp-card-meta">
+                <span class="mp-pill mp-pill-cat">{{ skillCategoryInfo(c.category).label }}</span>
+                <span v-if="c.installs" class="mp-pill" :title="t('market.installs', { n: c.installs })">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><polyline points="7 11 12 16 17 11"/><path d="M4 21h16"/></svg>
+                  {{ c.installs }}
+                </span>
+                <span v-if="c.files" class="mp-pill" :title="t('market.filesShort', { n: c.files })">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                  {{ c.files }}
+                </span>
+              </div>
+              <span class="mp-card-byline">
+                {{ c.author }}<template v-if="c.updatedAt"> · {{ fmtRel(c.updatedAt) }}</template>
+              </span>
+              <div class="mp-card-action" @click.stop>
+                <n-button
+                  v-if="c.kind === 'market' && !c.installed"
+                  size="tiny"
+                  type="primary"
+                  :loading="rowBusyId === c.marketId"
+                  :disabled="rowBusyId !== null"
+                  @click="onInstallCard(c)"
+                >{{ t('tpl.install') }}</n-button>
+                <n-button
+                  v-else-if="c.kind === 'mine' && !c.inMarket"
+                  size="tiny"
+                  type="primary"
+                  secondary
+                  @click="onPublishCard(c)"
+                >{{ t('market.publishNow') }}</n-button>
+                <n-button
+                  v-else-if="c.mine"
+                  size="tiny"
+                  type="error"
+                  quaternary
+                  :loading="rowBusyId === c.marketId"
+                  :disabled="rowBusyId !== null"
+                  @click="onRemoveCard(c)"
+                >{{ t('market.unpublish') }}</n-button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="sortedCards.length > pageSize" class="mp-pager">
+          <ListPager :page="page" :item-count="sortedCards.length" :page-size="pageSize" @update:page="page = $event" />
+        </div>
+      </div>
     </template>
 
     <!-- 上传技能弹窗 -->
@@ -712,7 +980,7 @@ onMounted(() => {
     <n-modal
       v-model:show="publishVisible"
       preset="card"
-    title="t('market.importTitle')"
+    :title="t('market.publishSkill')"
       style="width: 880px; max-width: 96vw"
       :bordered="false"
     >
@@ -729,35 +997,46 @@ onMounted(() => {
       <span v-else-if="importingSkill" class="mp-import-loading">{{ t('market.importingSkill') }}</span>
       </div>
       <div class="pub-form">
-        <n-input v-model:value="pubName" maxlength="64" size="small" :placeholder="t('market.pubNamePlaceholder')" />
-        <n-input v-model:value="pubDesc" maxlength="1024" size="small" :placeholder="t('market.pubDescPlaceholder')" />
-        <div class="pub-row">
-          <n-select
-            v-model:value="pubCategory"
-            size="small"
-            :options="catOptions"
-        placeholder="t('market.pickIcon')"
-            style="flex: 1"
+        <!-- 分组 1:基本信息 -->
+        <div class="pub-group">
+          <div class="pub-group-head">
+            <span class="pub-group-title">{{ t('market.groupBasic') }}</span>
+            <span class="pub-group-hint">{{ t('market.groupBasicHint') }}</span>
+          </div>
+          <n-input v-model:value="pubName" maxlength="64" size="small" :placeholder="t('market.pubNamePlaceholder')" />
+          <n-input v-model:value="pubDesc" maxlength="1024" size="small" :placeholder="t('market.pubDescPlaceholder')" />
+          <div class="pub-row">
+            <n-select
+              v-model:value="pubCategory"
+              size="small"
+              :options="catOptions"
+              :placeholder="t('market.pickIcon')"
+              style="width: 220px"
+            />
+          </div>
+          <div class="icon-picker">
+            <span class="icon-picker-label">{{ t('market.iconLabel') }}</span>
+            <IconPicker v-model="pubIcon" :size="30" :title="t('market.iconLabel')" />
+          </div>
+        </div>
+
+        <!-- 分组 2:技能内容 -->
+        <div class="pub-group">
+          <div class="pub-group-head">
+            <span class="pub-group-title">{{ t('market.contentTitle') }}</span>
+            <span class="pub-group-hint">{{ t('market.filesNote') }}</span>
+            <n-button size="tiny" type="primary" quaternary :disabled="!pubName.trim() || !pubDesc.trim()" @click="generateTemplate">{{ t('market.genTemplate') }}</n-button>
+          </div>
+          <SkillEditor
+            :content="pubContent"
+            :files="pubFiles"
+            :name="pubName.trim() || 'unnamed-skill'"
+            :description="pubDesc"
+            :readonly="false"
+            @update:content="pubContent = $event"
+            @update:files="pubFiles = $event"
           />
         </div>
-        <div class="icon-picker">
-        <span class="icon-picker-label">{{ t('market.iconLabel') }}</span>
-          <IconPicker v-model="pubIcon" :size="30" :title="t('market.iconLabel')" />
-        </div>
-        <div class="content-head">
-      <span class="content-title">{{ t('market.contentTitle') }}</span>
-      <n-button size="tiny" type="primary" quaternary :disabled="!pubName.trim() || !pubDesc.trim()" @click="generateTemplate">{{ t('market.genTemplate') }}</n-button>
-      <span class="files-note-v2">{{ t('market.filesNote') }}</span>
-        </div>
-        <SkillEditor
-          :content="pubContent"
-          :files="pubFiles"
-          :name="pubName.trim() || 'unnamed-skill'"
-          :description="pubDesc"
-          :readonly="false"
-          @update:content="pubContent = $event"
-          @update:files="pubFiles = $event"
-        />
       </div>
 
       <template #footer>
@@ -772,51 +1051,153 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.mp-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
-.mp-note {
-  font-size: 12px; color: var(--text-3); flex: 1; min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
+/* ---- 页头:标题 + 主操作 ---- */
+.mp-hero { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 16px; }
+.mp-hero-text { flex: 1; min-width: 0; }
+.mp-hero-actions { display: flex; gap: 8px; flex-shrink: 0; padding-top: 2px; }
 
-/* Tab 条 / 分类 chips / 空态 / 分页器样式已上收到 components/ui/*,此处只保留面板级间距 */
-.mp-toptabs { margin-bottom: 14px; }
+/* ---- 工具行:搜索 / 排序 / 结果数 ---- */
+.mp-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.mp-search { flex: 1; min-width: 200px; max-width: 420px; }
+.mp-sort { width: 120px; flex-shrink: 0; }
+.mp-count { font-size: 12px; color: var(--text-3); margin-left: auto; }
+.mp-toolbar-upload { flex-shrink: 0; }
+
+/* ---- 市场 / 我的:分段控件 ---- */
+.mp-seg {
+  display: inline-flex; align-self: flex-start; gap: 2px; padding: 3px; margin-bottom: 12px;
+  border-radius: 10px; background: var(--fill-0, rgba(127, 127, 127, 0.08));
+  border: 1px solid var(--border-soft);
+}
+.mp-seg-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 14px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--text-3);
+  font-size: 13px; font-family: inherit; cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.mp-seg-btn:hover { color: var(--text-2); }
+.mp-seg-btn.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, .08); }
+.mp-seg-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mp-seg-count { font-size: 11px; color: var(--text-3); background: var(--fill-0); border-radius: 8px; padding: 0 6px; }
+
 .mp-cats { margin-bottom: 14px; }
 
-/* 内容区固定高度:数据未加载前也维持网格高度,避免弹窗先矮后高 */
-.mp-body { display: block; min-height: 52vh; }
+/* ---- 内容区与网格 ---- */
+.mp-body { display: block; }
+.mp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; padding: 2px; }
+/* 弹窗模式:网格内部滚动,避免弹窗随内容无限变高 */
+.mp-body--modal .mp-grid { max-height: 56vh; overflow-y: auto; }
 
-/* 卡片网格 */
-.mp-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 12px; max-height: 52vh; overflow-y: auto; padding: 2px;
-}
+/* ---- 卡片 ---- */
+/* 分类色板:图标底色、分类胶囊、hover 光晕共用 --cat */
+.cat-dev { --cat: #5b8cff; }
+.cat-doc { --cat: #8b7bff; }
+.cat-data { --cat: #2fb98a; }
+.cat-writing { --cat: #e0a33c; }
+.cat-office { --cat: #c56be0; }
+.cat-other { --cat: #98a2b3; }
+
 .mp-card {
-  display: flex; gap: 12px; align-items: flex-start;
-  padding: 12px; border-radius: var(--radius-sm);
-  background: var(--surface); border: 1px solid var(--border-soft);
-  cursor: pointer; transition: border-color .15s, box-shadow .15s;
+  --cat: var(--accent);
+  position: relative; display: flex; flex-direction: column; gap: 12px;
+  padding: 16px 18px 14px; border-radius: 16px;
+  background:
+    radial-gradient(120% 90% at 0% 0%, color-mix(in srgb, var(--cat) 8%, transparent), transparent 62%),
+    var(--surface);
+  border: 1px solid var(--border-soft);
+  cursor: pointer; outline: none;
+  transition: border-color .18s, box-shadow .18s, transform .18s;
 }
-.mp-card:hover { border-color: var(--accent); box-shadow: 0 2px 10px rgba(0,0,0,.08); }
+.mp-card:hover, .mp-card:focus-visible {
+  border-color: color-mix(in srgb, var(--cat) 42%, var(--border-soft));
+  box-shadow:
+    0 12px 26px -16px color-mix(in srgb, var(--cat) 65%, transparent),
+    0 2px 6px rgba(0, 0, 0, .04);
+  transform: translateY(-2px);
+}
+/* 顶部分类色细条:低饱和渐变,轻量区分类型 */
+.mp-card::before {
+  content: ''; position: absolute; inset: 0 0 auto 0; height: 2px;
+  border-radius: 16px 16px 0 0;
+  background: linear-gradient(90deg, var(--cat), color-mix(in srgb, var(--cat) 10%, transparent));
+  opacity: .55; transition: opacity .18s;
+}
+.mp-card:hover::before, .mp-card:focus-visible::before { opacity: 1; }
+.mp-card:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--cat) 40%, transparent),
+    0 12px 26px -16px color-mix(in srgb, var(--cat) 60%, transparent);
+}
+
+.mp-card-main { display: flex; gap: 12px; align-items: flex-start; min-width: 0; }
 .mp-card-icon {
-  width: 46px; height: 46px; flex-shrink: 0; border-radius: 12px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 24px; background: var(--accent-soft); border: 1px solid var(--border-soft);
+  width: 52px; height: 52px; flex-shrink: 0; border-radius: 15px;
+  display: flex; align-items: center; justify-content: center; font-size: 25px;
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--cat) 26%, transparent),
+    color-mix(in srgb, var(--cat) 8%, transparent));
+  border: 1px solid color-mix(in srgb, var(--cat) 28%, transparent);
 }
-.mp-card-body { flex: 1; min-width: 0; }
-.mp-card-title-row { display: flex; align-items: center; gap: 5px; margin-bottom: 4px; flex-wrap: wrap; }
-.mp-card-name { font-size: 14px; font-weight: 600; color: var(--text); }
+.mp-card-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.mp-card-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.mp-card-name {
+  font-size: 15px; font-weight: 600; color: var(--text); letter-spacing: .1px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
 .mp-card-desc {
-  font-size: 12px; color: var(--text-2); line-height: 1.5;
+  font-size: 12.5px; color: var(--text-3); line-height: 1.6; min-height: 2.6em;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-  word-break: break-word;
-  overflow-wrap: anywhere;
+  word-break: break-word; overflow-wrap: anywhere;
 }
-.mp-card-meta { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 11px; color: var(--text-3); flex-wrap: wrap; }
-.mp-cat { color: var(--accent-text); }
-.mp-installs { white-space: nowrap; }
-.mp-author { margin-left: auto; }
-.mp-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
-.mp-pager { flex-shrink: 0; margin-top: 14px; padding-bottom: 2px; }
+.mp-card-foot {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  padding-top: 10px; border-top: 1px dashed var(--border-soft);
+}
+.mp-card-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.mp-pill {
+  display: inline-flex; align-items: center; gap: 3px;
+  height: 20px; padding: 0 7px; border-radius: 6px;
+  font-size: 11px; line-height: 1; color: var(--text-3);
+  background: var(--fill-0, rgba(127, 127, 127, .08));
+  white-space: nowrap;
+}
+.mp-pill svg { opacity: .65; }
+.mp-pill-cat {
+  color: color-mix(in srgb, var(--cat) 78%, var(--text));
+  background: color-mix(in srgb, var(--cat) 13%, transparent);
+  font-weight: 500;
+}
+.mp-card-byline {
+  margin-left: auto; font-size: 11px; color: var(--text-4);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.mp-card-action { flex-shrink: 0; display: flex; align-items: center; }
+
+/* 状态徽标 */
+.mp-badge {
+  display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0;
+  font-size: 10.5px; line-height: 1.7; padding: 0 6px; border-radius: 6px;
+  color: var(--text-3); background: var(--fill-0);
+}
+.mp-badge.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.mp-badge.mine { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.mp-badge.muted { color: var(--text-4); }
+
+.mp-pager { margin-top: 16px; }
+
+/* ---- 加载骨架 ---- */
+.mp-skeleton { cursor: default; background: var(--surface); }
+.mp-skeleton:hover { border-color: var(--border-soft); box-shadow: none; transform: none; }
+.sk-icon { width: 48px; height: 48px; border-radius: 14px; background: var(--fill-0); flex-shrink: 0; }
+.sk-lines { flex: 1; display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
+.sk-line { height: 10px; border-radius: 5px; background: var(--fill-0); }
+.sk-line.w30 { width: 30%; }
+.sk-line.w40 { width: 40%; }
+.sk-line.w60 { width: 60%; }
+.sk-line.w90 { width: 90%; }
+.sk-foot { padding-top: 10px; border-top: 1px dashed var(--border-soft); }
+@keyframes sk-pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+.mp-skeleton .sk-icon, .mp-skeleton .sk-line { animation: sk-pulse 1.4s ease-in-out infinite; }
 
 /* 发布表单 */
 .mp-import { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--accent-soft); }
@@ -825,37 +1206,60 @@ onMounted(() => {
 .mp-import-chip.busy { opacity: .5; pointer-events: none; cursor: default; }
 .mp-import-chip:hover { border-color: var(--accent-text); color: var(--accent-text); }
 .mp-import-loading { font-size: 12px; color: var(--text-3); }
-.pub-form { display: flex; flex-direction: column; gap: 10px; }
-.pub-row { display: flex; gap: 10px; }
+.pub-form { display: flex; flex-direction: column; gap: 18px; }
+.pub-group { display: flex; flex-direction: column; gap: 10px; }
+.pub-group-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.pub-group-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.pub-group-hint { font-size: 11px; color: var(--text-3); flex: 1; min-width: 0; }
+.pub-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .icon-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .icon-picker-label { font-size: 12px; color: var(--text-2); }
 /* 图标格子样式已上收到 components/ui/IconPicker.vue */
 
-/* 附加文件编辑 */
-.content-head { display: flex; align-items: center; gap: 8px; margin: 14px 0 8px; flex-wrap: wrap; }
-.content-title { font-size: 13px; font-weight: 600; color: var(--text); }
-.files-note-v2 { font-size: 11px; color: var(--text-3); flex: 1; min-width: 0; }
-
-/* 详情 */
-.dt-head { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+/* 详情:封面区 + 左右分栏 */
+.dt-cover {
+  display: flex; align-items: flex-start; gap: 16px; padding: 18px;
+  margin-bottom: 14px; border-radius: 14px;
+  background: var(--surface); border: 1px solid var(--border-soft);
+}
 .dt-icon {
-  width: 60px; height: 60px; flex-shrink: 0; border-radius: 14px;
-  display: flex; align-items: center; justify-content: center; font-size: 32px;
+  width: 64px; height: 64px; flex-shrink: 0; border-radius: 16px;
+  display: flex; align-items: center; justify-content: center; font-size: 30px;
   background: var(--accent-soft); border: 1px solid var(--border-soft);
 }
 .dt-head-info { flex: 1; min-width: 0; }
 .dt-title { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
-.dt-name { font-size: 18px; font-weight: 700; color: var(--text); }
-.dt-sub { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.dt-installs { font-size: 12px; color: var(--text-3); }
-.dt-desc { font-size: 13px; color: var(--text-2); margin-bottom: 10px; line-height: 1.6; word-break: break-word; overflow-wrap: anywhere; }
-.dt-structure { border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--surface); }
-.dt-tabs { padding: 0 10px; }
-.dt-content {
-  background: var(--bg-elev); border-radius: 0 0 var(--radius-sm) var(--radius-sm);
-  padding: 12px; font-size: 12px; line-height: 1.6; max-height: 38vh; overflow: auto;
-  white-space: pre-wrap; word-break: break-word; color: var(--text-2); margin: 0;
+.dt-name { font-size: 19px; font-weight: 700; color: var(--text); }
+.dt-desc { font-size: 13px; color: var(--text-2); line-height: 1.6; margin-bottom: 8px; word-break: break-word; overflow-wrap: anywhere; }
+.dt-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--text-3); }
+.dt-dot { color: var(--text-4); }
+.dt-actions { display: flex; gap: 8px; flex-shrink: 0; margin-left: auto; }
+.dt-body { display: flex; gap: 14px; flex: 1; min-height: 0; }
+.dt-tree {
+  width: 260px; flex-shrink: 0; border: 1px solid var(--border-soft); border-radius: 10px;
+  background: var(--surface); padding: 8px 0; overflow-y: auto;
 }
+.dt-view {
+  flex: 1; min-width: 0; display: flex; flex-direction: column;
+  border: 1px solid var(--border-soft); border-radius: 10px;
+  background: var(--bg-elev); overflow: hidden;
+}
+.dt-view-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; font-size: 12px; color: var(--text-3);
+  border-bottom: 1px solid var(--border-soft);
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.dt-file { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dt-copy {
+  display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
+  padding: 2px 8px; border: 1px solid var(--border-soft); border-radius: 6px;
+  background: transparent; color: var(--text-3); font-size: 11px; font-family: inherit; cursor: pointer;
+}
+.dt-copy:hover { color: var(--accent-text); border-color: var(--accent); }
+.dt-editor { flex: 1; min-height: 0; }
+.dt-editor :deep(.cm-editor) { height: 100%; }
+.dt-editor :deep(.cm-scroller) { overflow: auto; }
 
 /* ===== 整页模式(manage-page) ===== */
 .manage-page {

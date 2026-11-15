@@ -13,6 +13,8 @@ public class SessionVo {
     private String agentSessionId;
     private String title;
     private String agent;
+    /** 审批模式:manual=危险操作需人工确认;auto=完全访问(自动执行) */
+    private String approvalMode;
     /** 会话勾选启用的自定义技能名(空=仅内置技能) */
     private java.util.List<String> skills;
     /** 会话级临时启用的 MCP server 名(NULL=未设置,默认全部已启用;空数组=本会话不加载) */

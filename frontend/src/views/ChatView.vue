@@ -212,6 +212,7 @@ const {
   toolsPageShow,
   managePageActive,
   closeManagePages,
+  closeAllManagePages,
   openManagePage,
 } = useManagePages({
   sidebarEvents,
@@ -220,10 +221,43 @@ const {
   sessionId,
 })
 
+/**
+ * 出现待确认(权限请求 / AI 提问)时,关闭所有管理整页。
+ * 确认卡片在会话里,整页开着会把它挡住,看起来就像"卡住/页面错乱"。
+ */
+watch(
+  () => chat.hasPendingInteraction,
+  (v) => {
+    if (v) closeAllManagePages()
+  },
+)
+
 async function ensureSession() {
   if (sessionId.value && sessionId.value !== chat.currentSessionId) {
     await chat.selectSession(sessionId.value)
   }
+}
+
+/** 右侧文件树(供工具卡片点击路径时直接预览) */
+const fileTreeRef = ref<InstanceType<typeof FileTree> | null>(null)
+
+/** 等待确认超时(后端自动拒绝):提示一次,避免用户以为仍在执行 */
+watch(
+  () => chat.permissionTimeoutNotice,
+  (v) => {
+    if (!v) return
+    const min = Math.max(1, Math.round(v.timeoutSec / 60))
+    msg.warning(t('chatview.permTimeout', { min }), { duration: 8000 })
+    chat.permissionTimeoutNotice = null
+  },
+)
+
+/** 工具卡片的路径点击 → 展开文件面板并打开该文件预览 */
+function onOpenFilePath(path: string) {
+  if (!path) return
+  showFiles.value = true
+  activeTab.value = 'files'
+  fileTreeRef.value?.reveal(path)
 }
 
 /** 会话跳转与消息定位(任务面板/收藏面板 → 定位并高亮) */
@@ -374,7 +408,7 @@ onBeforeUnmount(() => resetWindowHeights())
         v-model:value="findQuery"
         size="small"
         clearable
-          placeholder="t('chatview.searchPlaceholder')"
+          :placeholder="t('chatview.searchPlaceholder')"
         @update:value="() => { findIndex = 0 }"
         @keyup.enter="navigateFind(1)"
       >
@@ -397,27 +431,31 @@ onBeforeUnmount(() => resetWindowHeights())
     </div>
 
     <div class="chat-main">
-      <DashboardView v-if="dashboardShow" page @close="dashboardShow = false" />
-      <AutomationManager v-if="automationShow" page @close="automationShow = false" />
-      <!-- 技能市场 / 工具库:整页形式占满聊天窗口(带面包屑) -->
-      <SkillMarketplace
-        v-if="skillsPageShow"
-        page
-        @close="skillsPageShow = false"
-        @installed="onSkillInstalled"
-      />
-      <McpManager
-        v-if="toolsPageShow"
-        page
-        @close="toolsPageShow = false"
-      />
-      <TemplateLibrary
-        v-if="templateLibShow"
-        page
-        @close="templateLibShow = false"
-        @use="onTemplateUse"
-        @use-html="onTemplateUseHtml"
-      />
+      <!-- 整页管理视图:绝对定位覆盖聊天区(独占一层),保证不会与聊天列同处一个流里
+           把对话顶上去;各页仍按自身状态渲染。 -->
+      <div v-if="managePageActive" class="manage-slot">
+        <DashboardView v-if="dashboardShow" page @close="dashboardShow = false" />
+        <AutomationManager v-if="automationShow" page @close="automationShow = false" />
+        <!-- 技能市场 / 工具库:整页形式占满聊天窗口(带面包屑) -->
+        <SkillMarketplace
+          v-if="skillsPageShow"
+          page
+          @close="skillsPageShow = false"
+          @installed="onSkillInstalled"
+        />
+        <McpManager
+          v-if="toolsPageShow"
+          page
+          @close="toolsPageShow = false"
+        />
+        <TemplateLibrary
+          v-if="templateLibShow"
+          page
+          @close="templateLibShow = false"
+          @use="onTemplateUse"
+          @use-html="onTemplateUseHtml"
+        />
+      </div>
       <div v-if="!managePageActive" class="chat-col">
         <div class="chat-body">
           <template v-if="chat.currentSessionId && !isNewSession">
@@ -449,12 +487,18 @@ onBeforeUnmount(() => resetWindowHeights())
                   :class="{ 'find-flash': flashedTurnId === row.item.turn.id }"
                 >
                   <ChatMessage v-if="row.item.turn.userMessage" :message="row.item.turn.userMessage" :session-id="chat.currentSessionId" :turn-id="row.item.turn.id" />
-                  <AssistantTurn v-if="row.item.turn.finalAnswer || row.item.turn.steps.length" :turn="row.item.turn" :session-id="chat.currentSessionId" />
+                  <AssistantTurn
+                    v-if="row.item.turn.finalAnswer || row.item.turn.steps.length"
+                    :turn="row.item.turn"
+                    :session-id="chat.currentSessionId"
+                    @open-file="onOpenFilePath"
+                  />
                 </div>
                 <ChatMessage
                   v-else-if="row.item.kind === 'streaming'"
                   :message="{ id: -1, role: 'assistant', content: row.item.text, status: 'streaming', createdAt: '' }"
                   :streaming="true"
+                  actions-bottom
                 />
                 <div v-else-if="row.item.kind === 'thinking'" class="thinking">
         <n-spin size="small" /> {{ t('chatview.thinking') }}
@@ -482,14 +526,14 @@ onBeforeUnmount(() => resetWindowHeights())
                 <!-- 压缩进行中:消息流末尾的状态占位(当前可视区域可见) -->
                 <div v-else-if="row.item.kind === 'compact-progress'" class="compact-progress">
                   <span class="spinner"></span>
-          <span>{{ t('chatview.ctxTitle') }},{{ t('chatview.collapsedNote') }}</span>
+          <span>{{ t('chatview.compacting') }}</span>
                 </div>
                 <!-- 中断分割线:用户中断了本轮生成 -->
                 <div v-else-if="row.item.kind === 'interrupted-divider'" class="interrupted-divider">
                   <span class="id-line"></span>
                   <span class="id-label">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>
-        {{ t('chatview.collapsedNote') }}
+        {{ t('chatview.interruptedNote') }}
                   </span>
                   <span class="id-line"></span>
                 </div>
@@ -517,8 +561,8 @@ onBeforeUnmount(() => resetWindowHeights())
           <button
             v-show="!stickToBottom"
             class="scroll-to-bottom-btn"
-        title="t('chatview.jumpToLatest')"
-        aria-label="t('chatview.jumpToLatest')"
+        :title="t('chatview.jumpToLatest')"
+        :aria-label="t('chatview.jumpToLatest')"
             @click="scrollToBottom"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -556,7 +600,7 @@ onBeforeUnmount(() => resetWindowHeights())
           </div>
           <div class="workspace-tabs" :class="{ 'ws-tab-browser': activeTab === 'browser' }">
             <template v-if="activeTab === 'files'">
-              <FileTree :changed-paths="Array.from(chat.changedFilePaths)" @ask-ai="onAskAIFile" />
+              <FileTree ref="fileTreeRef" :changed-paths="Array.from(chat.changedFilePaths)" @ask-ai="onAskAIFile" />
             </template>
             <template v-else-if="activeTab === 'skills'">
               <SkillsPanel />
@@ -717,7 +761,18 @@ onBeforeUnmount(() => resetWindowHeights())
 }
 
 /* 左右两栏:左=对话区(自适应),右=工作区(拖动左缘调整宽度) */
-.chat-main { flex: 1; display: flex; min-height: 0; position: relative; }
+.chat-main { flex: 1; display: flex; min-height: 0; position: relative; overflow: hidden; }
+/* 整页管理视图层:绝对定位覆盖聊天区,杜绝"页面和对话上下堆叠、把对话顶上去" */
+.manage-slot {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+.manage-slot > :deep(.manage-page) { flex: 1; min-width: 0; height: 100%; }
 .chat-col { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .chat-body { flex: 1; overflow: hidden; min-height: 0; position: relative; }
 .chat-virtual { height: 100%; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; overflow-anchor: none; }

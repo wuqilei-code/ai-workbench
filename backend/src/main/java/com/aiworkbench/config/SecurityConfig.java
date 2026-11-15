@@ -4,6 +4,7 @@ import com.aiworkbench.common.R;
 import com.aiworkbench.common.ResultCode;
 import com.aiworkbench.security.JwtAuthFilter;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -45,6 +46,9 @@ public class SecurityConfig {
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
+                // SSE/SseEmitter 完成时会走 ASYNC dispatch,该次 dispatch 不经过 JwtAuthFilter;
+                // 若不放行会被 Spring Security 以 403 拒绝(响应已提交 → 连接直接断开)。
+                .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                 .requestMatchers(
                     "/api/health",
                     "/api/health/**",

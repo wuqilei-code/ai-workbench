@@ -235,6 +235,16 @@ public class ChatMessageService {
                                     java.util.List<ObjectNode> timeline, String status,
                                     Long elapsedSec, Integer contextTokens, Integer contextLimit,
                                     TurnUsage usage) {
+        upsertAssistantTurn(agentSessionId, agentMessageId, text, toolCalls, timeline, status,
+                elapsedSec, contextTokens, contextLimit, usage, 0);
+    }
+
+    /** 全参 + 本轮模型调用次数(写入 parts.llmCalls,前端据此显示「调用明细」)。 */
+    public void upsertAssistantTurn(String agentSessionId, String agentMessageId,
+                                    String text, Map<String, ObjectNode> toolCalls,
+                                    java.util.List<ObjectNode> timeline, String status,
+                                    Long elapsedSec, Integer contextTokens, Integer contextLimit,
+                                    TurnUsage usage, int llmCalls) {
         ChatSession session = chatSessionService.findByAgentSessionId(agentSessionId);
         if (session == null) {
             log.debug("upsertAssistantTurn: unknown agent session {}", agentSessionId);
@@ -274,6 +284,10 @@ public class ChatMessageService {
                 }
                 if (contextLimit != null && contextLimit > 0) {
                     partsNode.put("contextLimit", contextLimit);
+                }
+                // 本轮模型调用次数:前端据此显示「调用明细」入口(0 则不显示)
+                if (llmCalls > 0) {
+                    partsNode.put("llmCalls", llmCalls);
                 }
                 m.setParts(objectMapper.writeValueAsString(partsNode));
                 m.setToolCallCount(toolCalls.size());

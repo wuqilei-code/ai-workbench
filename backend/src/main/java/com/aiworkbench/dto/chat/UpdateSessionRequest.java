@@ -18,4 +18,6 @@ public class UpdateSessionRequest {
     private Boolean resetMcpServers;
     /** 切换会话 agent(可选) */
     private String agent;
+    /** 审批模式:manual=危险操作需人工确认(默认);auto=完全访问,工具自动执行 */
+    private String approvalMode;
 }

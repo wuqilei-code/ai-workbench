@@ -1,11 +1,19 @@
 /**
- * 消息时间显示:DB 存北京时间,后端 LocalDateTime 序列化为无时区 ISO 字符串
- * (如 "2026-08-08T03:54:02.308")。浏览器按本地时区解析——中国用户(UTC+8)即正确。
+ * 消息时间显示。
+ *
+ * 后端 LocalDateTime 序列化后有两种形态:
+ * - 落库时间(MySQL CURRENT_TIMESTAMP,容器默认 UTC):无时区,如 "2026-11-14T10:03:25.043";
+ * - 前端乐观消息(发送时本地构造):带 Z 的 ISO,如 "2026-11-14T18:03:25.043Z"。
+ *
+ * 无时区的裸时间按 UTC 解析,再交给浏览器转成本地时区;带时区的直接解析。
  * 今天只显 HH:mm;跨天/跨年补日期。
  */
+const NAIVE_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/
+
 export function fmtMessageTime(dateStr?: string | null): string {
   if (!dateStr) return ''
-  const d = new Date(dateStr)
+  const normalized = NAIVE_DATETIME_RE.test(dateStr) ? dateStr + 'Z' : dateStr
+  const d = new Date(normalized)
   if (Number.isNaN(d.getTime())) return ''
   const p = (n: number) => String(n).padStart(2, '0')
   const hm = `${p(d.getHours())}:${p(d.getMinutes())}`

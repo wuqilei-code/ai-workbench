@@ -57,7 +57,7 @@ deepagents:
 # 定时任务队列(JobScheduler/JobQueueDispatcher;执行由 agent-service SSE 承担)
 agent-jobs:
   max-concurrent: ${AGENT_JOBS_MAX_CONCURRENT:1}
-  timeout-minutes: ${AGENT_JOBS_TIMEOUT_MINUTES:30}
+  timeout-minutes: ${AGENT_JOBS_TIMEOUT_MINUTES:15}
   sweep-ms: ${AGENT_JOBS_SWEEP_MS:5000}
 
 # JWT:生产必须在环境注入随机密钥;缺失会因 JwtTokenProvider 的 >=32 字节校验启动失败(failfast)
@@ -72,6 +72,10 @@ app:
   # agent-service 内部调用令牌(create_skill 工具回写技能库);compose 两容器注入同一值。
   # 生产必须在环境注入随机值;缺失时 agent-service 对内部接口会 401,防默认令牌滥用。
   internal-token: ${INTERNAL_TOKEN:}
+  # 会话压缩触发阈值(token);与 agent-service 的 AGENT_COMPRESSION_TRIGGER_TOKENS 同一个值。
+  # 前端用它显示「压缩阈值」(配置为 0 时回退到模型窗口/会话用量)。
+  compression:
+    trigger-tokens: ${AGENT_COMPRESSION_TRIGGER_TOKENS:100000}
   # 内部接口 /api/internal/** 的额外来源限制:逗号分隔的 IPv4/CIDR(如 172.18.0.0/16,127.0.0.1)。
   # 空 = 不限制来源(仅校验 X-Internal-Token)。生产建议填内网网段。
   internal-trusted-cidrs: ${INTERNAL_TRUSTED_CIDRS:}

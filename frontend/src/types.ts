@@ -34,6 +34,8 @@ export interface SessionVo {
   skills?: string[]
   /** 会话级临时启用的 MCP server 名(不传/undefined=默认全部已启用;空数组=本会话不加载) */
   mcpServers?: string[]
+  /** 审批模式:manual=危险操作需人工确认;auto=完全访问(工具自动执行) */
+  approvalMode?: 'manual' | 'auto'
   providerId: string | null
   modelId: string | null
   archived: number
@@ -100,6 +102,8 @@ export interface StepParts {
   contextTokens?: number
   /** deepagents 压缩触发阈值(token),圆环分母 */
   contextLimit?: number
+  /** 本轮模型调用次数(>0 时消息标题栏显示「调用明细」入口) */
+  llmCalls?: number
 }
 
 /** 内置全局技能信息(只读展示) */

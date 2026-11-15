@@ -29,7 +29,9 @@ services:
       WORKSPACE_UID_BASE: "${WORKSPACE_UID_BASE:-100000}"
       # --- 定时任务(job 由 agent-service SSE 执行,无容器) ---
       AGENT_JOBS_MAX_CONCURRENT: "${AGENT_JOBS_MAX_CONCURRENT:-1}"
-      AGENT_JOBS_TIMEOUT_MINUTES: "${AGENT_JOBS_TIMEOUT_MINUTES:-30}"
+      # session compression trigger tokens (shared with agent-service; frontend reads /api/health)
+      AGENT_COMPRESSION_TRIGGER_TOKENS: "${AGENT_COMPRESSION_TRIGGER_TOKENS:-100000}"
+      AGENT_JOBS_TIMEOUT_MINUTES: "${AGENT_JOBS_TIMEOUT_MINUTES:-15}"
       AGENT_JOBS_SWEEP_MS: "${AGENT_JOBS_SWEEP_MS:-5000}"
       AGENT_JOBS_MAX_RETRIES: "${AGENT_JOBS_MAX_RETRIES:-2}"
       # 任务最终失败时的告警 Webhook(可选;POST JSON)
@@ -94,10 +96,19 @@ services:
       AGENT_MODEL: "${AGENT_MODEL:-deepseek-chat}"
       AGENT_MODEL_BASE_URL: "${AGENT_MODEL_BASE_URL:-}"
       AGENT_MODEL_API_KEY: "${AGENT_MODEL_API_KEY:-}"
+      AGENT_MODEL_MAX_TOKENS: "${AGENT_MODEL_MAX_TOKENS:-32768}"
+      # max_tokens(传统字段,DeepSeek 非思考模式必须用这个才不会卡在 8192) | max_completion_tokens
+      AGENT_MODEL_MAX_TOKENS_FIELD: "${AGENT_MODEL_MAX_TOKENS_FIELD:-max_tokens}"
       # 并发加固:多 worker + PG checkpoint 连接池
       AGENT_WORKERS: "${AGENT_WORKERS:-4}"
       # 单请求步数上限(recursion_limit);默认 10000 近似不限制,上下文由自动压缩管理
       AGENT_MAX_TURNS: "${AGENT_MAX_TURNS:-10000}"
+      # 无人值守任务单轮工具调用上限(防止反复重跑同一脚本;0=不限制)
+      AGENT_TASK_MAX_TOOL_CALLS: "${AGENT_TASK_MAX_TOOL_CALLS:-40}"
+      # 同一脚本最多执行次数(首次生成 + 最多一次修正),超过直接交付已有结果
+      AGENT_TASK_MAX_SCRIPT_RUNS: "${AGENT_TASK_MAX_SCRIPT_RUNS:-2}"
+      # session compression trigger tokens; 0=auto (85% window), testing e.g. 2000
+      AGENT_COMPRESSION_TRIGGER_TOKENS: "${AGENT_COMPRESSION_TRIGGER_TOKENS:-100000}"
       # 出站 SSRF 防护:默认禁止内网/回环;按需给白名单主机或整体放行(内网私有部署)
       AGENT_OUTBOUND_ALLOWLIST: "${AGENT_OUTBOUND_ALLOWLIST:-}"
       AGENT_ALLOW_PRIVATE_OUTBOUND: "${AGENT_ALLOW_PRIVATE_OUTBOUND:-false}"

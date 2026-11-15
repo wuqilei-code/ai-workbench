@@ -27,9 +27,13 @@ public class DbLockService {
     /** 实例标识(进程级) */
     private final String owner = UUID.randomUUID().toString();
 
-    /** 尝试获取名为 name 的锁,ttlSeconds 秒后自动过期;返回是否成功持有。 */
+    /** 尝试获取名为 name 的锁,ttlSeconds 秒后自动过期;返回是否成功持有。
+     *  时间基准统一用 JVM 本地时间:MySQL 容器通常是 UTC,若用 DB 的 NOW() 与会话应用写入的
+     *  本地时间比较,过期判定会差一个时区(曾导致重启后旧锁 8 小时不失效、定时任务全部停摆)。 */
     public boolean tryLock(String name, int ttlSeconds) {
-        LocalDateTime expires = LocalDateTime.now().plusSeconds(Math.max(1, ttlSeconds));
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime expires = now.plusSeconds(Math.max(1, ttlSeconds));
+        Timestamp nowTs = Timestamp.valueOf(now);
         try {
             jdbc.update("INSERT INTO app_lock(name, owner, expires_at) VALUES(?,?,?)",
                     name, owner, Timestamp.valueOf(expires));
@@ -37,8 +41,8 @@ public class DbLockService {
         } catch (DuplicateKeyException dup) {
             // 已存在:仅当已过期或由自己持有时接管/续期
             int n = jdbc.update(
-                    "UPDATE app_lock SET owner=?, expires_at=? WHERE name=? AND (owner=? OR expires_at < NOW(3))",
-                    owner, Timestamp.valueOf(expires), name, owner);
+                    "UPDATE app_lock SET owner=?, expires_at=? WHERE name=? AND (owner=? OR expires_at < ?)",
+                    owner, Timestamp.valueOf(expires), name, owner, nowTs);
             return n > 0;
         } catch (Exception e) {
             log.debug("[db-lock] tryLock degraded (table unavailable?): {}", e.toString());

@@ -176,10 +176,13 @@ public class JobQueueDispatcher {
      *  - 其余:进入终态。成功/达上限后重置 retryCount。 */
     private void finish(JobTask job, String status, String result, String error) {
         boolean failure = JobTaskService.FAILED.equals(status) || JobTaskService.TIMEOUT.equals(status);
+        boolean cronJob = job.getCron() != null && !job.getCron().isBlank();
         int retry = job.getRetryCount() == null ? 0 : job.getRetryCount();
         int maxRetries = Math.max(0, props.getMaxRetries());
 
-        if (failure && retry < maxRetries) {
+        // 定时任务不做「立即重试」:一次失败可能已经跑了很久(如 20+ 分钟的 agent 自我重跑),
+        // 立刻重试只会再次烧一遍时间/token;交给 cron 的下一次触发即可。
+        if (failure && retry < maxRetries && !cronJob) {
             jobTaskMapper.update(new JobTask(), new LambdaUpdateWrapper<JobTask>()
                     .eq(JobTask::getId, job.getId())
                     .set(JobTask::getStatus, JobTaskService.QUEUED)

@@ -386,9 +386,9 @@ function manualCount(s: McpVo): number {
 </script>
 
 <template>
-  <component :is="page ? 'div' : NModal" v-bind="rootBind">
+  <component :is="props.page ? 'div' : NModal" v-bind="rootBind">
     <!-- 整页模式:面包屑 + 页头 -->
-    <div v-if="page" class="manage-crumb">
+    <div v-if="props.page" class="manage-crumb">
       <button class="crumb-link" @click="emit('close')">首页</button>
       <span class="crumb-sep">/</span>
       <button v-if="formView" class="crumb-link" @click="closeForm">{{ t('mcp.title') }}</button>
@@ -403,7 +403,7 @@ function manualCount(s: McpVo): number {
       <span class="crumb-cur">{{ ifaceEditIdx >= 0 ? t('mcp.editIface') : t('mcp.addIface') }}</span>
       </template>
     </div>
-    <div v-if="page" class="manage-header">
+    <div v-if="props.page" class="manage-header">
       <div>
     <div class="manage-title">{{ ifaceView ? (ifaceEditIdx >= 0 ? t('mcp.editIface') : t('mcp.addIface')) : (formView ? (editingId != null ? t('mcp.editServer') : t('mcp.newServer')) : t('mcp.title')) }}</div>
     <div class="manage-sub" v-if="!formView">{{ t('mcp.manageSub') }}</div>
@@ -689,7 +689,7 @@ function manualCount(s: McpVo): number {
       </template>
     </div>
 
-    <template v-if="!page" #footer><div /></template>
+    <template v-if="!props.page" #footer><div /></template>
   </component>
 </template>
 

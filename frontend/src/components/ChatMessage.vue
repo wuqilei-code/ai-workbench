@@ -10,6 +10,7 @@ import { fileApi } from '@/api/files'
 import { fmtMessageTime } from '@/utils/time'
 import TypeReveal from './TypeReveal.vue'
 import StreamMarkdown from './StreamMarkdown.vue'
+import TraceModal from './trace/TraceModal.vue'
 import type { MessageVo } from '@/types'
 
 const props = defineProps<{
@@ -19,6 +20,12 @@ const props = defineProps<{
   sessionId?: number | null
   /** 所在 turn id(定位用) */
   turnId?: string
+  /** AI 回答:把操作按钮放到正文左下角(用户消息仍保留在右上角) */
+  actionsBottom?: boolean
+  /** 本轮模型调用次数(>0 时在操作栏显示「操作日志」按钮) */
+  traceCount?: number
+  /** 本轮 assistant 消息 id(操作日志查询用) */
+  traceAgentMessageId?: string
 }>()
 const msg = useMessage()
 const fav = useFavoritesStore()
@@ -26,6 +33,11 @@ const chat = useChatStore()
 const { t } = useI18n()
 
 const isUser = computed(() => props.message.role === 'user')
+
+/** AI 回答且要求底部操作栏:右上角按钮隐藏,统一放到正文下方 */
+const bottomActions = computed(() => !isUser.value && !!props.actionsBottom)
+const traceOpen = ref(false)
+const traceCount = computed(() => props.traceCount ?? 0)
 
 /** 消息时间:DB 存北京时间,LocalDateTime 序列化为无时区 ISO 字符串;按浏览器本地(+8)解析即正确 */
 const messageTime = computed(() => fmtMessageTime(props.message.createdAt))
@@ -169,7 +181,7 @@ async function submitEdit() {
       <div class="msg-head">
         <span class="author">{{ isUser ? t('turn.authorUser') : 'AI' }}</span>
         <span v-if="messageTime" class="msg-time">{{ messageTime }}</span>
-        <div class="bubble-tools">
+        <div v-if="!bottomActions" class="bubble-tools">
           <button v-if="starable" class="copy-btn star-btn" :class="{ on: isStarred }" :title="isStarred ? t('turn.unfavoriteTitle') : t('turn.favoriteTitle')" @click="toggleStar">
             <svg width="14" height="14" viewBox="0 0 24 24" :fill="isStarred ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
           </button>
@@ -222,8 +234,40 @@ async function submitEdit() {
           </div>
         </div>
       </template>
+
+      <!-- AI 回答操作栏:与回答一起放在左下角 -->
+      <div v-if="bottomActions" class="msg-actions">
+        <button v-if="starable" class="copy-btn star-btn" :class="{ on: isStarred }" :title="isStarred ? t('turn.unfavoriteTitle') : t('turn.favoriteTitle')" @click="toggleStar">
+          <svg width="14" height="14" viewBox="0 0 24 24" :fill="isStarred ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        </button>
+        <button class="copy-btn" :title="t('turn.copyTitle')" @click="copyContent">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>
+        <button v-if="!isUser" class="copy-btn export-btn" :title="t('turn.exportMdTitle')" @click="exportAsMarkdown">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </button>
+        <button
+          v-if="traceCount > 0 && traceAgentMessageId"
+          class="copy-btn trace-btn"
+          :class="{ on: traceOpen }"
+          :title="t('trace.logTitle')"
+          @click="traceOpen = !traceOpen"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg>
+          <span class="trace-n">{{ traceCount }}</span>
+        </button>
+        <span class="gen-label">{{ t('turn.aiGenerated') }}</span>
+      </div>
     </div>
   </div>
+
+  <!-- 操作日志弹窗(回答左下角按钮触发) -->
+  <TraceModal
+    v-if="bottomActions && traceCount > 0 && traceAgentMessageId"
+    v-model:show="traceOpen"
+    :agent-message-id="traceAgentMessageId || ''"
+    :count="traceCount"
+  />
 </template>
 
 <style scoped>
@@ -281,6 +325,23 @@ async function submitEdit() {
 }
 .copy-btn:hover { background: var(--surface-hover); color: var(--text-2); }
 .star-btn.on { color: #f0b429; }
+/* AI 回答底部操作栏:左下角图标 + 生成标识 */
+.msg-actions {
+  display: flex; align-items: center; gap: 4px;
+  margin-top: 8px; min-height: 24px;
+}
+.msg-actions .copy-btn { padding: 4px 5px; }
+.trace-btn { gap: 3px; }
+.trace-btn.on { color: var(--accent-text); background: var(--accent-soft); }
+.trace-n {
+  font-size: 10px; font-family: ui-monospace, monospace; color: var(--text-4);
+}
+.trace-btn.on .trace-n { color: inherit; }
+.gen-label {
+  margin-left: 6px; padding-left: 8px;
+  border-left: 1px solid var(--border-soft);
+  font-size: 11px; color: var(--text-4); line-height: 1;
+}
 .content-area { min-width: 0; max-width: 100%; }
 .msg.user .content-area { max-width: 78%; }
 .msg.assistant .content-area { max-width: 96%; }

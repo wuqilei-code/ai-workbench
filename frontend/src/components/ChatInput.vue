@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, nextTick, computed, watch, onMounted } from 'vue'
+import { ref, nextTick, computed, watch, onMounted, h } from 'vue'
 import { useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { fileApi } from '@/api/files'
@@ -409,7 +409,9 @@ function applySample(sample: string) {
 const hasPending = computed(() => chat.hasPendingInteraction)
 
 const canSend = computed(() => {
-  const t = getPlainText().trim()
+  // 必须读 text.value(响应式):getPlainText 只读 DOM,单独用它会导致输入后
+  // 发送按钮的 disabled 状态不更新(按钮一直灰着)。
+  const t = (text.value || getPlainText()).trim()
   return !!(t || attachments.value.length || selectedSkills.value.length)
 })
 
@@ -633,6 +635,53 @@ watch(text, () => {
   nextTick().then(resizeInput)
 })
 
+/** 审批模式下拉选项(随语言切换,提示小字放在下拉框内部) */
+const approvalOptions = computed(() => [
+  { label: t('input2.approvalManual'), value: 'manual', hint: t('input2.approvalManualShort') },
+  { label: t('input2.approvalAuto'), value: 'auto', hint: t('input2.approvalAutoShort') },
+])
+
+/** 下拉选中项渲染:模式名 + 小字说明(用内联样式,避免 scoped CSS 作用不到子组件渲染的节点) */
+function renderApprovalLabel(option: any) {
+  const hint = String(option?.hint || '')
+  const auto = option?.value === 'auto'
+  return h(
+    'span',
+    { style: 'display:inline-flex;align-items:baseline;gap:6px;min-width:0;max-width:100%' },
+    [
+      h('span', { style: 'font-size:12px;color:var(--text-2);flex-shrink:0' }, String(option?.label ?? '')),
+      hint
+        ? h(
+            'span',
+            {
+              style:
+                'font-size:10.5px;color:' +
+                (auto ? 'var(--warn)' : 'var(--text-4)') +
+                ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap',
+            },
+            hint,
+          )
+        : null,
+    ],
+  )
+}
+
+function onApprovalChange(v: string) {
+  if (v !== 'manual' && v !== 'auto') return
+  void setApprovalMode(v)
+}
+
+/** 审批模式切换:会话级持久化;切到「完全访问」给一次提醒,避免误开 */
+async function setApprovalMode(mode: 'manual' | 'auto') {
+  if (chat.approvalMode === mode) return
+  try {
+    await chat.setApprovalMode(mode)
+    if (mode === 'auto') msg.warning(t('input2.approvalAutoToast'), { duration: 4000 })
+  } catch (e: any) {
+    msg.error(e?.message || t('input2.approvalFail'))
+  }
+}
+
 async function onAbort() {
   if (chat.streamingStuckSeconds > 0) {
     await chat.forceReleaseStreaming()
@@ -698,7 +747,7 @@ const stats = computed(() => {
 })
 
 /** 模型上下文窗口上限:仅在后端用量未就绪时作估算兜底分母用 */
-const TOKEN_LIMIT = 300_000
+const TOKEN_LIMIT = 100_000
 const modelLimit = computed(() => {
   const s = chat.currentSession
   if (!s?.providerId || !s?.modelId) return TOKEN_LIMIT
@@ -711,15 +760,27 @@ const modelLimit = computed(() => {
   return TOKEN_LIMIT
 })
 
+/** 会话压缩阈值(服务端配置;0=自动)。用于统计弹窗在尚未产生 usage 时也能显示正确阈值 */
+const compressionLimit = ref(0)
+onMounted(async () => {
+  try {
+    const r = await chatApi.compressionLimit()
+    compressionLimit.value = Number(r?.compressionTriggerTokens) || 0
+  } catch {
+    // 读取失败不影响圆环,退回模型窗口估算
+  }
+})
+
 /** 圆环数据源:后端 usage 事件(=deepagents 判断压缩所用的同一 token 数,分母=压缩阈值)优先;
- *  尚未经过模型调用/旧会话无持久化时回退到字符估算(分母=模型窗口)。 */
+ *  尚未经过模型调用/旧会话无持久化时回退到字符估算(分母=配置阈值/模型窗口)。 */
 const ring = computed(() => {
+  const configured = compressionLimit.value
   const u = chat.contextUsage
   if (u) {
-    const limit = u.limit ?? modelLimit.value
+    const limit = configured > 0 ? configured : (u.limit ?? modelLimit.value)
     return { tokens: u.tokens, limit, ratio: Math.min(1, u.tokens / limit), real: true }
   }
-  const limit = modelLimit.value
+  const limit = configured > 0 ? configured : modelLimit.value
   return { tokens: stats.value.estTokens, limit, ratio: Math.min(1, stats.value.estTokens / limit), real: false }
 })
 
@@ -816,6 +877,18 @@ async function startNewChat() {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
           {{ t('input2.toolBtn') }}
           </button>
+
+          <!-- 审批模式(工具选择右侧):手动审批=危险操作先确认;完全访问=工具自动执行 -->
+          <n-select
+            :value="chat.approvalMode"
+            :options="approvalOptions"
+            :render-label="renderApprovalLabel"
+            size="tiny"
+            class="approve-select"
+            :disabled="!chat.currentSessionId"
+            :title="chat.approvalMode === 'auto' ? t('input2.approvalAutoHint') : t('input2.approvalManualHint')"
+            @update:value="onApprovalChange"
+          />
         </div>
 
         <div class="toolbar-right">
@@ -845,7 +918,7 @@ async function startNewChat() {
           <n-select
             v-model:value="modelValue"
             :options="modelOptions"
-        placeholder="t('input2.modelTitle')"
+        :placeholder="t('input2.modelTitle')"
             size="tiny"
             class="toolbar-select"
             :disabled="!modelOptions.length"
@@ -876,7 +949,7 @@ async function startNewChat() {
     <n-modal
       v-model:show="statsOpen"
       preset="card"
-      title="t('input2.statsTitle')"
+      :title="t('input2.statsTitle')"
       :style="{ width: '440px', maxWidth: '92vw' }"
       :bordered="false"
     >
@@ -1055,9 +1128,28 @@ async function startNewChat() {
 .tool-btn svg { flex-shrink: 0; }
 .tool-btn-text { padding: 6px 8px; }
 
+/* 审批模式下拉(位于"工具"按钮右侧):模式名 + 小字提示都在框内 */
+.approve-select {
+  width: 176px;
+  min-width: 140px;
+  flex: 0 1 176px;
+  margin-left: 2px;
+}
+.approve-select :deep(.n-base-selection) {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  height: 26px;
+  box-sizing: border-box;
+}
+.approve-select :deep(.n-base-selection:hover) { border-color: var(--accent); }
+.approve-select :deep(.n-base-selection-label) { font-size: 12px; color: var(--text-2); }
+.approve-select :deep(.n-base-suffix) { color: var(--text-3); }
+
 /* 模型下拉(紧凑) */
 .toolbar-select {
-  max-width: 200px;
+  max-width: 150px;
   flex-shrink: 0;
 }
 .toolbar-select :deep(.n-base-selection) {

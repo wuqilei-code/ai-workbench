@@ -90,9 +90,13 @@ export const useChatStore = defineStore('chat', () => {
   const reconnecting = ref(false)
   const authExpired = ref(false)
   const interruptedByDisconnect = ref(false)
+  /** 等待确认超时(后端自动拒绝)的通知,由 ChatView 弹一次 toast 后清空 */
+  const permissionTimeoutNotice = ref<{ requestId: string; timeoutSec: number } | null>(null)
   const disconnectAborted = ref(false)
   let _disconnectAbortTimer: ReturnType<typeof setTimeout> | null = null
   let _interruptedMsgId: string | null = null
+  /** 本轮是否已经通过 summary_delta 在时间线上创建了压缩节点 */
+  let _liveSummaryActive = false
   let _interruptedText = ''
   const switching = ref(false)
   const reconnectCount = ref(0)
@@ -382,6 +386,30 @@ export const useChatStore = defineStore('chat', () => {
     return s
   }
 
+  /** 当前会话审批模式(缺省 manual) */
+  const approvalMode = computed<'manual' | 'auto'>(() => {
+    const s = sessions.value.find((x) => x.id === currentSessionId.value)
+    return s?.approvalMode === 'auto' ? 'auto' : 'manual'
+  })
+
+  /** 切换审批模式:先乐观更新,失败回滚 */
+  async function setApprovalMode(mode: 'manual' | 'auto') {
+    const id = currentSessionId.value
+    if (!id) return
+    const idx = sessions.value.findIndex((s) => s.id === id)
+    const prev = idx >= 0 ? sessions.value[idx].approvalMode : undefined
+    if (idx >= 0) sessions.value[idx] = { ...sessions.value[idx], approvalMode: mode }
+    try {
+      const updated = await chatApi.updateSession(id, { approvalMode: mode })
+      const i = sessions.value.findIndex((s) => s.id === id)
+      if (i >= 0) sessions.value[i] = updated
+    } catch (e) {
+      const i = sessions.value.findIndex((s) => s.id === id)
+      if (i >= 0) sessions.value[i] = { ...sessions.value[i], approvalMode: prev }
+      throw e
+    }
+  }
+
   async function pinSession(id: number, pinned: boolean) {
     const updated = await chatApi.updateSession(id, { pinned: pinned ? 1 : 0 })
     const idx = sessions.value.findIndex((s) => s.id === id)
@@ -553,6 +581,7 @@ export const useChatStore = defineStore('chat', () => {
 
   function closeStream() {
     _manualClose = true
+    _liveSummaryActive = false
     if (stream) { stream.close(); stream = null }
     connected.value = false
     stopHeartbeat()
@@ -580,10 +609,17 @@ export const useChatStore = defineStore('chat', () => {
 
   async function sendMessage(text: string) {
     if (!text.trim() || isStreaming.value) return
+    _liveSummaryActive = false
     // 草稿态/无会话:首次发送时才创建会话
     if (!currentSessionId.value) {
       const s = await createSession(deriveTitle(text) || '新对话')
       if (!s) return
+    }
+    // SSE 连接断开后(后台标签页/网络抖动/服务重启)再次提问时自动恢复订阅,
+    // 否则消息会正常落库但前端收不到流式事件,看起来像"卡住"。
+    if (!stream) {
+      authExpired.value = false
+      subscribe()
     }
     const isFirstMessage = messages.value.length === 0
     const optimistic: MessageVo = {
@@ -808,12 +844,28 @@ export const useChatStore = defineStore('chat', () => {
         break
       }
 
-      // deepagents 会话压缩触发:在时间线上插入一条系统提示,前台即时可见
+      // 会话压缩摘要 token:实时写入时间线的「会话压缩」系统节点
+      case 'summary_delta': {
+        if (typeof data.content === 'string' && data.content) {
+          isStreaming.value = true
+          touchStreamActivity()
+          _liveSummaryActive = true
+          appendLiveTimeline('system', data.content, undefined, true)
+        }
+        break
+      }
+
+      // deepagents 会话压缩完成:用完整摘要覆盖刚才的流式节点(或首次插入)
       case 'summary': {
         isStreaming.value = true
         touchStreamActivity()
-        flushLiveSteps()
-        appendLiveTimeline('system', data.message || tr('chatStore.historyCompact'))
+        if (_liveSummaryActive) {
+          appendLiveTimeline('system', data.message || tr('chatStore.historyCompact'), undefined, false, true)
+          _liveSummaryActive = false
+        } else {
+          flushLiveSteps()
+          appendLiveTimeline('system', data.message || tr('chatStore.historyCompact'))
+        }
         break
       }
 
@@ -850,6 +902,14 @@ export const useChatStore = defineStore('chat', () => {
             if (idx >= 0 && messages.value[idx].status !== 'error') {
               messages.value[idx] = { ...messages.value[idx], status: status === 'completed' ? 'completed' : 'aborted' }
             }
+            // 本轮模型调用次数(后端在 message.end 里补充):立即显示会话级「调用记录」入口
+            const calls = Number(data.llmCalls) || 0
+            if (idx >= 0 && calls > 0) {
+              messages.value[idx] = {
+                ...messages.value[idx],
+                parts: { ...(messages.value[idx].parts || {}), llmCalls: calls },
+              }
+            }
           }
         }
         break
@@ -869,6 +929,18 @@ export const useChatStore = defineStore('chat', () => {
           allowed: data.allowed || ['approve', 'reject'],
           _replied: false,
         })
+        break
+      }
+
+      // 等待确认超时:后端已自动按"拒绝"恢复本轮;这里清掉确认卡并提示用户
+      case 'permission.timeout': {
+        const requestId: string = data.requestId || ''
+        if (requestId) dismissPendingPermission(requestId)
+        permissionTimeoutNotice.value = {
+          requestId,
+          timeoutSec: Number(data.timeoutSec) || 180,
+        }
+        resumeStreaming()
         break
       }
 
@@ -997,7 +1069,13 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /** 追加实时时间线条目(reason/text 合并同类尾段,tool 记 id,system 独立成条),与网关落库结构一致 */
-  function appendLiveTimeline(k: 'reason' | 'text' | 'tool' | 'system', v?: string, toolId?: string) {
+  function appendLiveTimeline(
+    k: 'reason' | 'text' | 'tool' | 'system',
+    v?: string,
+    toolId?: string,
+    merge = false,
+    replace = false,
+  ) {
     const targetId = streamingMessageId.value
     let idx = targetId ? messages.value.findIndex((m) => m.agentMessageId === targetId) : -1
     if (idx < 0 && messages.value.length && messages.value[messages.value.length - 1].role === 'assistant') {
@@ -1010,7 +1088,11 @@ export const useChatStore = defineStore('chat', () => {
       : []
     const last = tl.length ? (tl[tl.length - 1] as { k: string; v?: string }) : null
     const prevLen = tl.length
-    if ((k === 'reason' || k === 'text') && last && last.k === k) {
+    if (replace && last && last.k === k) {
+      tl[tl.length - 1] = { k, v: v || '' }
+    } else if (merge && last && last.k === k) {
+      tl[tl.length - 1] = { k, v: (last.v || '') + (v || '') }
+    } else if ((k === 'reason' || k === 'text') && last && last.k === k) {
       const oldLen = (last.v || '').length
       tl[tl.length - 1] = { k, v: (last.v || '') + (v || '') }
       dbg('[timeline] append MERGE', { k, prevLen, oldContentLen: oldLen, addedLen: (v || '').length, newContentLen: (last.v || '').length + (v || '').length, tail: (v || '').slice(-60) })
@@ -1133,6 +1215,7 @@ export const useChatStore = defineStore('chat', () => {
   /** 会话空闲:生成结束,兜底落定未提交的流式文本 */
   function finishStreaming() {
     dbg('[timeline] finishStreaming called', { streamingMsgId: streamingMessageId.value, streamingTextLen: streamingText.value.length, liveReasoningLen: liveReasoning.value.length })
+    _liveSummaryActive = false
     // 记录本轮耗时(结束时刻 - 开始时刻)到对应 assistant 消息,供头部"已完成 Xs"展示
     recordTurnElapsed()
     flushLiveReasoning()
@@ -1329,6 +1412,8 @@ export const useChatStore = defineStore('chat', () => {
     loadArchivedSessions, loadMoreArchived, archivedHasMore, archivedLoadingMore,
     createSession, selectSession,
     deleteSession, pinSession, archiveSession, unarchiveSession, renameSession, clearSession, exportSession,
+    approvalMode, setApprovalMode,
+    permissionTimeoutNotice,
     importSession,
     summarizeSession,
     sendMessage, abort, closeStream, forceReleaseStreaming, resumeStreaming,

@@ -2,6 +2,9 @@ import { http, unwrap } from './http'
 import type { SessionVo, MessageVo, SkillInfo, TemplateVo, MarketplaceSkillVo, SkillFileVo } from '@/types'
 
 export const chatApi = {
+  /** 运行时压缩阈值(0=自动);统计弹窗的「压缩阈值」以此为准 */
+  compressionLimit: () =>
+    http.get<{ compressionTriggerTokens?: number }>('/health').then(unwrap),
   listSessions: (limit?: number, offset?: number) =>
     http.get<SessionVo[]>('/chat/sessions', { params: { limit, offset } }).then(unwrap),
   listArchivedSessions: (limit?: number, offset?: number) =>
@@ -22,7 +25,7 @@ export const chatApi = {
   /** 导入会话:上传导出的 JSON,返回新建会话 */
   importSession: (json: string) => http.post<SessionVo>('/chat/sessions/import', { json }).then(unwrap),
   getSession: (id: number) => http.get<SessionVo>(`/chat/sessions/${id}`).then(unwrap),
-  updateSession: (id: number, data: Partial<{ title: string; providerId: string; modelId: string; archived: number; pinned: number; agent: string; skills: string[]; mcpServers: string[]; resetMcpServers: boolean }>) =>
+  updateSession: (id: number, data: Partial<{ title: string; providerId: string; modelId: string; archived: number; pinned: number; agent: string; skills: string[]; mcpServers: string[]; resetMcpServers: boolean; approvalMode: 'manual' | 'auto' }>) =>
     http.patch<SessionVo>(`/chat/sessions/${id}`, data).then(unwrap),
   deleteSession: (id: number) => http.delete(`/chat/sessions/${id}`),
   /** 消息历史(游标分页):beforeId 向上翻页取更早,afterId 增量追平,都不传取最新 limit 条 */
@@ -83,4 +86,40 @@ export const chatApi = {
   },
   installSkill: (id: number) => http.post(`/chat/skills/marketplace/${id}/install`),
   deleteMarketplaceSkill: (id: number) => http.delete(`/chat/skills/marketplace/${id}`),
+
+  /** 模型调用溯源:某条 assistant 消息下的 N 次调用明细 */
+  listLlmCalls: (agentMessageId: string) =>
+    http.get<LlmCallVo[]>('/chat/traces', { params: { agentMessageId } }).then(unwrap),
+  /** 单次调用的请求/响应原文(JSON 文本,已脱敏);delta=true 时请求省略与上次相同的缓存前缀 */
+  llmCallPayload: (id: number, side: 'request' | 'response', delta = false) =>
+    http
+      .get<{ side: string; content: string; delta: boolean; omittedMessages: number }>(
+        `/chat/traces/${id}/payload`,
+        { params: { side, delta } },
+      )
+      .then(unwrap),
+}
+
+/** 一次模型调用的元数据(与后端 llm_call 表对应) */
+export interface LlmCallVo {
+  id: number
+  /** 所属 assistant 消息 id(会话时间线按它分组) */
+  agentMessageId: string | null
+  callIndex: number
+  model: string
+  inputTokens: number
+  outputTokens: number
+  reasoningTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  latencyMs: number | null
+  ttftMs: number | null
+  finishReason: string
+  status: 'ok' | 'error'
+  error: string
+  toolCalls: number
+  messageCount: number
+  hasRequest: boolean
+  hasResponse: boolean
+  createdAt: string
 }

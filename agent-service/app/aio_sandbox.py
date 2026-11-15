@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import hashlib
 import logging
 import os
@@ -45,6 +46,13 @@ _AIO_STARTUP_WAIT = 30          # 等待 AIO server 就绪的最长秒数
 _AIO_REQUEST_TIMEOUT = 120      # 单次 API 调用超时
 _AIO_INNER_WORKSPACE = "/home/gem/workspace"   # AIO 容器内工作区
 _AIO_HTTP_PORT = 8080                          # AIO server 容器内端口
+# CDP 页面就绪:沙箱冷启动时 Chrome 需要若干秒才暴露页面,浏览器工具按此重试
+_CDP_READY_WAIT = float(os.getenv("AIO_CDP_READY_WAIT", "60"))
+_CDP_POLL_INTERVAL = float(os.getenv("AIO_CDP_POLL_INTERVAL", "2.5"))
+# execute 默认超时:命令卡死(等 stdin / 死循环)时由沙箱侧 timeout 杀掉
+_EXEC_TIMEOUT_SEC = int(os.getenv("AGENT_EXEC_TIMEOUT", "180"))
+# 文件快照(find)超时:只用于检测产出文件,不值得占用主超时
+_SNAPSHOT_TIMEOUT_SEC = int(os.getenv("AGENT_SNAPSHOT_TIMEOUT", "10"))
 
 # 开源中文字体(Noto Sans SC,SIL OFL 1.1):注入沙箱以替代镜像自带的专有 SimHei。
 _FONT_SRC = Path(__file__).resolve().parent.parent / "assets" / "fonts" / "NotoSansSC-Regular.ttf"
@@ -350,15 +358,17 @@ class AioSandbox(BaseSandbox):
 
     def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
         self.touch()
-        before = self._file_snapshot()
+        # 快照只用于"产出文件"检测:用短超时,避免 find 拖慢/拖死整条命令
+        before = self._file_snapshot(timeout=_SNAPSHOT_TIMEOUT_SEC)
         # 虚拟路径 /workspace → AIO 容器内真实路径
         translated = (command
                       .replace("/workspace/", _AIO_INNER_WORKSPACE + "/")
                       .replace("/workspace", _AIO_INNER_WORKSPACE))
         # AIO shell API 不支持 workdir,用 cd 前缀设定工作目录
         wrapped = f"cd {_AIO_INNER_WORKSPACE} && {translated}"
-        if timeout and timeout > 0:
-            wrapped = f"timeout -k 5 {int(timeout)} sh -c {self._shq(wrapped)}"
+        # 默认超时:命令等 stdin / 死循环时由沙箱侧 `timeout` 杀掉,返回 124,不无限挂起
+        effective = int(timeout) if timeout and timeout > 0 else _EXEC_TIMEOUT_SEC
+        wrapped = f"timeout -k 5 {effective} sh -c {self._shq(wrapped)}"
         try:
             data = self._api("post", "/v1/shell/exec", json={"command": wrapped})
             output = data.get("output") or ""
@@ -366,12 +376,14 @@ class AioSandbox(BaseSandbox):
             truncated = len(output) > _MAX_OUTPUT_BYTES
             if truncated:
                 output = output[:_MAX_OUTPUT_BYTES] + "\n[输出已截断]"
+            if exit_code == 124:
+                output = (output + f"\n[命令超过 {effective}s 被终止]").strip()
         except Exception as exc:  # noqa: BLE001
             output = f"AIO 执行错误: {exc}"
             exit_code = -1
             truncated = False
         try:
-            changes = self._diff_snapshot(before, self._file_snapshot())
+            changes = self._diff_snapshot(before, self._file_snapshot(timeout=_SNAPSHOT_TIMEOUT_SEC))
         except Exception:  # noqa: BLE001
             changes = []
         with self._lock:
@@ -383,9 +395,32 @@ class AioSandbox(BaseSandbox):
         return "'" + s.replace("'", "'\\''") + "'"
 
     async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
-        import asyncio
-
         return await asyncio.to_thread(self.execute, command, timeout=timeout)
+
+    # --- 异步文件工具 ---
+    # deepagents 的工具在异步图里走 a* 方法;BaseSandbox 的异步实现会把
+    # /workspace/... 原样 base64 进 shell 命令,绕过 AioSandbox.execute 的路径翻译,
+    # 于是在容器里 mkdir /workspace 直接 PermissionError(异步写文件/读文件静默失败)。
+    # 这里统一委托给已做虚拟路径翻译 + 原生 File API 的同步实现。
+    async def als(self, path: str):
+        return await asyncio.to_thread(self.ls, path)
+
+    async def aread(self, file_path: str, offset: int = 0, limit: int = 2000):
+        return await asyncio.to_thread(self.read, file_path, offset, limit)
+
+    async def awrite(self, file_path: str, content: str):
+        return await asyncio.to_thread(self.write, file_path, content)
+
+    async def aedit(self, file_path: str, old_string: str, new_string: str,
+                    replace_all: bool = False):
+        return await asyncio.to_thread(self.edit, file_path, old_string, new_string, replace_all)
+
+    async def agrep(self, pattern: str, path: str | None = None, glob: str | None = None,
+                    *, max_count: int | None = None):
+        return await asyncio.to_thread(self.grep, pattern, path, glob, max_count=max_count)
+
+    async def aglob(self, pattern: str, path: str | None = None):
+        return await asyncio.to_thread(self.glob, pattern, path)
 
     def pop_recent_changes(self) -> list[str]:
         with self._lock:
@@ -625,22 +660,54 @@ class AioSandbox(BaseSandbox):
             logger.warning("[%s] 浏览器截图失败: %s", self.user_id, exc)
         return None
 
-    def cdp_url(self) -> str | None:
-        """浏览器当前页面的 CDP WebSocket 地址(供 agent 工具驱动)。"""
+    @staticmethod
+    def _pick_page_ws(pages: list) -> str | None:
+        for p in pages or []:
+            if isinstance(p, dict) and p.get("type") == "page" and p.get("webSocketDebuggerUrl"):
+                return p["webSocketDebuggerUrl"]
+        for p in pages or []:
+            if isinstance(p, dict) and p.get("webSocketDebuggerUrl"):
+                return p["webSocketDebuggerUrl"]
+        return None
+
+    def cdp_url(self, wait_sec: float | None = None) -> str | None:
+        """浏览器当前页面的 CDP WebSocket 地址(供 agent 工具驱动)。
+
+        沙箱是冷启动的:容器起来后 Chrome/nginx 还要几秒到几十秒才暴露 /cdp/json/list。
+        这里按固定间隔重试(wait_sec 默认 60s),并在没有任何 page 时尝试让 Chrome
+        新开一个空白页,避免刚建好的沙箱必然报"未找到可用页面"。
+        """
+        total = _CDP_READY_WAIT if wait_sec is None else wait_sec
+        deadline = time.time() + max(0.0, total)
+        last_err: str | None = None
+        base: str | None = None
         try:
             base = self._internal_base_url()
-            r = httpx.get(f"{base}/cdp/json/list", timeout=10)
-            r.raise_for_status()
-            pages = r.json() or []
-            for p in pages:
-                if p.get("type") == "page":
-                    ws_url = p.get("webSocketDebuggerUrl")
-                    if ws_url:
-                        return ws_url
-            if pages:
-                return pages[0].get("webSocketDebuggerUrl")
         except Exception as exc:  # noqa: BLE001
-            logger.warning("[%s] 获取 CDP 页面地址失败: %s", self.user_id, exc)
+            logger.warning("[%s] 获取沙箱地址失败: %s", self.user_id, exc)
+            return None
+        while True:
+            try:
+                r = httpx.get(f"{base}/cdp/json/list", timeout=5)
+                r.raise_for_status()
+                ws = self._pick_page_ws(r.json() or [])
+                if ws:
+                    return ws
+                # 没有任何 page:让 Chrome 开一个空白页(Chrome DevTools HTTP 端点)
+                try:
+                    httpx.put(f"{base}/cdp/json/new?about:blank", timeout=5)
+                except Exception:  # noqa: BLE001
+                    pass
+            except Exception as exc:  # noqa: BLE001
+                last_err = str(exc)
+            if time.time() >= deadline:
+                break
+            time.sleep(_CDP_POLL_INTERVAL)
+        if last_err:
+            logger.warning("[%s] 获取 CDP 页面地址失败(已重试 %ss): %s",
+                           self.user_id, int(total), last_err)
+        else:
+            logger.warning("[%s] CDP 无可用页面(已重试 %ss)", self.user_id, int(total))
         return None
 
     # --- 录屏 / 预览 ------------------------------------------------------
@@ -659,12 +726,13 @@ class AioSandbox(BaseSandbox):
 
     # --- file snapshot(与 DockerSandbox 同逻辑) ------------------------
 
-    def _file_snapshot(self) -> dict[str, str]:
+    def _file_snapshot(self, timeout: int | None = None) -> dict[str, str]:
         try:
             data = self._api(
                 "post", "/v1/shell/exec",
                 json={"command":
                       f"find {_AIO_INNER_WORKSPACE} -type f -printf '%P %T@ %s\\0' 2>/dev/null"},
+                timeout=timeout or _AIO_REQUEST_TIMEOUT,
             )
             raw = data.get("output") or ""
             snap: dict[str, str] = {}

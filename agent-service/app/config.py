@@ -32,6 +32,12 @@ AGENT_MODEL_TEMPERATURE: float = float(os.environ.get("AGENT_MODEL_TEMPERATURE",
 AGENT_MODEL_THINKING: bool = _bool("AGENT_MODEL_THINKING", False)
 # 推理强度(low/medium/high/max);仅 thinking 开启时生效。
 AGENT_MODEL_REASONING_EFFORT: str = os.environ.get("AGENT_MODEL_REASONING_EFFORT", "high")
+# 模型单次输出上限;默认 32768。
+# 注意:部分 OpenAI 兼容端点(实测 DeepSeek 非思考模式)会把 max_completion_tokens
+# 硬性截到 8192;此时必须用传统 max_tokens 字段发请求。默认用 max_tokens。
+# 可选值:max_tokens(传统字段,兼容 DeepSeek/Ollama 等)/ max_completion_tokens(新版字段)。
+AGENT_MODEL_MAX_TOKENS: int = _int("AGENT_MODEL_MAX_TOKENS", 32768)
+AGENT_MODEL_MAX_TOKENS_FIELD: str = os.environ.get("AGENT_MODEL_MAX_TOKENS_FIELD", "max_tokens").strip()
 
 # --- 工作区 ---
 # 所有用户工作区/技能目录的根。多租户主机上按 <root>/<user_id>/ 隔离。
@@ -53,6 +59,10 @@ AGENT_HITL: bool = _bool("AGENT_HITL", True)
 # include_tools 按需披露——模型先读 /skills/mcp 才拿得到工具(省 token);
 # 代价:会话自动压缩可能把"读技能"那段冲掉,届时需重读技能(长任务注意)。
 AGENT_MCP_LAZY_TOOLS: bool = _bool("AGENT_MCP_LAZY_TOOLS", False)
+
+# 会话压缩触发阈值覆盖(token)。0=按模型 profile 自动(通常为窗口的 85%);
+# 默认 100000;测试时设为 5000 之类的小值,几轮对话甚至首轮就能看到压缩链路。
+AGENT_COMPRESSION_TRIGGER_TOKENS: int = _int("AGENT_COMPRESSION_TRIGGER_TOKENS", 100000)
 
 # 内部令牌:网关/agent-service 互相调用的共享凭证(X-Internal-Token)。
 # 生产必须设置随机值;缺失即启动失败(fail-fast),不落公开默认值,防默认令牌被滥用。
@@ -129,6 +139,12 @@ AGENT_WORKERS: int = max(1, _int("AGENT_WORKERS", 4))
 # (可通过前端「停止」中断);默认放宽到 10000,日常复杂任务基本等同于「不限制」,
 # 仍保留一个防跑飞的兜底。需要真正无上限/更小可改环境变量 AGENT_MAX_TURNS。
 AGENT_MAX_TURNS: int = _int("AGENT_MAX_TURNS", 10000)
+# 定时/无人值守任务单轮允许的工具调用步数上限;超过即中止,防止模型为了微调结果
+# 反复重跑同一脚本(实测一次简报任务跑了 198 次 execute、耗时 22 分钟)。0=不限制。
+AGENT_TASK_MAX_TOOL_CALLS: int = _int("AGENT_TASK_MAX_TOOL_CALLS", 40)
+# 无人值守任务里同一个脚本最多执行次数(首次生成 + 最多一次修正);超过即停止本轮,
+# 直接交付已有结果。0=不限制。
+AGENT_TASK_MAX_SCRIPT_RUNS: int = _int("AGENT_TASK_MAX_SCRIPT_RUNS", 2)
 AGENT_LOG_LEVEL: str = os.environ.get("AGENT_LOG_LEVEL", "info")
 
 # --- 后端内部接口(create_skill 工具回写技能库;令牌需与后端 app.internal-token 一致) ---

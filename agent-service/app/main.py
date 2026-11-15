@@ -34,17 +34,33 @@ _PUBLIC_PATHS = {"/health"}
 _SSE_TOOL_CONTENT_LIMIT = 2000
 
 
-@app.middleware("http")
-async def enforce_trusted_source(request: Request, call_next):
-    """入站网络加固:配置 INTERNAL_TRUSTED_CIDRS 后,非公开路径须来自可信网段。"""
-    from app.inbound_guard import is_trusted_client
+class _TrustedSourceMiddleware:
+    """入站网络加固:配置 INTERNAL_TRUSTED_CIDRS 后,非公开路径须来自可信网段。
 
-    if request.url.path not in _PUBLIC_PATHS:
-        host = request.client.host if request.client else None
-        if not is_trusted_client(host):
-            logger.warning("403 rejected: source %s not trusted for %s", host, request.url.path)
-            return JSONResponse(status_code=403, content={"detail": "来源不在可信网段"})
-    return await call_next(request)
+    必须是纯 ASGI 中间件:Starlette 的 BaseHTTPMiddleware(@app.middleware("http"))
+    会在 SSE 长连接上多包一层 receive/send 管道,实测会在长输出/大工具调用时
+    把响应流卡死(客户端收不到后续事件,生成器停在 await 上无人驱动)。
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http" and scope.get("path") not in _PUBLIC_PATHS:
+            from app.inbound_guard import is_trusted_client
+
+            client = scope.get("client")
+            host = client[0] if client else None
+            if not is_trusted_client(host):
+                logger.warning("403 rejected: source %s not trusted for %s",
+                               host, scope.get("path"))
+                response = JSONResponse(status_code=403, content={"detail": "来源不在可信网段"})
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(_TrustedSourceMiddleware)
 
 
 def verify_internal_token(
@@ -114,6 +130,8 @@ class InvokeRequest(BaseModel):
     mcp_servers: list[McpServerConfig] = Field(default_factory=list)
     # agent 类型:chat=交互(默认,保留提问/授权);task=无人值守(关闭所有 HITL 中断,不挂 ask_user)
     agent_type: str = Field(default="chat")
+    # 审批模式:manual=危险操作需人工确认(默认);auto=完全访问,工具直接执行不弹确认
+    approval_mode: str = Field(default="manual")
     # 运行时模型覆盖(由网关按会话所选 provider 解析后传入;缺省则回退服务端环境变量)
     model: Optional[str] = None
     base_url: Optional[str] = None
@@ -132,6 +150,14 @@ class CookieImportRequest(BaseModel):
 
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+# 模型单次输出被 max_tokens 截断(finish_reason=length/max_tokens)时的统一 error 事件。
+# 网关收到 error 后把本轮消息定稿为 error,前端不再无限显示 streaming。
+_TRUNCATED_ERROR = _sse("error", {
+    "message": "模型单次输出达到上限,内容/工具参数已被截断。已中止本轮;"
+               "请把任务拆成更小的步骤后重试(大文件分段写入或改用脚本生成)。"
+})
 
 
 @app.get("/health")
@@ -174,6 +200,7 @@ def invoke(user_id: str, body: InvokeRequest) -> InvokeResponse:
         mcp_servers=[s.model_dump() for s in body.mcp_servers],
         agent_type=body.agent_type,
         model_override={"model": body.model, "base_url": body.base_url, "api_key": body.api_key},
+        approval_mode=body.approval_mode,
     )
     _cfg = config_for(user_id, body.thread_id)
     repair_dangling_tool_calls(agent, _cfg)
@@ -388,57 +415,174 @@ def stream(request: Request, user_id: str, body: InvokeRequest) -> StreamingResp
         mcp_servers=[s.model_dump() for s in body.mcp_servers],
         agent_type=body.agent_type,
         model_override={"model": body.model, "base_url": body.base_url, "api_key": body.api_key},
+        approval_mode=body.approval_mode,
     )
     cfg = config_for(user_id, body.thread_id)
     if body.resume_decision is None:
         # 新消息:先修复线程里悬空的 tool_calls(中断/报错残留),避免 400 与续跑旧任务
         repair_dangling_tool_calls(agent, cfg)
 
+    # 每次模型调用的溯源采集(callback 在 langgraph 工作线程写,主循环 drain 后发 SSE)
+    from app.trace import TraceCollector
+
+    trace = TraceCollector()
+    run_cfg = {**cfg, "callbacks": [trace.handler()]}
+
     async def gen():
         emitted_tools: set[str] = set()
         tool_calls: dict[str, tuple[str, dict]] = {}
         wc_decoders: dict[str, "_WidgetCodeDecoder"] = {}
         usage_emitted: set[str] = set()
+        task_tool_calls = 0
+        task_seen_calls: set[str] = set()
+        task_script_runs: dict[str, int] = {}
+        # 会话压缩摘要的实时通道:摘要模型每产出一段就推进 asyncio 队列,
+        # 主循环在等待 langgraph 下一步时并发取队列并发 summary_delta。
+        from app.summary_stream import reset_summary_sink, set_summary_sink
+
+        loop = asyncio.get_running_loop()
+        summary_queue: asyncio.Queue[str] = asyncio.Queue()
+        summary_signal = asyncio.Event()
+
+        def _summary_sink(piece: str) -> None:
+            def _push() -> None:
+                summary_queue.put_nowait(piece)
+                summary_signal.set()
+
+            loop.call_soon_threadsafe(_push)
+
+        summary_sink_token = set_summary_sink(_summary_sink)
+        # 注意:不要在 SSE 期间调用 request.is_disconnected()。
+        # BaseHTTPMiddleware 的 receive 有锁,is_disconnected 取消 receive 会留下死锁,
+        # 导致响应管道卡住(客户端收不到任何新事件)。客户端断开时 Starlette 会取消
+        # 生成器,send 会抛异常,无需主动探测。
         yield _sse("start", {"thread_id": body.thread_id})
         try:
             if body.resume_decision is not None:
                 # 中断恢复:以 Command(resume=决策) 继续现有线程(hitl 审批/拒绝后)
                 it = agent.stream(
                     Command(resume=_align_decisions(agent, cfg, body.resume_decision)),
-                    config=cfg,
+                    config=run_cfg,
                     stream_mode=["messages", "updates", "custom"],
                     version="v1",
                 )
             else:
                 it = agent.stream(
                     {"messages": [m.model_dump() for m in body.messages]},
-                    config=cfg,
+                    config=run_cfg,
                     stream_mode=["messages", "updates", "custom"],
                     version="v1",
                 )
-            # 同步 langgraph 迭代器经线程拉取,避免阻塞事件循环;每步间检查客户端断连。
+            # 同步 langgraph 迭代器经线程拉取,避免阻塞事件循环。
             while True:
-                if await request.is_disconnected():
-                    logger.info("[%s][%s] client disconnected, abort stream",
-                                user_id, body.thread_id)
-                    # 线程已由 langgraph checkpoint;无需回滚,直接终止本流
-                    return
-                result = await asyncio.to_thread(_next_stream, it)
+                # 不在 SSE 期间探测断连(is_disconnected 会破坏 receive 锁);
+                # 客户端断开时 Starlette 会取消本生成器,异常自然向上传播。
+                next_task = asyncio.create_task(asyncio.to_thread(_next_stream, it))
+                # 等待下一步的同时,把摘要模型正在流式产出的 token 立即发出去。
+                while not next_task.done():
+                    if not summary_queue.empty():
+                        yield _sse("summary_delta", {"content": summary_queue.get_nowait()})
+                        continue
+                    # 不用定时器轮询(asyncio.sleep/wait_for 在 SSE 长连接里实测会
+                    # 停在 await 上不再被唤醒):改为「等这一步完成 或 摘要来新 token」
+                    # 两个事件谁先到,完全不依赖 loop 的定时器。
+                    summary_signal.clear()
+                    waiter = asyncio.ensure_future(summary_signal.wait())
+                    try:
+                        await asyncio.wait({next_task, waiter},
+                                           return_when=asyncio.FIRST_COMPLETED)
+                    finally:
+                        waiter.cancel()
+                    # 模型调用已因 max_tokens 截断且带工具调用:立刻中止本轮,
+                    # 不等 langgraph 把半截 tool call 执行完(否则会写半截文件/转圈)。
+                    if trace.truncated:
+                        logger.warning("[%s][%s] model output truncated with tool calls; "
+                                       "cancelling turn", user_id, body.thread_id)
+                        next_task.cancel()
+                        # 把被截断的这次调用也记进调用日志(时间线里能看到 length)
+                        for ev in trace.drain():
+                            yield _sse("llm_call", ev)
+                        yield _TRUNCATED_ERROR
+                        return
+                result = next_task.result()
+                while not summary_queue.empty():
+                    yield _sse("summary_delta", {"content": summary_queue.get_nowait()})
                 if result is None:
                     # 迭代器耗尽,正常结束。不能依赖 StopIteration:经线程池会被
                     # asyncio 转成 RuntimeError,导致正常完成被误判为流错误,
                     # 进而使网关给前端发 error 事件、总结文本随流错误被丢弃。
                     break
+                for ev in trace.drain():
+                    yield _sse("llm_call", ev)
+                if trace.truncated:
+                    # 截断发生在最后一步,等待循环来不及拦下:这里兜底本轮直接结束
+                    logger.warning("[%s][%s] model output truncated with tool calls; abort turn",
+                                   user_id, body.thread_id)
+                    yield _TRUNCATED_ERROR
+                    return
                 mode, value = result
                 if mode == "messages":
-                    for item in _iter_stream_messages(value):
-                        for out in _emit_stream_message(item, wc_decoders):
+                    for msg, meta in _iter_stream_messages(value):
+                        outs, truncated = _emit_stream_message(msg, wc_decoders, meta)
+                        for out in outs:
                             yield out
+                        if truncated:
+                            # 输出被 max_tokens 截断:已发 error,立即结束本轮,避免执行半截工具
+                            return
                 elif mode == "custom":
                     # ContextUsageMiddleware 回传的上下文用量(与 deepagents 压缩判断同口径)
                     if isinstance(value, dict) and isinstance(value.get("usage"), dict):
                         yield _sse("usage", value["usage"])
                 elif mode == "updates":
+                    # 模型单次输出达到上限且带 tool_calls:参数已被截断,继续执行会
+                    # 写半截文件/卡住。直接发 error 结束本轮(网关定稿为 error)。
+                    if _is_truncated_update(value):
+                        logger.warning("[%s][%s] model output truncated with tool calls; abort turn",
+                                       user_id, body.thread_id)
+                        yield _TRUNCATED_ERROR
+                        return
+                    # 无人值守任务的步数预算:防止模型反复重跑同一脚本/自我优化到几十分钟。
+                    if body.agent_type == "task" and config.AGENT_TASK_MAX_TOOL_CALLS > 0:
+                        task_tool_calls += _count_tool_calls(value)
+                        if task_tool_calls > config.AGENT_TASK_MAX_TOOL_CALLS:
+                            logger.warning(
+                                "[%s][%s] task tool-call budget exceeded (%d > %d); abort turn",
+                                user_id, body.thread_id, task_tool_calls,
+                                config.AGENT_TASK_MAX_TOOL_CALLS)
+                            task_tool_calls = 0
+                            yield _sse("error", {
+                                "message": f"任务执行步骤过多(已超过 {config.AGENT_TASK_MAX_TOOL_CALLS} 次工具调用),"
+                                           "已中止以避免无限重跑。请简化任务,或把长流程拆成多个定时任务。"
+                            })
+                            return
+                    # 同一脚本重复执行上限:模型常见跑飞方式是「改一点参数再跑一遍」。
+                    # 超过上限时不再执行新的工具调用,保留上一次结果并正常收尾(任务算成功)。
+                    if body.agent_type == "task" and config.AGENT_TASK_MAX_SCRIPT_RUNS > 0:
+                        exceeded = None
+                        for tc in _iter_ai_tool_calls(value):
+                            cid = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                            if cid:
+                                if cid in task_seen_calls:
+                                    continue
+                                task_seen_calls.add(cid)
+                            for script in _scripts_in_tool_call(tc):
+                                runs = task_script_runs.get(script, 0) + 1
+                                task_script_runs[script] = runs
+                                if runs > config.AGENT_TASK_MAX_SCRIPT_RUNS:
+                                    exceeded = script
+                                    break
+                            if exceeded:
+                                break
+                        if exceeded:
+                            logger.warning(
+                                "[%s][%s] task script %s exceeded %d runs; stop and deliver",
+                                user_id, body.thread_id, exceeded,
+                                config.AGENT_TASK_MAX_SCRIPT_RUNS)
+                            yield _sse("delta", {
+                                "content": f"\n\n[已停止重复执行] 脚本 {exceeded} 已执行 "
+                                           f"{config.AGENT_TASK_MAX_SCRIPT_RUNS} 次,已保留上一次生成的结果并结束本次任务。"
+                            })
+                            break
                     # Human-in-the-loop 中断:吐出待审批请求后终止本流(线程已 checkpoint),
                     # 不再发 done;由网关收到用户确认后以 resume_decision 重新起流续跑。
                     if isinstance(value, dict) and "__interrupt__" in value:
@@ -476,6 +620,9 @@ def stream(request: Request, user_id: str, body: InvokeRequest) -> StreamingResp
                         yield out
                     for out in _emit_update(value, user_id, emitted_tools, tool_calls, wc_decoders):
                         yield out
+            # 收尾:把最后几次模型调用(通常就在循环末尾产生)一并发出
+            for ev in trace.drain():
+                yield _sse("llm_call", ev)
         except Exception as exc:  # noqa: BLE001
             logger.exception("[%s][%s] stream error", user_id, body.thread_id)
             from app import metrics
@@ -483,6 +630,8 @@ def stream(request: Request, user_id: str, body: InvokeRequest) -> StreamingResp
             metrics.inc("aiwb_stream_error_total")
             yield _sse("error", {"message": str(exc)})
             return
+        finally:
+            reset_summary_sink(summary_sink_token)
         yield _sse("done", {"status": "ok"})
 
     return StreamingResponse(
@@ -493,16 +642,17 @@ def stream(request: Request, user_id: str, body: InvokeRequest) -> StreamingResp
 
 
 def _iter_stream_messages(value):
-    """messages 模式:value 可能是 [(msg_chunk, meta), ...] 或 [msg_chunk, ...]。"""
+    """messages 模式:value 可能是 [(msg_chunk, meta), ...] 或 [msg_chunk, ...]。
+    统一产出 (message, metadata);metadata 用于区分会话压缩等内部模型调用。"""
     for item in value:
         if isinstance(item, tuple) or isinstance(item, list):
             if len(item) == 2 and hasattr(item[0], "content"):
-                yield item[0]
+                yield item[0], (item[1] if isinstance(item[1], dict) else {})
             else:
                 for sub in item:
-                    yield sub
+                    yield sub, {}
         else:
-            yield item
+            yield item, {}
 
 
 def _next_stream(it):
@@ -539,13 +689,31 @@ def _align_decisions(agent, cfg, decision: dict) -> dict:
     return decision
 
 
-def _emit_stream_message(msg, wc_decoders: dict) -> list[str]:
+def _emit_stream_message(msg, wc_decoders: dict, meta: dict | None = None) -> tuple[list[str], bool]:
     """messages 模式中的 token 增量:reasoning_content → reason 事件,正文文本 → delta 事件,
     pure_show_widget 参数流 → widget_delta 事件(逐块流式渲染组件)。
+    会话压缩的内部模型调用(metadata.lc_source=summarization)单独发 summary_delta,
+    前台把它放进时间线的「会话压缩」节点,而不是混进正文。
+    返回 (SSE 事件列表, 是否因输出上限截断需要终止本轮)。
     wc_decoders:本流独有的 widget 参数解码器表(避免跨流/跨用户串扰)。"""
     outs: list[str] = []
-    if not getattr(msg, "type", "").endswith("AIMessageChunk"):
-        return outs
+    meta = meta if isinstance(meta, dict) else {}
+    nested = meta.get("metadata") if isinstance(meta.get("metadata"), dict) else {}
+    is_summary = (
+        meta.get("lc_source") == "summarization"
+        or nested.get("lc_source") == "summarization"
+    )
+    mtype = getattr(msg, "type", "")
+    if not mtype.endswith("AIMessageChunk"):
+        return outs, False
+    # 摘要模型调用已带 nostream;若仍有分片漏到 messages 流,也直接丢弃,
+    # 摘要原文由 summary 事件一次性下发到时间线节点。
+    if is_summary:
+        return outs, False
+    rmeta = getattr(msg, "response_metadata", None) or {}
+    finish = rmeta.get("finish_reason") or rmeta.get("stop_reason")
+    if finish in ("length", "max_tokens"):
+        return [_TRUNCATED_ERROR], True
     ak = getattr(msg, "additional_kwargs", None) or {}
     rc = ak.get("reasoning_content") if isinstance(ak, dict) else None
     if rc:
@@ -580,7 +748,7 @@ def _emit_stream_message(msg, wc_decoders: dict) -> list[str]:
             continue
         if piece:
             outs.append(_sse("widget_delta", {"id": get("id"), "delta": piece}))
-    return outs
+    return outs, False
 
 
 class _WidgetCodeDecoder:
@@ -695,6 +863,75 @@ def _usage_events(update, emitted: set) -> list[str]:
     return outs
 
 
+def _count_tool_calls(update) -> int:
+    """统计 updates 块里 AI 消息发起的工具调用数(任务步数预算用)。"""
+    n = 0
+    if not isinstance(update, dict):
+        return 0
+    for upd in update.values():
+        if not isinstance(upd, dict):
+            continue
+        for msg in (upd.get("messages", []) or []):
+            n += len(getattr(msg, "tool_calls", None) or [])
+    return n
+
+
+def _iter_ai_tool_calls(update):
+    """遍历 updates 块里 AI 消息发起的工具调用。"""
+    if not isinstance(update, dict):
+        return
+    for upd in update.values():
+        if not isinstance(upd, dict):
+            continue
+        for msg in (upd.get("messages", []) or []):
+            for tc in (getattr(msg, "tool_calls", None) or []):
+                yield tc
+
+
+_SCRIPT_NAME_RE = re.compile(
+    r"([A-Za-z0-9_./\\-]+\.(?:py|sh|bash|js|mjs|cjs|ts|rb|pl|r|jl))", re.IGNORECASE
+)
+
+
+def _scripts_in_tool_call(tc) -> list[str]:
+    """从 execute/run 类工具调用的命令里提取脚本文件名(用于重复执行上限)。"""
+    if isinstance(tc, dict):
+        name = str(tc.get("name") or "")
+        args = tc.get("args") or {}
+    else:
+        name = str(getattr(tc, "name", "") or "")
+        args = getattr(tc, "args", {}) or {}
+    if name not in ("execute", "run", "shell", "bash"):
+        return []
+    if isinstance(args, dict):
+        cmd = str(args.get("command") or args.get("cmd") or args.get("input") or "")
+    else:
+        cmd = str(args)
+    out: list[str] = []
+    for raw in _SCRIPT_NAME_RE.findall(cmd):
+        base = raw.replace("\\", "/").rsplit("/", 1)[-1].lower()
+        if base:
+            out.append(base)
+    return out
+
+
+def _is_truncated_update(update) -> bool:
+    """updates 模式中是否出现 finish_reason=length/max_tokens 且带工具调用的消息。"""
+    if not isinstance(update, dict):
+        return False
+    for upd in update.values():
+        if not isinstance(upd, dict):
+            continue
+        for msg in (upd.get("messages", []) or []):
+            meta = getattr(msg, "response_metadata", None) or {}
+            finish = meta.get("finish_reason") or meta.get("stop_reason")
+            if finish in ("length", "max_tokens") and (
+                getattr(msg, "tool_calls", None) or getattr(msg, "invalid_tool_calls", None)
+            ):
+                return True
+    return False
+
+
 def _emit_update(update, user_id: str | None = None, emitted_tools: set | None = None,
                  tool_calls: dict | None = None, wc_decoders: dict | None = None) -> list[str]:
     """updates 模式:发出完整的工具调用与工具结果(含结构化输出物路径)。
@@ -723,7 +960,24 @@ def _emit_update(update, user_id: str | None = None, emitted_tools: set | None =
             if file_path:
                 # file_path 是 backend 虚拟路径(相对 artifacts_root=/workspace)
                 message += f",旧对话已存档至 /workspace{file_path}"
-            outs.append(_sse("summary", {"message": message}))
+            # 摘要模型调用带了 nostream,正文不会收到 token;这里把摘要原文一次性带给前台
+            raw = ""
+            sm = ev.get("summary_message") if isinstance(ev, dict) else None
+            if sm is not None:
+                raw = sm.get("content", "") if isinstance(sm, dict) else getattr(sm, "content", "")
+                raw = raw or ""
+                if isinstance(raw, list):
+                    raw = "\n".join(str(b.get("text", "")) if isinstance(b, dict) else str(b) for b in raw)
+            m = re.search(r"<summary>(.*?)</summary>", raw, re.S)
+            summary_text = (m.group(1) if m else raw).strip()
+            if not m:
+                summary_text = re.sub(
+                    r"^Here is a summary of the conversation to date:\s*", "", summary_text, flags=re.I
+                ).strip()
+            payload = {"message": message}
+            if summary_text:
+                payload["summary"] = summary_text
+            outs.append(_sse("summary", payload))
         msgs += upd.get("messages", []) or []
     # 本轮 update 内的配对:tool_call_id -> (name, args)。
     # deepagents 可能把"AI 发起调用"与"工具结果"拆成两次 update,故用本流最近调用表兜底。

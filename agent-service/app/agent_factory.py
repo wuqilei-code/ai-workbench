@@ -169,6 +169,8 @@ from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellB
 from deepagents.middleware.skills import SkillsMiddleware
 from deepagents.middleware.summarization import (
     SummarizationToolMiddleware,
+    _DeepAgentsSummarizationMiddleware,
+    compute_summarization_defaults,
     create_summarization_middleware,
     create_summarization_tool_middleware,
 )
@@ -274,6 +276,102 @@ def _compression_threshold(sm) -> int | None:
                 return max(1, int(limits * float(clause["fraction"])))
     return None
 
+
+def _result_text(result) -> str:
+    """把模型返回的 AIMessage 归一成摘要纯文本。"""
+    return _chunk_text(result).strip()
+
+
+def _chunk_text(result) -> str:
+    """归一化模型分片文本;保留分片之间的空格/换行。"""
+    content = getattr(result, "content", result)
+    if isinstance(content, list):
+        parts = []
+        for b in content:
+            if isinstance(b, dict):
+                parts.append(str(b.get("text", "")))
+            else:
+                parts.append(str(b))
+        content = "\n".join(parts)
+    return str(content or "")
+
+
+class _QuietPromptSummarizer:
+    """用中间件自己的 summary_prompt 生成摘要,但给模型调用加 nostream tag。
+
+    这样摘要内容仍是标准 SESSION INTENT/SUMMARY 格式,同时 LangGraph 的
+    messages 流不会把摘要 token 当成正文推给前端。
+    """
+
+    def __init__(self, helper, model) -> None:
+        self._helper = helper
+        self._model = model
+
+    @staticmethod
+    def _cfg(config):
+        cfg = dict(config or {})
+        tags = list(cfg.get("tags") or [])
+        if "nostream" not in tags:
+            tags.append("nostream")
+        cfg["tags"] = tags
+        return cfg
+
+    def invoke(self, messages, config=None, **kwargs):
+        prompt = self._helper._format_summary_prompt(messages)
+        cfg = self._cfg(config)
+        pieces: list[str] = []
+        try:
+            for chunk in self._model.stream(prompt, config=cfg, **kwargs):
+                piece = _chunk_text(chunk)
+                if piece:
+                    pieces.append(piece)
+                    from app.summary_stream import emit_summary_piece
+                    emit_summary_piece(piece)
+        except Exception:  # noqa: BLE001
+            # 某些模型/网关不支持 stream,退回一次性调用(此时前端会在 summary 事件里一次拿到)
+            return _result_text(self._model.invoke(prompt, config=cfg, **kwargs))
+        return "".join(pieces).strip() or _result_text(self._model.invoke(prompt, config=cfg, **kwargs))
+
+    async def ainvoke(self, messages, config=None, **kwargs):
+        prompt = self._helper._format_summary_prompt(messages)
+        cfg = self._cfg(config)
+        pieces: list[str] = []
+        try:
+            async for chunk in self._model.astream(prompt, config=cfg, **kwargs):
+                piece = _chunk_text(chunk)
+                if piece:
+                    pieces.append(piece)
+                    from app.summary_stream import emit_summary_piece
+                    emit_summary_piece(piece)
+        except Exception:  # noqa: BLE001
+            return _result_text(await self._model.ainvoke(prompt, config=cfg, **kwargs))
+        return "".join(pieces).strip() or _result_text(await self._model.ainvoke(prompt, config=cfg, **kwargs))
+
+
+def _build_summarization(model, backend):
+    """构造自动压缩中间件;摘要调用带 nostream,测试时可用 AGENT_COMPRESSION_TRIGGER_TOKENS 压低阈值。"""
+    limit = config.AGENT_COMPRESSION_TRIGGER_TOKENS
+    if limit <= 0:
+        sm = create_summarization_middleware(model, backend)
+    else:
+        defaults = compute_summarization_defaults(model)
+        # 小阈值(测试模式)默认 keep=6 条会让"只聊了几句"的会话永远不触发;
+        # 只在小阈值下保留最近 2 条。正常 100k 阈值仍使用模型默认 keep。
+        keep = ("messages", 2) if limit <= 20000 else defaults["keep"]
+        logger.info("[compression] trigger override: %s tokens (keep=%s)", limit, keep)
+        sm = _DeepAgentsSummarizationMiddleware(
+            model=model,
+            backend=backend,
+            trigger=("tokens", limit),
+            keep=keep,
+            trim_tokens_to_summarize=None,
+            truncate_args_settings=defaults["truncate_args_settings"],
+        )
+    helper = getattr(sm, "_lc_helper", None)
+    if helper is not None:
+        helper.summarizer = _QuietPromptSummarizer(helper, model)
+    return sm
+
 # 平台内置技能(默认每个会话都加载;与镜像 agent-service/skills 下的目录名一致)
 BUILTIN_SKILLS = {
     "browser-operate", "create-skill", "docx", "html-report", "pdf", "pptx", "xlsx",
@@ -369,18 +467,35 @@ def _build_model(override: dict | None = None) -> BaseChatModel:
         else:
             extra_body["thinking"] = {"type": "disabled"}
         extra_body["reasoning_effort"] = config.AGENT_MODEL_REASONING_EFFORT
+        # max_tokens vs max_completion_tokens:
+        # langchain-openai 会把构造参数 max_tokens 改写成 max_completion_tokens 发出去,
+        # 而 DeepSeek 非思考模式对 max_completion_tokens 有 8192 的硬上限(超过也只返回 8192),
+        # 传统 max_tokens 字段则按请求值生效。因此默认把上限塞进 extra_body 的 max_tokens,
+        # 只有显式配置 AGENT_MODEL_MAX_TOKENS_FIELD=max_completion_tokens 时才走新版字段。
+        max_tokens_kw = {}
+        if config.AGENT_MODEL_MAX_TOKENS > 0:
+            if config.AGENT_MODEL_MAX_TOKENS_FIELD == "max_completion_tokens":
+                max_tokens_kw["max_tokens"] = config.AGENT_MODEL_MAX_TOKENS
+            else:
+                extra_body["max_tokens"] = config.AGENT_MODEL_MAX_TOKENS
         return ReasoningChatOpenAI(
             model=model,
             base_url=base_url,
             api_key=api_key or "not-needed",
             temperature=config.AGENT_MODEL_TEMPERATURE,
             extra_body=extra_body,
+            **max_tokens_kw,
         )
     from langchain.chat_models import init_chat_model
 
+    max_tokens_kw = (
+        {"max_tokens": config.AGENT_MODEL_MAX_TOKENS}
+        if config.AGENT_MODEL_MAX_TOKENS > 0 else {}
+    )
     return init_chat_model(
         model_name,
         temperature=config.AGENT_MODEL_TEMPERATURE,
+        **max_tokens_kw,
     )
 
 
@@ -496,13 +611,17 @@ def _dangerous_command(req) -> bool:
     return False
 
 
-def _build_interrupt_on(agent_type: str = "chat") -> dict | None:
+def _build_interrupt_on(agent_type: str = "chat", approval_mode: str = "manual") -> dict | None:
     """HITL 人工确认:仅对危险/敏感操作触发(execute 危险命令 + delete + 浏览器访问)。
 
     - chat(默认):AGENT_HITL=false 时关闭;开启时按下方策略要求批准 / 提问。
     - task(无人值守):**始终关闭所有中断**——定时任务没有人应答,任何提问/授权都会卡死。
+    - approval_mode="auto"(完全访问):同样关闭所有中断,工具直接执行不再询问;
+      此时 ask_user 也不再挂载(见 get_or_create),由模型自行决策。
     """
     if agent_type == "task":
+        return None
+    if approval_mode == "auto":
         return None
     if not config.AGENT_HITL:
         return None
@@ -569,6 +688,10 @@ _DEFAULT_SYSTEM_PROMPT = (
     "\n\n创建/写入文件请优先使用 write_file 或 edit_file 工具(它们会登记输出物路径,"
     "前端结果文件卡片更可靠),不要用 shell 里的 echo/cat 重定向去创建文件;"
     "只有内容需要程序动态生成(如运行脚本产出报告)时才用 execute。"
+    "\n重要:write_file 本身可以写大文件,真正的限制是模型单次输出 token 上限;"
+    "如果单次工具调用内容预计会接近输出上限,先写骨架,再用 edit_file 分段追加,"
+    "或让 execute 运行脚本生成。简单说明/配置讲解优先用 "
+    "Markdown + Mermaid 内联图示,不要默认生成整份超长 HTML。"
     "\n\n技能目录 /skills 对普通写文件工具只读:当用户要求创建新技能、完善/修改已有技能时,"
     "使用 create_skill 工具保存(会弹出确认框,并自动进入用户的技能管理列表)。"
     "平台内置技能(docx/pptx/xlsx/pdf/html-report/browser-operate/create-skill/excalidraw/mermaid)不可修改。"
@@ -613,6 +736,10 @@ AUTONOMOUS_PROMPT = (
     "在结果里说明你采用的假设与选择即可;"
     "\n3. 不要请求授权:需要执行的动作直接完成(包括打开浏览器、创建/更新技能等);"
     "\n4. 输出即最终交付:直接给出可直接使用的结果(报告/文件/结论),不要以问题结尾。"
+    "\n5. 严禁反复重跑:同一脚本最多执行 2 次(首次生成 + 最多一次修正),"
+    "成功产出结果后必须立即交付;不要为了微调参数(阈值、条数、排序等)"
+    "反复修改配置并重跑同一脚本,也不要在结果已基本满足要求时继续自我优化。"
+    "步骤越少越好。"
 )
 
 
@@ -623,11 +750,12 @@ def _build_system_prompt(agent_type: str) -> str:
     return _DEFAULT_SYSTEM_PROMPT + ASK_USER_PROMPT
 
 
-def _fingerprint(user_id: str, skills: list[str], memory: list[str], system_prompt: str | None, mcp_servers=None, agent_type: str = "chat", model_sig: str = "") -> str:
+def _fingerprint(user_id: str, skills: list[str], memory: list[str], system_prompt: str | None, mcp_servers=None, agent_type: str = "chat", model_sig: str = "", approval_mode: str = "manual") -> str:
     # memory 已迁移至 PostgresStore(运行时读取),不再参与 agent 编译指纹;
     # 保留参数签名兼容,但忽略 memory 文件列表。
+    # approval_mode 必须入指纹:manual/auto 对应不同的 interrupt_on,同一用户切换后需重建 agent。
     mcp_sig = mcp_client.mcp_signature(mcp_servers or [])
-    parts = [user_id, agent_type, system_prompt or _DEFAULT_SYSTEM_PROMPT, model_sig] + skills + ["browser_open_url", mcp_sig]
+    parts = [user_id, agent_type, approval_mode, system_prompt or _DEFAULT_SYSTEM_PROMPT, model_sig] + skills + ["browser_open_url", mcp_sig]
     return hashlib.sha256("\x1f".join(parts).encode()).hexdigest()
 
 
@@ -648,6 +776,7 @@ class AgentManager:
         mcp_servers: list | None = None,
         agent_type: str = "chat",
         model_override: dict | None = None,
+        approval_mode: str = "manual",
     ):
         ws.ensure_user_dirs(user_id)
         # SkillsMiddleware 只接受 backend 虚拟路径:source 固定 /skills(根),勾选过滤由
@@ -657,7 +786,7 @@ class AgentManager:
         memory = ws.memory_files(user_id)
         effective_prompt = system_prompt or _build_system_prompt(agent_type)
         key = _fingerprint(user_id, selected_paths, memory, effective_prompt, mcp_servers, agent_type,
-                           _model_signature(model_override))
+                           _model_signature(model_override), approval_mode)
 
         with self._lock:
             cached = self._cache.get(key)
@@ -669,8 +798,8 @@ class AgentManager:
         # 逐个加载用户配置的远程 MCP server 工具;任一失败只跳过该 server,不影响主链路。
         mcp_tools = mcp_client.build_mcp_tools(mcp_servers or [])
         model = _build_model(model_override)
-        # 无人值守(task)不挂 ask_user:任务无人应答,提问只会卡死。
-        question_tools = build_question_tools() if agent_type != "task" else []
+        # 无人值守(task)与完全访问(auto)都不挂 ask_user:没人应答 / 已约定不打扰,提问只会卡死。
+        question_tools = build_question_tools() if agent_type != "task" and approval_mode != "auto" else []
         # MCP 工具按需加载(方案 A):开启时不直接注入,改由 `mcp` 技能经 include_tools 按需披露。
         lazy_mcp = bool(config.AGENT_MCP_LAZY_TOOLS and mcp_tools)
         direct_tools = (list(extra_tools or []) + build_browser_tools(user_id)
@@ -682,7 +811,7 @@ class AgentManager:
         # 借它的 _get_effective_messages/_count_tokens 与 trigger 配置,得到与自动压缩
         # 判断完全一致的 token 数与阈值。create_summarization_middleware 与
         # create_deep_agent 默认挂载的自动压缩走同一构造路径,配置随模型 profile 变。
-        usage_counter = create_summarization_middleware(model, backend)
+        usage_counter = _build_summarization(model, backend)
         agent = create_deep_agent(
             model=model,
             tools=direct_tools,
@@ -700,6 +829,7 @@ class AgentManager:
             middleware=[_DeepSeekFileScrub(),
                         TodoListMiddleware(),
                         ContextUsageMiddleware(usage_counter, _compression_threshold(usage_counter)),
+                        usage_counter,
                         create_summarization_tool_middleware(model, backend)]
             + ([ReloadSkillsMiddleware(backend=backend, sources=["/skills"],
                                        **({"tools": _mcp_skill_resolver(mcp_tools)} if lazy_mcp else {}))]
@@ -708,7 +838,7 @@ class AgentManager:
             # (SandboxBackendProtocol,即我们的 aio/local 沙箱)不兼容,传入会直接抛
             # NotImplementedError 导致 agent 构建失败(任务/对话全部 500)。
             # /workspace/tpl 只读改由 _PathNormalizingProxy 在写入路径上拦截。
-            interrupt_on=_build_interrupt_on(agent_type),
+            interrupt_on=_build_interrupt_on(agent_type, approval_mode),
             memory=memory,
             checkpointer=_get_runtime().checkpointer,
             store=_get_runtime().store,

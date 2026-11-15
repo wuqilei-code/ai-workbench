@@ -69,7 +69,7 @@ function onSubmit() {
   <n-modal
     :show="show"
     preset="card"
-    title="t('diagnose.title')"
+    :title="t('diagnose.title')"
     style="width: 640px; max-width: 94vw"
     :bordered="false"
     @update:show="(v: boolean) => emit('update:show', v)"
@@ -82,7 +82,7 @@ function onSubmit() {
         type="textarea"
         :rows="6"
         size="small"
-        placeholder="t('diagnose.infoPlaceholder')"
+        :placeholder="t('diagnose.infoPlaceholder')"
       />
     </div>
     <div class="er-row">
@@ -102,7 +102,7 @@ function onSubmit() {
         type="textarea"
         :rows="2"
         size="small"
-        placeholder="t('diagnose.actualPlaceholder')"
+        :placeholder="t('diagnose.actualPlaceholder')"
       />
     </div>
 
