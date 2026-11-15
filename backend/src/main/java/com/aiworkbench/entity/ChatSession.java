@@ -33,17 +33,17 @@ public class ChatSession {
      * 默认加载该用户全部已启用的 MCP;空数组 "[]"=本会话不加载任何 MCP)。
      * IGNORED:支持"恢复默认"把会话选择清空为 NULL(项目记忆教训:默认 NOT_NULL 跳过 null)。
      */
-    @TableField(updateStrategy = FieldStrategy.IGNORED)
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String mcpServers;
 
     /**
      * 可清空为 NULL 的字段。MyBatis-Plus 默认 NOT_NULL 策略会跳过 null,
      * 导致无法清空。必须用 IGNORED 强制 update 时带上(项目记忆教训)。
      */
-    @TableField(updateStrategy = FieldStrategy.IGNORED)
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String providerId;
 
-    @TableField(updateStrategy = FieldStrategy.IGNORED)
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String modelId;
 
     /** 0=正常, 1=归档 */

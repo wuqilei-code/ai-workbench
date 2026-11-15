@@ -36,25 +36,25 @@ public class JobTask {
     /** pending/queued/running/success/failed/timeout/cancelled */
     private String status;
 
-    @TableField(updateStrategy = FieldStrategy.IGNORED)
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private LocalDateTime nextRunAt;
 
-    @TableField(updateStrategy = FieldStrategy.IGNORED)
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private LocalDateTime queuedAt;
 
-    @TableField(updateStrategy = FieldStrategy.IGNORED)
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private LocalDateTime startedAt;
 
-    @TableField(updateStrategy = FieldStrategy.IGNORED)
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private LocalDateTime finishedAt;
 
-    @TableField(updateStrategy = FieldStrategy.IGNORED)
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String lastResult;
 
-    @TableField(updateStrategy = FieldStrategy.IGNORED)
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String lastError;
 
-    @TableField(updateStrategy = FieldStrategy.IGNORED)
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String containerName;
 
     /** 当前已重试次数(失败重试;成功或达上限后重置为 0) */
@@ -63,7 +63,7 @@ public class JobTask {
     /** 任务变量(JSON object:键→值);运行时替换 prompt 中的 ${key} 占位符。 */
     private String vars;
 
-    @TableField(updateStrategy = FieldStrategy.IGNORED)
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String runJobDir;
 
     @TableField(value = "created_at", updateStrategy = FieldStrategy.NEVER)
